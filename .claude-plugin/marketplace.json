@@ -1,0 +1,30 @@
+{
+  "name": "ai-ready",
+  "owner": {
+    "name": "kunsanglee"
+  },
+  "metadata": {
+    "description": "Standalone Claude Code marketplace for the ai-ready plugin — audit codebases for AI-readiness and apply ROI-prioritized improvements.",
+    "version": "0.1.1"
+  },
+  "plugins": [
+    {
+      "name": "ai-ready",
+      "source": "./plugins/ai-ready",
+      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook).",
+      "version": "0.1.1",
+      "author": {
+        "name": "kunsanglee"
+      },
+      "keywords": [
+        "ai-readiness",
+        "claude-code",
+        "audit",
+        "documentation",
+        "codebase-quality",
+        "CLAUDE.md"
+      ],
+      "category": "workflow"
+    }
+  ]
+}

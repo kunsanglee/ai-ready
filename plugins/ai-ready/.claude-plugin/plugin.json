@@ -1,0 +1,21 @@
+{
+  "name": "ai-ready",
+  "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook).",
+  "version": "0.1.1",
+  "author": {
+    "name": "kunsanglee"
+  },
+  "license": "MIT",
+  "keywords": [
+    "ai-readiness",
+    "claude-code",
+    "audit",
+    "documentation",
+    "codebase-quality",
+    "CLAUDE.md"
+  ],
+  "skills": [
+    "./skills/audit",
+    "./skills/apply"
+  ]
+}
