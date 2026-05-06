@@ -118,7 +118,7 @@ The audit script looks at:
 - Presence of `ANTIPATTERNS.md`, `ARCHITECTURE.md`, `ADR/`, `docs/decisions/`
 - Hooks in `.git/hooks/`, `.husky/`, `.claude/hooks/`, `.claude/settings.json`
 - CI configs: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`
-- Build manifest signals to identify modules: `build.gradle.kts`, `build.gradle`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`
+- Build manifest signals to identify modules: `build.gradle.kts`, `build.gradle`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Package.swift` (Swift Package Manager), `Podfile` (CocoaPods)
 - Recent git activity to find "hot" modules
 - "DO NOT" / "절대" / "금지" / "MUST NOT" markers in CLAUDE.md content
 
