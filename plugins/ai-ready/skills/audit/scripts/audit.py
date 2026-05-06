@@ -461,9 +461,15 @@ def score_verification(target: Path, scan: dict, doc_text: dict) -> dict:
     rules.append(r)
 
     r = Rule("테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md)", 4)
-    test_doc = (target / "TESTING.md")
-    if test_doc.exists():
-        r.award(4, ["TESTING.md"])
+    # TESTING.md 후보: docs/TESTING.md (권장) → 루트 TESTING.md (구식)
+    test_candidates = [
+        (target / "docs" / "TESTING.md", "docs/TESTING.md"),
+        (target / "TESTING.md", "TESTING.md"),
+    ]
+    test_doc = next((p for p, _ in test_candidates if p.exists()), None)
+    test_label = next((label for p, label in test_candidates if p.exists()), None)
+    if test_doc:
+        r.award(4, [test_label])
     else:
         for d in scan["claude_docs"]:
             t = doc_text.get(d, "").lower()
