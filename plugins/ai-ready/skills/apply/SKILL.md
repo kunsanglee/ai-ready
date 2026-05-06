@@ -32,10 +32,10 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_module_map.py --target <T>` |
 | 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
 | 인덱스 / MOC 파일 (docs/INDEX.md 권장, wiki/index.md 허용) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_index.py --target <T> --out <T>/docs/INDEX.md` |
-| 루트 CLAUDE.md 200줄 이하 | **judgment** | Claude 가 루트 CLAUDE.md 를 읽고 분리 후보 섹션을 추천, 사용자 승인 후 분리 |
+| 루트 CLAUDE.md 200줄 이하 | **mechanical+judgment** | thin index 패턴 권장: `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 lazy-load 트리거 표를 주입한 뒤, Claude 가 인라인된 detail 을 `docs/CONVENTIONS.md` / `docs/API_COMPATIBILITY.md` / `docs/ERROR_HANDLING.md` / `docs/GIT_WORKFLOW.md` / `docs/DDL_DML.md` 등으로 분리 (사용자 승인 후) |
 | 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트 |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
-| '사용 시점' 가이드 존재 | **judgment** | Claude 가 모듈/패턴 문서마다 "When to use" bullet 추가 제안 |
+| '사용 시점' 가이드 존재 | **mechanical+judgment** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 루트 CLAUDE.md 에 lazy-load 트리거 표 주입 (감지된 docs/ 자동 매핑). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
 | ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환을 사용자와 함께 진행) |
 | 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 |
 | 네이밍 컨벤션 문서화 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/NAMING.md --kind naming` |
