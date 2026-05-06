@@ -5,11 +5,12 @@
 지원하는 빌드 시스템:
   - Gradle (build.gradle.kts / build.gradle): `project(":foo")` 참조 파싱
   - npm workspaces (package.json): `dependencies` 중 workspace 패키지 참조
+  - Swift Package Manager (Package.swift): `.package(path: "...")` path-based 워크스페이스 의존성 파싱
 
 ROI 액션 매핑: "ARCHITECTURE.md + Mermaid 다이어그램" (Rule 4.1, +5점).
 
 실행:
-  python3 gen_arch_diagram.py --target /path/to/repo --out /path/to/repo/ARCHITECTURE.md
+  python3 gen_arch_diagram.py --target /path/to/repo --out /path/to/repo/docs/ARCHITECTURE.md
 """
 from __future__ import annotations
 
@@ -70,6 +71,44 @@ def parse_gradle_deps(target: Path) -> list[tuple[str, str]]:
                 dep = m.group(2).replace(":", "/")
                 edges.append((rel_dir, dep))
             break
+    return edges
+
+
+def parse_swift_deps(target: Path) -> list[tuple[str, str]]:
+    """Swift Package Manager `Package.swift` 의 path-based 워크스페이스 의존성만 추출.
+
+    SPM 의 외부 패키지 (`.package(url: ...)`) 는 prod-수준 모듈 그래프와 다르므로 제외.
+    같은 저장소 내의 모듈 간 의존성을 표현하는 `.package(path: "...")` 만 추출한다.
+
+    매칭 패턴 (느슨한 정규식, 한 줄짜리 / 멀티라인 모두 허용):
+      .package(name: "...", path: "../core")
+      .package(path: "../core")
+    """
+    edges = []
+    pattern = re.compile(
+        r'\.package\(\s*(?:name\s*:\s*[^,]+,\s*)?path\s*:\s*["\']([^"\']+)["\']'
+    )
+    target_resolved = target.resolve()
+    for dirpath, _, filenames in walk(target):
+        if "Package.swift" not in filenames:
+            continue
+        full = dirpath / "Package.swift"
+        rel_dir = str(full.parent.relative_to(target))
+        if rel_dir == ".":
+            # 루트의 Package.swift 는 단일 모듈 저장소 — 그래프 의미 없음
+            continue
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in pattern.finditer(text):
+            dep_path = m.group(1)
+            try:
+                abs_dep = (full.parent / dep_path).resolve()
+                rel_dep = str(abs_dep.relative_to(target_resolved))
+            except (ValueError, OSError):
+                continue
+            edges.append((rel_dir, rel_dep))
     return edges
 
 
@@ -164,7 +203,7 @@ def main():
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
-    edges = parse_gradle_deps(target) + parse_npm_deps(target)
+    edges = parse_gradle_deps(target) + parse_npm_deps(target) + parse_swift_deps(target)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(target, edges), encoding="utf-8")
     print(f"ARCHITECTURE.md 생성: {out_path}")

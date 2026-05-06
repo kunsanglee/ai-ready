@@ -25,6 +25,9 @@ from pathlib import Path
 BUILD_MANIFESTS = {
     "build.gradle.kts", "build.gradle", "pom.xml",
     "package.json", "Cargo.toml", "go.mod", "pyproject.toml", "setup.py",
+    # iOS / Apple
+    "Package.swift",   # Swift Package Manager
+    "Podfile",         # CocoaPods
 }
 
 CLAUDE_DOC_NAMES = {"CLAUDE.md", "AGENTS.md"}

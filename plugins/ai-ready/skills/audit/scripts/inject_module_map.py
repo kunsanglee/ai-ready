@@ -32,6 +32,9 @@ DOC_NAMES = ("CLAUDE.md", "AGENTS.md")
 BUILD_MANIFESTS = {
     "build.gradle.kts", "build.gradle", "pom.xml",
     "package.json", "Cargo.toml", "go.mod", "pyproject.toml", "setup.py",
+    # iOS / Apple
+    "Package.swift",   # Swift Package Manager
+    "Podfile",         # CocoaPods
 }
 EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
