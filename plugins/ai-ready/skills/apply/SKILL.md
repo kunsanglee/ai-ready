@@ -36,15 +36,15 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트 |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
 | '사용 시점' 가이드 존재 | **mechanical+judgment** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 루트 CLAUDE.md 에 lazy-load 트리거 표 주입 (감지된 docs/ 자동 매핑). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
-| ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환을 사용자와 함께 진행) |
-| 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 |
-| 네이밍 컨벤션 문서화 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/NAMING.md --kind naming` |
-| 모듈 의존성 맵 / 다이어그램 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_arch_diagram.py --target <T> --out <T>/ARCHITECTURE.md` |
+| ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |
+| 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 (`<T>/docs/decisions/00NN-*.md`) |
+| 네이밍 컨벤션 문서화 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/docs/NAMING.md --kind naming` |
+| 모듈 의존성 맵 / 다이어그램 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_arch_diagram.py --target <T> --out <T>/docs/ARCHITECTURE.md` |
 | 빌드 매니페스트로 의존 그래프 추출 가능 | **skip** | 빌드 시스템이 이미 커버 |
 | 모듈 간 API 계약 문서화 (OpenAPI/proto/contracts) | **judgment (대) ** | 큰 작업 — 추천만 하고 본격 도입은 별도 세션 |
 | 커밋 전 훅 (pre-commit) 존재 | **judgment** | Claude 가 husky/lefthook 중 적절한 도구 설정 제안 |
 | CI 설정 존재 + 테스트 참조 | **judgment** | CI provider 에 따라 다름 — Claude 가 추천 |
-| 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/TESTING.md --kind testing` |
+| 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/docs/TESTING.md --kind testing` |
 | CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/install_hook.py --target <T>` |
 | CLAUDE.md 갱신 프로토콜 문서화 | **judgment** | Claude 가 루트 CLAUDE.md 에 "## 유지보수" 섹션 추가 제안 |
 | 매트릭스 문서 / 대시보드 존재 | **judgment (대)** | 측정 인프라 도입 — 별도 작업 |

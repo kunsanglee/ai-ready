@@ -33,20 +33,32 @@ DETECTION_RULES = [
         "빌드·실행·lint 등 명령어 확인"),
     ("docs/CONVENTIONS.md", "[`docs/CONVENTIONS.md`](docs/CONVENTIONS.md)",
         "코드 작성 detail (repository 패턴·DTO 분리·검증 등)"),
+    # NAMING.md: docs/ 우선, 루트는 fallback
+    ("docs/NAMING.md", "[`docs/NAMING.md`](docs/NAMING.md)",
+        "클래스/패키지/메서드/DTO 명명, 컬럼 네이밍"),
     ("NAMING.md", "[`NAMING.md`](NAMING.md)",
         "클래스/패키지/메서드/DTO 명명, 컬럼 네이밍"),
     ("docs/API_COMPATIBILITY.md", "[`docs/API_COMPATIBILITY.md`](docs/API_COMPATIBILITY.md)",
         "Response DTO 변경, 필드 추가/제거, 버전 호환성"),
     ("docs/ERROR_HANDLING.md", "[`docs/ERROR_HANDLING.md`](docs/ERROR_HANDLING.md)",
         "에러 코드 추가, 예외 처리, i18n 메시지"),
+    # TESTING.md: docs/ 우선
+    ("docs/TESTING.md", "[`docs/TESTING.md`](docs/TESTING.md)",
+        "테스트 작성, 픽스처/Factory 추가, 베이스 클래스 사용"),
     ("TESTING.md", "[`TESTING.md`](TESTING.md)",
         "테스트 작성, 픽스처/Factory 추가, 베이스 클래스 사용"),
     ("docs/GIT_WORKFLOW.md", "[`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md)",
         "커밋 메시지·브랜치 네이밍·PR 본문 형식"),
     ("docs/DDL_DML.md", "[`docs/DDL_DML.md`](docs/DDL_DML.md)",
         "마이그레이션, CREATE TABLE, 인덱스 작성"),
+    # ANTIPATTERNS.md: docs/ 우선
+    ("docs/ANTIPATTERNS.md", "[`docs/ANTIPATTERNS.md`](docs/ANTIPATTERNS.md)",
+        "신규 코드 작성·리뷰, 안티패턴 점검"),
     ("ANTIPATTERNS.md", "[`ANTIPATTERNS.md`](ANTIPATTERNS.md)",
         "신규 코드 작성·리뷰, 안티패턴 점검"),
+    # ARCHITECTURE.md: docs/ 우선
+    ("docs/ARCHITECTURE.md", "[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)",
+        "모듈 의존성 / 영향 범위 분석, 새 모듈 결합 검토"),
     ("ARCHITECTURE.md", "[`ARCHITECTURE.md`](ARCHITECTURE.md)",
         "모듈 의존성 / 영향 범위 분석, 새 모듈 결합 검토"),
     ("docs/decisions", "[`docs/decisions/`](docs/decisions/) (ADR)",
@@ -69,11 +81,17 @@ def find_root_doc(target: Path) -> Path | None:
 
 
 def detect_present(target: Path) -> list[tuple[str, str]]:
-    """존재하는 detail 문서만 (문서 표기, 트리거) 튜플 리스트로 반환."""
+    """존재하는 detail 문서만 (문서 표기, 트리거) 튜플 리스트로 반환.
+
+    같은 트리거를 가진 docs/ 우선 / 루트 fallback 항목이 둘 다 있으면 docs/ 만 표시."""
     found = []
+    seen_triggers = set()
     for path, label, trigger in DETECTION_RULES:
+        if trigger in seen_triggers:
+            continue
         if (target / path).exists():
             found.append((label, trigger))
+            seen_triggers.add(trigger)
     return found
 
 
