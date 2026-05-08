@@ -13,10 +13,11 @@ For a target codebase you point it at, this skill creates an `.ai-ready/` direct
 
 1. **`audit.json`** — raw scores (per-category, per-rule, evidence)
 2. **`audit-report.md`** — human-readable report with ROI-prioritized action list
-3. **`dashboard.html`** — self-contained HTML dashboard (open in browser)
-4. **`scaffolds/<module>/CLAUDE.md`** — draft module-level CLAUDE.md files for top hot modules
-5. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history
-6. **`hooks/freshness_check.sh`** — optional Stop-hook script to keep CLAUDE.md fresh
+3. **`README.md`** — auto-generated guide for `.ai-ready/` consumers (artifact map, plugin install, score interpretation, re-run instructions)
+4. **`dashboard.html`** — self-contained HTML dashboard (open in browser)
+5. **`scaffolds/<module>/CLAUDE.md`** — draft module-level CLAUDE.md files for top hot modules
+6. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history
+7. **`hooks/freshness_check.sh`** — optional Stop-hook script to keep CLAUDE.md fresh
 
 ## Inputs You Need
 
