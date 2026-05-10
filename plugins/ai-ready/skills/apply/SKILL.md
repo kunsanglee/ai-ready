@@ -28,10 +28,10 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
 | Rule name (audit.json 기준) | 처리 방법 | 명령 |
 |----------------------------|----------|------|
-| 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** | Claude 가 프로젝트를 훑고 50~150줄 짜리 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장 |
+| 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 50~150줄 짜리 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장 |
 | 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_module_map.py --target <T>` |
 | 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
-| 인덱스 / MOC 파일 (docs/INDEX.md 권장, wiki/index.md 허용) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_index.py --target <T> --out <T>/docs/INDEX.md` |
+| 인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_index.py --target <T> --out <T>/docs/INDEX.md` |
 | 루트 CLAUDE.md 200줄 이하 | **mechanical+judgment** | thin index 패턴 권장: `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 lazy-load 트리거 표를 주입한 뒤, Claude 가 인라인된 detail 을 `docs/CONVENTIONS.md` / `docs/API_COMPATIBILITY.md` / `docs/ERROR_HANDLING.md` / `docs/GIT_WORKFLOW.md` / `docs/DDL_DML.md` 등으로 분리 (사용자 승인 후) |
 | 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트 |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |

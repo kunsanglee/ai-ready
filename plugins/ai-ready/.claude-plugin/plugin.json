@@ -1,18 +1,29 @@
 {
   "name": "ai-ready",
-  "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook).",
-  "version": "0.1.1",
+  "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline).",
+  "version": "0.1.2",
   "author": {
     "name": "kunsanglee"
   },
   "license": "MIT",
+  "homepage": "https://github.com/kunsanglee/ai-ready",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kunsanglee/ai-ready"
+  },
   "keywords": [
     "ai-readiness",
     "claude-code",
     "audit",
     "documentation",
     "codebase-quality",
-    "CLAUDE.md"
+    "CLAUDE.md",
+    "AI 준비도",
+    "코드베이스 감사",
+    "ROI 액션",
+    "ANTIPATTERNS",
+    "thin-index",
+    "agentic-ready"
   ],
   "skills": [
     "./skills/audit",

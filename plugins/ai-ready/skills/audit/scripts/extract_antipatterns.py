@@ -42,6 +42,22 @@ MARKER_PATTERN = re.compile(r"\b(TODO|FIXME|HACK|XXX)\b\s*:?\s*(.{0,160})", re.I
 
 MIN_OCCURRENCES = 3  # file must appear in this many fix commits to count
 
+# T-11: 클러스터링 키워드 추출 — 반복되는 commit 메시지 키워드를 안티패턴 후보로
+_KEYWORD_RE = re.compile(r"[A-Za-z][A-Za-z]{3,}|[가-힣]{2,}")
+_STOPWORDS_EN = {
+    "the", "this", "that", "with", "without", "from", "into", "for",
+    "fix", "fixes", "fixed", "fixing", "bug", "bugs", "issue", "issues",
+    "error", "errors", "feat", "feature", "chore", "refactor", "test", "tests",
+    "wip", "merge", "merged", "branch", "main", "master", "rev", "revert",
+    "update", "updates", "updated", "remove", "removed", "removes",
+}
+_STOPWORDS_KO = {
+    "수정", "버그", "오류", "이슈", "에러", "추가", "삭제", "변경", "처리",
+    "관련", "기능", "작업", "내용", "부분", "방식", "문제", "이전", "현재",
+    "동작", "원인", "임시", "최근", "롤백", "되돌림", "핫픽스",
+}
+_MIN_KEYWORD_CLUSTER_SIZE = 3
+
 
 def run_git(target: Path, args: list[str], timeout: int = 60) -> str:
     try:
@@ -142,6 +158,32 @@ def group_files_by_module(files: list[str], modules: set[str]) -> dict:
     return grouped
 
 
+def cluster_keywords(commits: list[dict]) -> list[tuple[str, int, list[dict]]]:
+    """T-11: commit subject 에서 키워드 빈도 집계.
+
+    한국어/영어 단어를 추출, stopword 제거, N회 이상 반복되는 키워드를 (word, count, commits) 로.
+    같은 commit 안에서 같은 키워드를 두 번 카운트하지 않음.
+    """
+    word_counts = Counter()
+    word_to_commits = defaultdict(list)
+    for c in commits:
+        words = _KEYWORD_RE.findall(c["subject"])
+        seen = set()
+        for w in words:
+            wl = w.lower()
+            if wl in _STOPWORDS_EN or wl in _STOPWORDS_KO:
+                continue
+            if wl in seen:
+                continue
+            seen.add(wl)
+            word_counts[wl] += 1
+            word_to_commits[wl].append(c)
+    clusters = [(w, n, word_to_commits[w]) for w, n in word_counts.items()
+                if n >= _MIN_KEYWORD_CLUSTER_SIZE]
+    clusters.sort(key=lambda x: x[1], reverse=True)
+    return clusters
+
+
 def detect_modules(target: Path) -> set[str]:
     """Lightweight module detection via build manifests."""
     out = set()
@@ -171,7 +213,25 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
     lines.append(f"> 최근 {days}일 git 히스토리에서 추출한 시드입니다. **아래 각 항목은 후보**이며 확정된 안티패턴이 아닙니다. 검토·편집·정제한 뒤 채택하세요.")
     lines.append("")
 
-    # 1. 반복 수정 위치
+    # 1. 키워드 클러스터 (T-11: 새 섹션) — 반복되는 commit 메시지 키워드를 안티패턴 후보로
+    clusters = cluster_keywords(commits)
+    lines.append("## 1. 반복 키워드 클러스터")
+    lines.append("")
+    if not clusters:
+        lines.append(f"_{_MIN_KEYWORD_CLUSTER_SIZE}회 이상 반복되는 키워드 없음._")
+    else:
+        lines.append(f"커밋 메시지에 **{_MIN_KEYWORD_CLUSTER_SIZE}회 이상** 등장한 키워드 — 같은 종류의 실수가 반복될 가능성을 시사합니다.")
+        lines.append("")
+        for word, count, sample_commits in clusters[:10]:
+            lines.append(f"### `{word}` — {count}회 반복")
+            for c in sample_commits[:5]:
+                lines.append(f"- `{c['sha'][:7]}` {c['subject']}")
+            lines.append("")
+            lines.append(f"  > **검토 포인트**: `{word}` 관련 변경이 {count}회 반복됐습니다. 같은 클래스의 결함이라면 "
+                         f"안티패턴 1건으로 정리하세요 (`절대 금지 — X. 이유 — Y. 대신 — Z` 형식).")
+            lines.append("")
+
+    # 2. 반복 수정 위치 (파일 단위)
     file_counts = Counter()
     file_to_commits = defaultdict(list)
     for c in commits:
@@ -181,7 +241,7 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
     recurring = [(f, n) for f, n in file_counts.items() if n >= MIN_OCCURRENCES]
     recurring.sort(key=lambda x: x[1], reverse=True)
 
-    lines.append("## 1. 반복 수정 위치")
+    lines.append("## 2. 반복 수정 위치 (파일 단위)")
     lines.append("")
     if not recurring:
         lines.append("_3회 이상 fix류 커밋에 등장한 파일이 없습니다. 저장소가 건강하거나, 커밋 메시지가 모호하거나, 룩백 기간이 너무 짧습니다._")
@@ -194,12 +254,13 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
             for c in sample:
                 lines.append(f"- `{c['sha'][:7]}` {c['subject']}")
             lines.append("")
-            lines.append(f"  > **권장 안티패턴 항목**: 절대 금지 — \\<`{f}` 부근에서 반복된 실수를 적으세요>. **이유**: 이 파일은 {days}일 동안 {n}번 수정됐습니다. **대신**: \\<올바른 접근>.")
+            lines.append(f"  > **검토 포인트**: 이 파일은 {days}일 동안 {n}번 수정됐습니다. 위 커밋 메시지에서 공통 패턴을 찾아 "
+                         f"`절대 금지 — X. 이유 — Y. 대신 — Z` 형식의 안티패턴 1건으로 정리하세요.")
             lines.append("")
 
-    # 2. Revert 커밋
+    # 3. Revert 커밋
     reverts = [c for c in commits if REVERT_PATTERN.match(c["subject"])]
-    lines.append("## 2. 최근 Revert 커밋")
+    lines.append("## 3. 최근 Revert 커밋")
     lines.append("")
     if not reverts:
         lines.append("_룩백 기간 내 revert 커밋이 없습니다._")
@@ -210,9 +271,9 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
                 lines.append(f"  - `{f}`")
     lines.append("")
 
-    # 3. 모듈 핫스팟
+    # 4. 모듈 핫스팟
     if modules:
-        lines.append("## 3. 모듈 핫스팟")
+        lines.append("## 4. 모듈 핫스팟")
         lines.append("")
         all_files = [f for c in commits for f in c["files"]]
         grouped = group_files_by_module(all_files, modules)
@@ -223,8 +284,8 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
             lines.append(f"- **{mod}** — fix 관련 변경 {total_changes}건, 고유 파일 {unique_files}개")
         lines.append("")
 
-    # 4. 코드 마커
-    lines.append("## 4. 소스 내 TODO / FIXME / HACK 마커")
+    # 5. 코드 마커
+    lines.append("## 5. 소스 내 TODO / FIXME / HACK 마커")
     lines.append("")
     if not markers:
         lines.append("_마커 없음._")
@@ -245,8 +306,8 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
                 lines.append(f"- … 외 {len(items) - 20}건")
             lines.append("")
 
-    # 5. 활용 가이드
-    lines.append("## 5. 이 초안을 실제 ANTIPATTERNS.md로 정리하는 법")
+    # 6. 활용 가이드
+    lines.append("## 6. 이 초안을 실제 ANTIPATTERNS.md로 정리하는 법")
     lines.append("")
     lines.append(textwrap_dedent("""\
         반복 수정 위치마다 다음 형식의 한 줄 항목을 작성하세요:
