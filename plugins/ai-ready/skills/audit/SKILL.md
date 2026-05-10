@@ -14,10 +14,11 @@ For a target codebase you point it at, this skill creates an `.ai-ready/` direct
 1. **`audit.json`** — raw scores (per-category, per-rule, evidence)
 2. **`audit-report.md`** — human-readable report with ROI-prioritized action list
 3. **`README.md`** — auto-generated guide for `.ai-ready/` consumers (artifact map, plugin install, score interpretation, re-run instructions)
-4. **`dashboard.html`** — self-contained HTML dashboard (open in browser)
-5. **`scaffolds/<module>/CLAUDE.md`** — draft module-level CLAUDE.md files for top hot modules
-6. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history
-7. **`hooks/freshness_check.sh`** — optional Stop-hook script to keep CLAUDE.md fresh
+4. **`dashboard.html`** — self-contained HTML dashboard with score gauge, category bars, and trend sparkline (open in browser)
+5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete.
+6. **`scaffolds/<module>/CLAUDE.md`** — draft module-level CLAUDE.md files for top hot modules
+7. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history (clustered hotspots)
+8. **`hooks/freshness_check.sh`** — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`
 
 ## Inputs You Need
 
@@ -27,7 +28,7 @@ For a target codebase you point it at, this skill creates an `.ai-ready/` direct
 
 ## How To Run
 
-The skill ships four Python scripts. They have **no third-party dependencies** (stdlib only). Run them in this order:
+The skill ships a baseline four-step run plus several optional action scripts (see "Additional Action Scripts" below). All scripts are stdlib-only — **no third-party dependencies**. Run the four baseline scripts in this order:
 
 ```bash
 SKILL_DIR="$CLAUDE_PLUGIN_ROOT/skills/audit"
@@ -58,12 +59,13 @@ To raise the score by executing ROI actions directly, use the scripts below. The
 |--------|---------------------|--------------|
 | `gen_index.py` | "Create docs/INDEX.md (preferred) / wiki/index.md" | Builds a single-line summary index from every CLAUDE.md / AGENTS.md found |
 | `inject_module_map.py` | "Add module map to root CLAUDE.md" | Injects an auto-regenerable "## 모듈 맵" section into root CLAUDE.md (idempotent, marker-fenced) |
+| `inject_lazy_load_index.py` | "Thin index pattern" | Injects a lazy-load trigger table into root CLAUDE.md, mapping triggers to `docs/*.md` for thin-index style |
 | `extract_section.py --kind testing` | "Split TESTING.md" | Lifts the testing section out of CLAUDE.md into a dedicated file |
 | `extract_section.py --kind naming` | "Split NAMING.md" | Lifts the naming/conventions section out into NAMING.md |
 | `install_hook.py` | "Install freshness Stop hook" | Adds the hook to `.claude/settings.json` (idempotent) |
 | `gen_arch_diagram.py` | "Generate ARCHITECTURE.md with Mermaid" | Parses gradle / npm dependencies and emits a Mermaid graph |
-| `scaffold.py` | "Module CLAUDE.md coverage" | Drafts CLAUDE.md for the top-N hot modules |
-| `extract_antipatterns.py` | "Seed ANTIPATTERNS.md" | Mines the git history for `fix` / `hotfix` / `revert` (and Korean equivalents) hot spots |
+| `scaffold.py` | "Module CLAUDE.md coverage" | Drafts CLAUDE.md for the top-N hot modules — fills module summary, dependency list, and hot-file list automatically |
+| `extract_antipatterns.py` | "Seed ANTIPATTERNS.md" | Clusters `fix` / `hotfix` / `revert` (and Korean equivalents) commits by keyword and module hotspot |
 
 Scripts that modify existing files (`inject_module_map.py`, `install_hook.py`) are idempotent and expose a `--dry-run` option so changes can be previewed first.
 
@@ -132,4 +134,4 @@ The audit script looks at:
 
 ## Re-running
 
-This is meant to be run periodically (monthly is a good cadence). Each run overwrites `audit.json` and `audit-report.md`. Keep a copy if you want to track delta over time.
+This is meant to be run periodically (monthly is a good cadence). Each run overwrites `audit.json` / `audit-report.md` / `dashboard.html` / `README.md`, but **also archives the result to `history/{timestamp}.json`** so the dashboard can render a trend sparkline. Don't delete the `history/` directory.

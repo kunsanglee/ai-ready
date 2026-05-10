@@ -61,14 +61,74 @@ def category_color(score: int, max_score: int) -> str:
     return "#dc2626"
 
 
-def render_html(audit: dict) -> str:
+def read_history(audit_path: Path) -> list[dict]:
+    """T-12: `.ai-ready/history/*.json` 시계열 데이터 적재."""
+    hist_dir = audit_path.parent / "history"
+    if not hist_dir.is_dir():
+        return []
+    points = []
+    for p in sorted(hist_dir.glob("*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        ts = data.get("timestamp_local") or data.get("timestamp")
+        score = data.get("total_score")
+        if ts is None or score is None:
+            continue
+        points.append({"timestamp": ts, "total_score": score})
+    return points
+
+
+def render_sparkline(history: list[dict], color: str) -> str:
+    """T-12: 점수 추이 sparkline (>=2 개 데이터 포인트 필요)."""
+    if len(history) < 2:
+        if len(history) == 1:
+            return ('<p class="hist-empty">_점수 추이는 다음 회차부터 표시됩니다 (현재 1회 기록)._</p>')
+        return ""
+    width, height = 280, 56
+    pad = 6
+    scores = [pt["total_score"] for pt in history]
+    smin, smax = min(scores), max(scores)
+    span = max(smax - smin, 5)
+    n = len(scores)
+    pts = []
+    for i, s in enumerate(scores):
+        x = pad + (width - 2 * pad) * (i / max(n - 1, 1))
+        y = pad + (height - 2 * pad) * (1 - (s - smin) / span)
+        pts.append((x, y))
+    polyline = '<polyline points="{}" fill="none" stroke="{}" stroke-width="2" stroke-linejoin="round"/>'.format(
+        " ".join(f"{x:.1f},{y:.1f}" for x, y in pts), color,
+    )
+    last_x, last_y = pts[-1]
+    last_dot = f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="3.5" fill="{color}"/>'
+    delta = scores[-1] - scores[0]
+    sign = "+" if delta >= 0 else ""
+    delta_color = "#16a34a" if delta > 0 else ("#dc2626" if delta < 0 else "#6b7280")
+    return f'''<div class="sparkline">
+      <svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img"
+           aria-label="점수 추이">
+        <rect x="0" y="0" width="{width}" height="{height}" fill="#f9fafb" rx="6"/>
+        {polyline}
+        {last_dot}
+      </svg>
+      <p class="trend">최근 {n}회: <b>{scores[0]} → {scores[-1]}</b>
+        <span style="color:{delta_color}">({sign}{delta})</span></p>
+    </div>'''
+
+
+def render_html(audit: dict, history: list[dict] | None = None) -> str:
     grade = audit.get("grade", "AI 미인지 (AI-blind)")
     color = GRADE_COLORS.get(grade, "#6b7280")
     target = html.escape(audit.get("target", ""))
-    timestamp = html.escape(audit.get("timestamp", ""))
+    # T-5: 로컬 + UTC 둘 다 보여주기
+    ts_local = html.escape(audit.get("timestamp_local", ""))
+    ts_utc = html.escape(audit.get("timestamp", ""))
+    timestamp = f"{ts_local} (로컬) · {ts_utc} (UTC)" if ts_local else ts_utc
     total = audit.get("total_score", 0)
     module_count = audit.get("module_count", 0)
     doc_count = audit.get("claude_doc_count", 0)
+    sparkline_html = render_sparkline(history or [], color)
 
     cat_cards = []
     for cat in audit["categories"]:
@@ -191,6 +251,10 @@ table th {{ background: #f9fafb; font-weight: 600; }}
 table tr:last-child td {{ border-bottom: none; }}
 table.actions td.rank {{ font-weight: 700; color: #6b7280; width: 32px; }}
 .empty {{ color: #6b7280; font-style: italic; }}
+.sparkline {{ margin-top: 16px; }}
+.sparkline svg {{ display: block; }}
+.sparkline .trend {{ font-size: 13px; color: #6b7280; margin: 6px 0 0 0; }}
+.hist-empty {{ font-size: 12px; color: #9ca3af; margin-top: 12px; font-style: italic; }}
 code {{ font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
         font-size: 13px; background: #f3f4f6; padding: 1px 6px; border-radius: 4px; }}
 footer {{ margin-top: 48px; padding-top: 24px; border-top: 1px solid #e5e7eb;
@@ -211,6 +275,7 @@ footer {{ margin-top: 48px; padding-top: 24px; border-top: 1px solid #e5e7eb;
           <div><b>{doc_count}</b>CLAUDE.md 문서</div>
           <div><b>{len(actions)}</b>액션</div>
         </div>
+        {sparkline_html}
       </div>
     </header>
 
@@ -245,9 +310,12 @@ def main():
         print(f"오류: audit 파일이 없습니다: {audit_path}", file=sys.stderr)
         sys.exit(2)
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    history = read_history(audit_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(render_html(audit), encoding="utf-8")
+    out_path.write_text(render_html(audit, history), encoding="utf-8")
     print(f"생성: {out_path}")
+    if history:
+        print(f"  history 항목: {len(history)}개 (sparkline 표시됨)")
 
 
 if __name__ == "__main__":

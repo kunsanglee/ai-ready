@@ -228,12 +228,91 @@ def list_dependencies(module_dir: Path) -> list[str]:
     return deps
 
 
+# --- Auto-fill helpers (T-10) ---------------------------------------------
+
+def module_summary_from_root_claude_md(target: Path, module_path: str) -> str | None:
+    """루트 CLAUDE.md 의 module map 줄에서 모듈 1줄 설명을 cherry-pick.
+
+    매칭: `[`mod`](path)` 또는 `` `mod` `` 다음에 ' — ', ' - ', ': ' 로 이어지는 줄.
+    """
+    root = target / "CLAUDE.md"
+    if not root.exists():
+        return None
+    try:
+        text = root.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    escaped = re.escape(module_path)
+    # 형태: `[`module`](path)` — 설명  /  `[module](path)` — 설명  /  `module` — 설명
+    patterns = [
+        rf"\[`{escaped}`\]\([^)]*\)\s*[—\-:]\s*(.+?)(?:\n|$)",
+        rf"\[{escaped}\]\([^)]*\)\s*[—\-:]\s*(.+?)(?:\n|$)",
+        rf"`{escaped}`\s*[—\-:]\s*(.+?)(?:\n|$)",
+    ]
+    for p in patterns:
+        m = re.search(p, text)
+        if m:
+            summary = m.group(1).strip()
+            # trailing 마크다운 강조/링크 제거
+            summary = re.sub(r"\s*\(\[?[^\)]*\)\s*$", "", summary)
+            return summary[:200]
+    return None
+
+
+def git_hot_files(target: Path, module_path: str, days: int = 90, top: int = 5) -> list[tuple[str, int]]:
+    """모듈 내 최근 N일 변경 빈도 Top K 파일."""
+    if module_path == ".":
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(target), "log", f"--since={days}.days.ago",
+             "--name-only", "--pretty=format:", "--", module_path],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    counts = Counter(line.strip() for line in result.stdout.splitlines() if line.strip())
+    return counts.most_common(top)
+
+
+_FIX_RE = re.compile(
+    r"^(fix|hotfix|revert|bugfix|chore\(fix\)|버그|핫픽스|롤백|되돌림)[\(\s:]",
+    re.IGNORECASE,
+)
+
+
+def git_fix_subjects(target: Path, module_path: str, days: int = 180, top: int = 5) -> list[str]:
+    """모듈 내 최근 fix/hotfix/revert 커밋 subject Top K — 안티패턴 후보 시드."""
+    if module_path == ".":
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(target), "log", f"--since={days}.days.ago",
+             "--pretty=format:%s", "--", module_path],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    subjects = []
+    for s in result.stdout.splitlines():
+        s = s.strip()
+        if s and _FIX_RE.match(s):
+            subjects.append(s)
+        if len(subjects) >= top:
+            break
+    return subjects
+
+
 # --- Template -------------------------------------------------------------
 
 TEMPLATE = """# CLAUDE.md — `{module_path}`
 
 > AI 에이전트를 위한 모듈 가이드. 50줄 이내로 유지하세요.
-> 각 섹션을 편집하세요. **TODO**로 시작하는 줄은 사람이 채워야 하는 자리표시자입니다.
+> **TODO**로 표시된 곳은 사람이 채워야 하는 자리표시자입니다.
 
 ## 스택
 - {stack_hint}
@@ -245,11 +324,13 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 {how_block}
 
 ## 절대 금지 (이 모듈 고유 안티패턴)
-- TODO: 합리적으로 보이지만 이 모듈을 깨뜨리는 것 3~5개를 적으세요.
-- TODO: AI가 가장 최근에 했던 실수와 그것이 왜 잘못인지 한 줄로 적으세요.
+{antipattern_block}
 
 ## 의존성
 {deps_block}
+
+## 핫 파일 (최근 90일 변경 빈도 Top 5)
+{hot_files_block}
 
 ## 암묵지 (코드에 드러나지 않는 것)
 - TODO: 팀이 암묵적으로 따르지만 코드엔 없는 규칙 하나.
@@ -261,8 +342,10 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 """
 
 
-def render_what_block(module_path: str, stack_hint: str, file_count: int) -> str:
-    return f"- TODO: `{module_path}` 의 책임을 한 문장으로 적으세요.\n- {stack_hint} 소스 파일 {file_count}개."
+def render_what_block(module_path: str, stack_hint: str, file_count: int, summary: str | None) -> str:
+    """T-10: 루트 CLAUDE.md 의 module map 1줄 설명을 자동으로 cherry-pick."""
+    head = f"- {summary}" if summary else f"- TODO: `{module_path}` 의 책임을 한 문장으로 적으세요."
+    return f"{head}\n- {stack_hint} 소스 파일 {file_count}개."
 
 
 def render_how_block(layer_hints: list[str]) -> str:
@@ -283,6 +366,30 @@ def render_deps_block(deps: list[str]) -> str:
         out.append(f"- `{d}`")
     if len(deps) > 8:
         out.append(f"- … 외 {len(deps) - 8}개 (빌드 파일 참조)")
+    return "\n".join(out)
+
+
+def render_antipattern_block(fix_subjects: list[str]) -> str:
+    """T-10: 모듈 내 fix 커밋 subject 를 안티패턴 후보로 시드."""
+    if not fix_subjects:
+        return ("- TODO: 합리적으로 보이지만 이 모듈을 깨뜨리는 것 3~5개를 적으세요.\n"
+                "- TODO: AI가 가장 최근에 했던 실수와 그것이 왜 잘못인지 한 줄로 적으세요.")
+    out = ["> 최근 fix/revert 커밋 (안티패턴 후보 — 검토 후 절대 금지 항목으로 승격):"]
+    for s in fix_subjects[:5]:
+        # 길이 제한
+        snippet = s[:140].replace("\n", " ").replace("|", "│")
+        out.append(f"- `{snippet}`")
+    out.append("- TODO: 위 fix 커밋 패턴을 보고 '절대 금지 — X. 이유 — Y. 대신 — Z' 형식으로 정리하세요.")
+    return "\n".join(out)
+
+
+def render_hot_files_block(hot_files: list[tuple[str, int]]) -> str:
+    """T-10: git log 기반 핫 파일 Top 5."""
+    if not hot_files:
+        return "- _최근 90일간 git 변경 없음 (또는 git 미사용 모듈)._"
+    out = []
+    for path, n in hot_files:
+        out.append(f"- `{path}` — {n}회 변경")
     return "\n".join(out)
 
 
@@ -328,12 +435,18 @@ def run(target: Path, out_dir: Path, top_n: int):
         file_count = sum(1 for p in module_dir.rglob("*")
                          if p.is_file() and p.suffix in CODE_EXTS
                          and not any(part in EXCLUDE_DIRS for part in p.parts))
+        # T-10: 루트 CLAUDE.md / git history 에서 자동 채움
+        summary = module_summary_from_root_claude_md(target, str(m))
+        hot_files = git_hot_files(target, str(m))
+        fix_subjects = git_fix_subjects(target, str(m))
         content = TEMPLATE.format(
             module_path=str(m),
             stack_hint=stack,
-            what_block=render_what_block(str(m), stack, file_count),
+            what_block=render_what_block(str(m), stack, file_count, summary),
             how_block=render_how_block(layers),
+            antipattern_block=render_antipattern_block(fix_subjects),
             deps_block=render_deps_block(deps),
+            hot_files_block=render_hot_files_block(hot_files),
             today=today,
         )
         out_path = out_dir / m / "CLAUDE.md"

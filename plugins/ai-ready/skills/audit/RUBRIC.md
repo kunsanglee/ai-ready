@@ -76,6 +76,12 @@ Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-m
 | Metrics doc / dashboard for AI usage (`metrics/`, `analytics/`, `.claude/metrics`) | 7 |
 | PR review time, AI-PR merge rate, or token usage tracking exists | 8 |
 
+**Partial credit (since v0.1.2)**: outcome metrics often live outside the repo (Notion, Confluence, Datadog, Grafana). The audit awards partial points (3/7 or 3/8) when:
+- Root `README.md` / `CLAUDE.md` / `docs/INDEX.md` references an external dashboard URL (Notion, Atlassian, Datadog, Grafana, Metabase, Mixpanel, Redash, Looker, Tableau), **or**
+- The same docs mention tracking keywords (`ccusage`, `token usage`, `PR review time`, `AI PR merge rate`, `주간 보고`, `AI 사용량`)
+
+The full credit still requires an in-repo artifact so it can be re-verified next run.
+
 ---
 
 ## Scoring Notes
@@ -84,3 +90,5 @@ Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-m
 - **Evidence required**: every awarded point must reference a file path or measurement that can be re-verified next run.
 - **Don't count root README** as an AI-ready doc unless it's structured for agents (has explicit "for AI" / "agent guidelines" section).
 - **One source per rule**: if `wiki/decisions/` has 12 ADRs, that still scores 5 points for rule 3.2, not 60.
+- **Self-output excluded**: `.ai-ready/` (the audit's own output directory) is excluded from scans. Module-CLAUDE.md scaffolds in `.ai-ready/scaffolds/` do NOT count toward coverage — they only count once moved to the actual module.
+- **Thin-index recognition**: rule 1.2 also accepts `docs/*.md` and `wiki/*.md` references (not only module paths) so thin-index style root CLAUDE.md (lazy-load trigger tables) is properly credited.

@@ -49,6 +49,9 @@ OUTCOME_FILE_NAMES = {
 CI_FILES = (
     ".github/workflows", ".gitlab-ci.yml", ".circleci/config.yml",
     "Jenkinsfile", "azure-pipelines.yml", ".buildkite",
+    # 추가 CI provider — Bitbucket / Travis / Drone / AppVeyor / Cloud Build
+    "bitbucket-pipelines.yml", ".travis.yml", ".drone.yml",
+    "appveyor.yml", "cloudbuild.yaml", "cloudbuild.yml",
 )
 
 PRECOMMIT_FILES = (
@@ -59,12 +62,16 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache",
+    ".ai-ready",  # 자기 산출물 자기참조 차단 — scaffolds/CLAUDE.md 가 점수에 섞이지 않도록
 }
 
 # 명시적 DO-NOT 가이드를 나타내는 표현 (다국어)
+# 한국어는 word boundary 가 잘 동작 안 하므로 명령형 종결을 명시해 false positive 줄임
 DONOT_PATTERNS = [
-    r"\bDO NOT\b", r"\bMUST NOT\b", r"\bNEVER\b",
-    r"절대\s*하지", r"절대\s*금지", r"금지\b", r"하지\s*마", r"❌", r"⛔",
+    r"\bDO NOT\b", r"\bDON'?T\b", r"\bMUST NOT\b", r"\bNEVER\b",
+    r"절대\s*(?:하지|금지|하면)", r"(?:^|\s|[#*\-])금지(?:\b|[\s.…!,;:])",
+    r"하지\s*마(?:라|세요|십시오|요)", r"하면\s*안\s*(?:됩|돼)",
+    r"❌", r"⛔",
 ]
 
 USAGE_PATTERNS = [
@@ -94,15 +101,36 @@ def read_text(path: Path) -> str:
 
 
 def has_any_path(target: Path, candidates) -> list[str]:
+    """T-6: case-insensitive FS 에서 같은 파일이 두 candidate 모두 매칭되는 경우 dedupe.
+
+    inode + device 비교가 가장 정확 (realpath 는 case 보존이라 macOS APFS 에서 dedupe 실패).
+    """
     found = []
+    seen_keys = set()
     for c in candidates:
-        if (target / c).exists():
-            found.append(c)
+        p = target / c
+        if not p.exists():
+            continue
+        try:
+            st = p.stat()
+            key = (st.st_dev, st.st_ino)
+        except OSError:
+            key = os.path.realpath(p).lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        found.append(c)
     return found
 
 
+def _walk_onerror(_err: OSError) -> None:
+    """T-8: os.walk 의 PermissionError 등 fail-soft. 에러 무시하고 다음 디렉토리로."""
+    return None
+
+
 def regex_any(text: str, patterns: list[str]) -> bool:
-    return any(re.search(p, text) for p in patterns)
+    """T-8: case-insensitive — Don't / DO NOT / dont / don't 모두 매칭."""
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
 # --- Single-pass scanner (M-5) -------------------------------------------
@@ -132,7 +160,7 @@ def scan_target(target: Path) -> dict:
     }
     seen_modules = set()
 
-    for dirpath, dirnames, filenames in os.walk(target):
+    for dirpath, dirnames, filenames in os.walk(target, onerror=_walk_onerror):
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS)
         rel_dir = Path(dirpath).relative_to(target)
         rel_str = str(rel_dir).lower().replace("\\", "/")
@@ -227,25 +255,28 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
         r.award(3, [str(root_doc.relative_to(target))])
     rules.append(r)
 
-    # 1.2 루트 문서가 3개 이상의 모듈 경로 참조 (C-1 fix: 모듈 첫 segment 필터)
+    # 1.2 루트 문서가 3개 이상의 모듈 경로/문서 참조
+    # T-7: 한글 모듈명 매칭(가-힣) + thin-index 패턴 인식 (docs/wiki/doc 디렉토리도 가산)
     r = Rule("루트 문서가 3개 이상의 모듈 경로/문서 참조", 4)
     if root_doc:
         text = doc_text.get(root_doc, "")
-        path_hits = re.findall(r"[`\[]([\w\-./]+/[\w\-./]+)[`\]]", text)
-        # 실제 모듈의 첫 segment를 가진 경로만 인정
+        path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
         module_first_segs = {str(m).split("/")[0] for m in modules if m != Path(".")}
-        valid_paths = {
-            p for p in path_hits
-            if "/" in p
-            and not p.startswith("http")
-            and p.split("/")[0] in module_first_segs
-        }
+        # docs/*.md, wiki/*.md 같은 lazy-load 트리거 테이블도 인덱스 참조로 인정 (thin-index 패턴)
+        DOC_DIRS = {"docs", "wiki", "doc", "guides", ".ai-ready"}
+        valid_paths = set()
+        for p in path_hits:
+            if "/" not in p or p.startswith("http"):
+                continue
+            seg = p.split("/")[0]
+            if seg in module_first_segs or seg in DOC_DIRS:
+                valid_paths.add(p)
         if len(valid_paths) >= 3:
-            r.award(4, sorted(valid_paths)[:5], note=f"유효한 모듈 경로 참조 {len(valid_paths)}건")
+            r.award(4, sorted(valid_paths)[:5], note=f"유효한 모듈/문서 경로 참조 {len(valid_paths)}건")
         elif len(valid_paths) >= 1:
             r.award(2, sorted(valid_paths), note=f"{len(valid_paths)}건만 발견 (3건 이상 필요)")
         else:
-            r.note = "루트 문서에 모듈 경로 참조가 없음"
+            r.note = "루트 문서에 모듈/문서 경로 참조가 없음"
     rules.append(r)
 
     # 1.3 모듈별 CLAUDE.md 커버리지
@@ -536,21 +567,63 @@ def score_freshness(target: Path, scan: dict, doc_text: dict) -> dict:
     }
 
 
+# T-9: 성과 지표 부분 점수 — 외부 dashboard / 추적 인프라 키워드
+EXTERNAL_DASHBOARD_PATTERNS = (
+    r"notion\.so/[\w\-/]+", r"atlassian\.net/wiki", r"datadoghq\.com",
+    r"grafana[\.\w/]*", r"metabase[\.\w/]*", r"mixpanel[\.\w/]*",
+    r"redash[\.\w/]*", r"looker[\.\w/]*", r"tableau[\.\w/]*",
+)
+EXTERNAL_TRACKING_PATTERNS = (
+    r"\bccusage\b", r"token[\s_\-]*usage", r"pr[\s_\-]*review[\s_\-]*time",
+    r"ai[\s_\-]*pr[\s_\-]*(?:merge|rate)", r"merge[\s_\-]*rate",
+    r"주간\s*보고", r"AI\s*사용량",
+)
+
+
+def _scan_root_docs_for_patterns(target: Path, patterns) -> list[str]:
+    """루트 README.md / CLAUDE.md / docs/INDEX.md 에 패턴이 매칭되는지 검사."""
+    hits = []
+    for doc_name in ("README.md", "CLAUDE.md", "docs/INDEX.md"):
+        doc = target / doc_name
+        if not doc.exists():
+            continue
+        text = read_text(doc)
+        for p in patterns:
+            if re.search(p, text, re.IGNORECASE):
+                hits.append(f"{doc_name} ({p})")
+                break  # 한 문서당 한 번만 카운트
+    return hits
+
+
 def score_outcomes(target: Path, scan: dict) -> dict:
     rules = []
 
-    # 7.1: metrics 디렉토리 또는 metrics.md
+    # 7.1: metrics 디렉토리/파일 (정확 매칭) + 외부 dashboard URL 부분점수
     r = Rule("매트릭스 문서 / 대시보드 존재", 7)
     candidates = ["metrics", "analytics", ".claude/metrics", "dashboards", "metrics.md"]
     found = has_any_path(target, candidates)
     if found:
         r.award(7, found)
+    else:
+        # T-9: 외부 dashboard URL 발견 시 부분 점수 (3/7)
+        ext_hits = _scan_root_docs_for_patterns(target, EXTERNAL_DASHBOARD_PATTERNS)
+        if ext_hits:
+            r.award(3, ext_hits[:3], note="외부 dashboard URL 발견 — 부분 점수. 운영 대시보드를 metrics/ 로 가져오면 만점")
+        else:
+            r.note = "metrics/, analytics/, .claude/metrics 등 디렉토리 미발견. 외부 dashboard URL 도 없음"
     rules.append(r)
 
-    # 7.2 (M-3 fix): 정확 이름 매칭만
+    # 7.2: 정확 이름 매칭 + 추적 키워드 부분점수
     r = Rule("PR 리뷰 시간 / AI 사용량 / 토큰 추적", 8)
     if scan["outcome_paths"]:
         r.award(8, scan["outcome_paths"][:3])
+    else:
+        # T-9: 추적 인프라 키워드 발견 시 부분 점수 (3/8)
+        tr_hits = _scan_root_docs_for_patterns(target, EXTERNAL_TRACKING_PATTERNS)
+        if tr_hits:
+            r.award(3, tr_hits[:3], note="추적 키워드 언급 발견 — 부분 점수. 실제 csv/md 산출물로 정착하면 만점")
+        else:
+            r.note = "PR 리뷰 시간 / 토큰 사용량 등 추적 산출물 미발견"
     rules.append(r)
 
     return {
@@ -626,7 +699,24 @@ ACTION_HINTS = {
 }
 
 
+def _validate_action_hints(category_results: list[dict]) -> None:
+    """T-8: 모든 rule.name 이 ACTION_HINTS 에 등록됐는지 smoke check.
+
+    의도된 skip rule(빌드 매니페스트)을 제외하고 미등록 룰이 있으면 stderr 경고.
+    """
+    rule_names = {r["name"] for cat in category_results for r in cat["rules"]}
+    intentional_skip = {"빌드 매니페스트로 의존 그래프 추출 가능"}
+    missing = rule_names - set(ACTION_HINTS.keys()) - intentional_skip
+    if missing:
+        print(f"경고: ACTION_HINTS 미정의 룰 {len(missing)}건 — {sorted(missing)}", file=sys.stderr)
+
+
+# ROI 스케일 상수 — effort=15분/missing=5점/impact=5 일 때 ROI≈100 으로 정수 직관 범위
+_ROI_SCALE = 60
+
+
 def build_action_list(category_results: list[dict]) -> list[dict]:
+    _validate_action_hints(category_results)
     actions = []
     for cat in category_results:
         for rule in cat["rules"]:
@@ -637,7 +727,7 @@ def build_action_list(category_results: list[dict]) -> list[dict]:
             effort, impact, message = hint
             if effort == 0:
                 continue
-            roi = (impact * missing) / max(effort, 1) * 60
+            roi = (impact * missing) / max(effort, 1) * _ROI_SCALE
             actions.append({
                 "category": cat["name"],
                 "rule": rule["name"],
@@ -662,10 +752,16 @@ def render_report(audit: dict) -> str:
     lines = []
     lines.append(f"# AI 준비도 감사 리포트")
     lines.append("")
-    lines.append(f"- **생성 시각**: {audit['timestamp']}")
+    # T-5: 로컬 + UTC 병기
+    ts_local = audit.get("timestamp_local", "")
+    ts_utc = audit["timestamp"]
+    lines.append(f"- **생성 시각**: {ts_local} (로컬) · {ts_utc} (UTC)" if ts_local else f"- **생성 시각**: {ts_utc}")
     lines.append(f"- **점수**: **{audit['total_score']} / {audit['max_score']}** — _{audit['grade']}_")
     lines.append(f"- **감지된 모듈**: {audit['module_count']}")
-    lines.append(f"- **CLAUDE.md 문서 수**: {audit['claude_doc_count']}")
+    scaffold_note = ""
+    if audit.get("claude_doc_count", 0) > audit.get("module_count", 0) + 1:
+        scaffold_note = " (루트 + scaffold 포함 가능)"
+    lines.append(f"- **CLAUDE.md 문서 수**: {audit['claude_doc_count']}{scaffold_note}")
     lines.append("")
 
     lines.append("## 카테고리별 점수")
@@ -729,9 +825,10 @@ def render_readme(audit: dict) -> str:
     lines.append("|---|---|")
     lines.append("| `audit-report.md` | 카테고리별 점수·규칙별 통과 여부·ROI 우선순위 액션. 사람이 먼저 읽는 리포트 |")
     lines.append("| `audit.json` | 동일 결과의 기계 판독용 (스크립트·대시보드 입력) |")
-    lines.append("| `dashboard.html` | 점수·카테고리 시각화 (브라우저로 직접 열기) |")
+    lines.append("| `dashboard.html` | 점수·카테고리 시각화 + 추이 sparkline (브라우저로 직접 열기) |")
+    lines.append("| `history/{ts}.json` | 매 실행마다 archive — dashboard 추이 차트의 입력 |")
     lines.append("| `scaffolds/<module>/CLAUDE.md` | 핫 모듈용 CLAUDE.md 초안. 검토 후 실제 모듈 디렉토리로 이동 |")
-    lines.append("| `scaffolds/ANTIPATTERNS.md` | 180일 git 핫스팟 기반 안티패턴 시드. 검토 후 false positive 정리 |")
+    lines.append("| `scaffolds/ANTIPATTERNS.md` | 180일 git 핫스팟 기반 안티패턴 시드. 클러스터링된 후보 — 검토 후 채택 |")
     lines.append("| `hooks/freshness_check.sh` | (선택) Claude Code Stop hook — 소스 변경에 비해 CLAUDE.md가 오래된 경우 경고 |")
     lines.append("")
     lines.append("## 플러그인 설치 (처음 사용)")
@@ -785,7 +882,10 @@ def render_readme(audit: dict) -> str:
     lines.append("")
     lines.append("- **휴리스틱 점수**: ±5점 노이즈. 절대값이 아니라 추이를 본다.")
     lines.append("- **scaffold/는 초안**: `scaffolds/` 하위 산출물은 그대로 쓰지 말고 검토·이동·정리 후 실제 위치에 둔다.")
+    lines.append("  - `scaffolds/<module>/CLAUDE.md` → 검토 후 `<module>/CLAUDE.md` 로 `git mv`")
+    lines.append("  - `scaffolds/ANTIPATTERNS.md` → 검토 후 `docs/ANTIPATTERNS.md` 로 채택. 시드와 운영본이 공존할 때는 `docs/` 가 권위")
     lines.append("- **재실행 시 덮어쓰기**: `audit.json` / `audit-report.md` / `dashboard.html` / 본 README는 매 실행 시 갱신된다. 직접 수정한 내용은 사라진다.")
+    lines.append("- **history/ 는 누적**: 이전 실행 결과를 보존하므로 dashboard 가 추이 차트를 그릴 수 있다. 손대지 마세요.")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -794,6 +894,40 @@ def render_readme(audit: dict) -> str:
 
 
 # --- Main -----------------------------------------------------------------
+
+def _archive_history(out_dir: Path, audit: dict) -> Path | None:
+    """T-11: history/{timestamp}.json 으로 audit 결과 archive — dashboard 추이 차트 입력."""
+    history_dir = out_dir / "history"
+    try:
+        history_dir.mkdir(exist_ok=True)
+    except OSError:
+        return None
+    # 파일명에 안전한 timestamp (UTC). 콜론·플러스 문자 제거.
+    ts = audit["timestamp"].replace(":", "-").replace("+", "_")
+    path = history_dir / f"{ts}.json"
+    path.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _copy_freshness_hook(out_dir: Path) -> Path | None:
+    """T-4: 플러그인의 freshness_check.sh 를 .ai-ready/hooks/ 에 실제 복사.
+
+    install_hook.py 가 등록할 때 `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`
+    경로를 가리키므로 파일이 실제로 존재해야 한다 (이전엔 SKILL.md 만 광고하고 안 만들었음).
+    """
+    src = Path(__file__).resolve().parent.parent / "hooks" / "freshness_check.sh"
+    if not src.is_file():
+        return None
+    dst_dir = out_dir / "hooks"
+    try:
+        dst_dir.mkdir(exist_ok=True)
+        dst = dst_dir / "freshness_check.sh"
+        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        os.chmod(dst, 0o755)
+        return dst
+    except OSError:
+        return None
+
 
 def run(target: Path, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -813,10 +947,12 @@ def run(target: Path, out_dir: Path) -> dict:
         score_outcomes(target, scan),
     ]
     total = sum(c["score"] for c in categories)
+    now_utc = datetime.now(timezone.utc)
     audit = {
-        "schema_version": 2,  # 1 → 2: scan 구조 + scoring 정밀화
+        "schema_version": 3,  # 2 → 3: timestamp_local, history archive, outcome 부분점수
         "target": str(target),
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": now_utc.isoformat(timespec="seconds"),
+        "timestamp_local": now_utc.astimezone().isoformat(timespec="seconds"),
         "module_count": len(scan["modules"]),
         "claude_doc_count": len(scan["claude_docs"]),
         "modules": [str(m) for m in scan["modules"]],
@@ -830,6 +966,8 @@ def run(target: Path, out_dir: Path) -> dict:
     (out_dir / "audit.json").write_text(json.dumps(audit, indent=2, ensure_ascii=False))
     (out_dir / "audit-report.md").write_text(render_report(audit), encoding="utf-8")
     (out_dir / "README.md").write_text(render_readme(audit), encoding="utf-8")
+    _archive_history(out_dir, audit)
+    _copy_freshness_hook(out_dir)
     return audit
 
 
@@ -849,6 +987,9 @@ def main():
     print(f"  생성: {out_dir / 'audit.json'}")
     print(f"  생성: {out_dir / 'audit-report.md'}")
     print(f"  생성: {out_dir / 'README.md'}")
+    print(f"  archive: {out_dir / 'history'}/")
+    if (out_dir / 'hooks' / 'freshness_check.sh').exists():
+        print(f"  생성: {out_dir / 'hooks' / 'freshness_check.sh'}")
 
 
 if __name__ == "__main__":
