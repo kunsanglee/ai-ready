@@ -42,6 +42,15 @@ CODE_EXTS = {
     ".py", ".rs", ".go", ".rb", ".php", ".cs", ".swift",
 }
 
+# 단일 모듈 프로젝트의 패키지(=논리 모듈) 탐색을 시작할 후보 디렉토리.
+JVM_SOURCE_ROOTS = (
+    Path("src/main/kotlin"),
+    Path("src/main/java"),
+)
+APPLICATION_MARKERS = (
+    "Application.kt", "Application.java",
+)
+
 
 def walk(target: Path):
     for dirpath, dirnames, filenames in os.walk(target):
@@ -393,6 +402,128 @@ def render_hot_files_block(hot_files: list[tuple[str, int]]) -> str:
     return "\n".join(out)
 
 
+# --- Single-module package detection -------------------------------------
+
+def find_base_package(target: Path) -> Path | None:
+    """JVM 소스 루트에서 base package(Application 클래스가 있는 디렉토리) 를 찾는다.
+
+    예: src/main/kotlin/com/kisas/Application.kt → src/main/kotlin/com/kisas
+    여러 source root 가 있으면 첫 번째 매칭 사용.
+    """
+    for source_root in JVM_SOURCE_ROOTS:
+        root = target / source_root
+        if not root.is_dir():
+            continue
+        # rglob 로 Application 마커 찾기
+        for marker in APPLICATION_MARKERS:
+            try:
+                hit = next(root.rglob(marker), None)
+            except OSError:
+                continue
+            if hit is not None:
+                return hit.parent
+    return None
+
+
+def find_packages(base_package: Path) -> list[Path]:
+    """base package 의 직속 자식 디렉토리 = 패키지(논리 모듈)."""
+    if not base_package.is_dir():
+        return []
+    out = []
+    for child in sorted(base_package.iterdir(), key=lambda p: p.name):
+        if not child.is_dir():
+            continue
+        if child.name in EXCLUDE_DIRS or child.name.startswith("."):
+            continue
+        # 코드 파일이 1개라도 있는 경우만
+        has_code = any(p.suffix in CODE_EXTS for p in child.rglob("*") if p.is_file())
+        if has_code:
+            out.append(child)
+    return out
+
+
+def detect_package_role(pkg_dir: Path) -> str:
+    """패키지 역할 추정 — controller/service/repository 존재로 도메인 / 횡단 구분."""
+    has_controller = next(pkg_dir.rglob("*Controller.*"), None) is not None
+    has_service = next(pkg_dir.rglob("*Service.*"), None) is not None
+    has_repository = next(pkg_dir.rglob("*Repository.*"), None) is not None
+    if has_controller and (has_service or has_repository):
+        return "도메인 (Controller + Service/Repository)"
+    if has_controller:
+        return "도메인 (Controller 만)"
+    if has_service or has_repository:
+        return "도메인 (Service/Repository — Controller 없음)"
+    return "횡단 / 설정 / 유틸"
+
+
+def collect_endpoints(pkg_dir: Path) -> list[str]:
+    """패키지의 Controller 파일에서 @RequestMapping / @GetMapping / @PostMapping 등 추출."""
+    endpoints: list[str] = []
+    pattern = re.compile(r'@(?:RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping)\(\s*"([^"]+)"')
+    try:
+        for ctrl in pkg_dir.rglob("*Controller.*"):
+            text = ctrl.read_text(encoding="utf-8", errors="replace")
+            for m in pattern.finditer(text):
+                endpoints.append(m.group(1))
+    except OSError:
+        pass
+    return endpoints
+
+
+PACKAGE_CATALOG_TEMPLATE = """# PACKAGES.md — 패키지 카탈로그
+
+> **읽기 트리거**: 패키지 진입 / 새 도메인 추가 / 책임 경계 확인 / 트랜잭션·이벤트 흐름 파악.
+>
+> 단일 모듈 프로젝트의 *패키지가 곧 논리 모듈* 이다. 본 문서는 패키지 단위 CLAUDE.md 를 분산 배치하는 대신 한 곳에 모은 카탈로그.
+>
+> **TODO** 로 시작하는 줄은 사람이 채워야 하는 자리표시자입니다. ai-ready scaffold 가 자동 감지한 단서로 1차 채워뒀습니다.
+
+베이스 패키지: `{base_package}` ({total} 개 패키지 감지)
+
+---
+
+{sections}
+
+---
+
+## 새 도메인 패키지 추가 시 체크리스트
+
+1. 새 패키지 디렉토리 생성 + 표준 레이아웃 (`controller/`, `service/`, `domain/`, `repository/`).
+2. 본 문서에 새 도메인 섹션 추가 + 루트 `CLAUDE.md` 의 모듈 맵 갱신.
+3. TODO: 프로젝트 별 추가 체크리스트를 적으세요 (ADR / 테스트 패턴 / DDL 등).
+"""
+
+PACKAGE_SECTION_TEMPLATE = """### `{name}/` — {role}
+
+- **목적**: TODO — 이 패키지의 책임을 1~2줄로 적으세요.
+- **엔드포인트**: {endpoints}
+- **흐름**: TODO — Controller → Service → Repository 의 트랜잭션 / 이벤트 경계를 적으세요.
+- **외부 IO**: TODO — Sheets / Slack / S3 등 부작용 빈과 `@Profile` 분기를 적으세요.
+- **테스트 진입점**: TODO — ServiceTestSupport / IntegrationTestSupport 권장 패턴.
+- **함정**: TODO — 이 패키지 특유의 주의사항 3개 이내.
+- **관련 ADR / 문서**: TODO.
+"""
+
+
+def render_package_catalog(target: Path, base_package: Path, packages: list[Path]) -> str:
+    sections = []
+    for pkg in packages:
+        role = detect_package_role(pkg)
+        endpoints = collect_endpoints(pkg)
+        endpoints_str = ", ".join(f"`{e}`" for e in endpoints) if endpoints else "TODO — 패키지의 외부 노출 endpoint 를 적으세요."
+        sections.append(PACKAGE_SECTION_TEMPLATE.format(
+            name=pkg.name,
+            role=role,
+            endpoints=endpoints_str,
+        ))
+    base_rel = base_package.relative_to(target)
+    return PACKAGE_CATALOG_TEMPLATE.format(
+        base_package=base_rel,
+        total=len(packages),
+        sections="\n".join(sections),
+    )
+
+
 # --- Main -----------------------------------------------------------------
 
 def select_top_modules(target: Path, modules: list[Path], top_n: int) -> list[Path]:
@@ -416,8 +547,24 @@ def select_top_modules(target: Path, modules: list[Path], top_n: int) -> list[Pa
 def run(target: Path, out_dir: Path, top_n: int):
     out_dir.mkdir(parents=True, exist_ok=True)
     modules = find_modules(target)
-    if not modules:
-        print("모듈 미감지 (빌드 매니페스트 없음)", file=sys.stderr)
+    # 단일 모듈 분기 — 빌드 매니페스트가 루트에만 있는 경우 패키지 카탈로그 스캐폴드 생성
+    non_root = [m for m in modules if m != Path(".")]
+    if not non_root:
+        base_package = find_base_package(target)
+        if base_package is None:
+            print("단일 모듈 — 그러나 JVM source root (src/main/kotlin|java) 의 Application 클래스를 찾지 못함. "
+                  "다른 언어 / 비표준 레이아웃은 수동으로 docs/PACKAGES.md 를 작성하세요.", file=sys.stderr)
+            return
+        packages = find_packages(base_package)
+        if not packages:
+            print(f"단일 모듈 — base package({base_package.relative_to(target)}) 아래 패키지가 없음", file=sys.stderr)
+            return
+        catalog_path = out_dir / "PACKAGES.md"
+        catalog_path.write_text(render_package_catalog(target, base_package, packages), encoding="utf-8")
+        print(f"단일 모듈 — 패키지 카탈로그 스캐폴드 생성: {catalog_path}")
+        print(f"  base package: {base_package.relative_to(target)}")
+        print(f"  감지된 패키지 {len(packages)}개: {', '.join(p.name for p in packages)}")
+        print(f"  → 검토 후 docs/PACKAGES.md 로 복사하세요.")
         return
     selected = select_top_modules(target, modules, top_n)
     today = datetime.now().strftime("%Y-%m-%d")

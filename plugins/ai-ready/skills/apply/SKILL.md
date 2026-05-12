@@ -12,6 +12,17 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 - 대상 디렉토리에 `.ai-ready/audit.json` 이 이미 존재 (`ai-ready:audit` 선행 실행)
 - 절대 경로로 받은 `<target>` (사용자가 지정)
 
+## 레이아웃 감지 (단일 vs 멀티 모듈)
+
+`audit.json` 의 `single_module_mode` (bool) + `package_catalog` (path|null) 를 먼저 확인한다.
+
+| 모드 | 동작 차이 |
+|---|---|
+| `single_module_mode: true` | (a) `scaffold.py` 가 `scaffolds/PACKAGES.md` 한 파일을 생성 → 사용자 검토 후 `docs/PACKAGES.md` 로 이동. 패키지별 `CLAUDE.md` 분산 생성하지 않는다. (b) 도메인 패키지의 표준 레이아웃 (`controller/ service/ domain/ repository/` 4개 중 3개 이상) 일관성도 평가됨 — 부족 시 `audit-report.md` 의 권고대로 정렬 권장. |
+| `single_module_mode: false` | 멀티 모듈 기본 흐름 — 핫 모듈 top-N 의 `CLAUDE.md` 초안 생성. |
+
+매핑 테이블의 일부 룰은 *룰 이름 자체가 모드에 따라 다르다*. apply 는 `rule.name` 의 정확한 문자열로 매핑하므로 audit.json 에 들어온 이름을 그대로 키로 사용하면 된다.
+
 ## 적용 흐름
 
 1. **목록화**: `audit.json` 의 `actions` 배열을 ROI 내림차순으로 읽고, 각 항목을 아래 매핑 테이블로 분류한다.
@@ -31,6 +42,10 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 50~150줄 짜리 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장 |
 | 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_module_map.py --target <T>` |
 | 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
+| 루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조 *(단일 모듈)* | **judgment** | Claude 가 루트 `CLAUDE.md` 의 '모듈 맵' 섹션에서 `docs/PACKAGES.md` lazy-load 진입 안내를 박는다 |
+| 패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션 *(단일 모듈)* | **mechanical+judgment** | `scaffold.py` 가 `scaffolds/PACKAGES.md` 초안 생성 → Claude 가 패키지별 TODO 라인을 패키지 코드 훑어 채움 → `docs/PACKAGES.md` 로 이동 |
+| 패키지 카탈로그 문서 적정 길이 (50~300줄) *(단일 모듈)* | **judgment** | Claude 가 카탈로그를 50~300줄 범위로 다이어트하거나 패키지별 항목을 보강 |
+| 논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈) | **judgment** | (1) 카탈로그 섹션이 부족하면 위 룰 흐름. (2) 도메인 패키지 표준 레이아웃 부족 시 Claude 가 누락 디렉토리 (controller/service/domain/repository) 정렬 제안 — *코드 이동 동반* 이라 사용자 명시 승인 필수 |
 | 인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_index.py --target <T> --out <T>/docs/INDEX.md` |
 | 루트 CLAUDE.md 200줄 이하 | **mechanical+judgment** | thin index 패턴 권장: `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 lazy-load 트리거 표를 주입한 뒤, Claude 가 인라인된 detail 을 `docs/CONVENTIONS.md` / `docs/API_COMPATIBILITY.md` / `docs/ERROR_HANDLING.md` / `docs/GIT_WORKFLOW.md` / `docs/DDL_DML.md` 등으로 분리 (사용자 승인 후) |
 | 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트 |

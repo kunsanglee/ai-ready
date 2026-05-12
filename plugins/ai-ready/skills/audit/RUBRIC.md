@@ -5,6 +5,15 @@ Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-m
 
 ---
 
+## Layout-aware scoring
+
+This rubric scores **two layouts** with parallel rules. The audit script auto-detects layout from build manifests:
+
+- **Multi-module**: ≥1 build manifest in non-root directories (e.g. `core/build.gradle.kts`, `app/build.gradle.kts`).
+- **Single-module**: build manifest only at repo root. Packages (directories under the base source path) are treated as **logical modules**, and a single `docs/PACKAGES.md` catalog substitutes for per-module `CLAUDE.md`.
+
+Rules below show both forms where they differ.
+
 ## 1. Navigation (15)
 
 > Can an AI agent find the right module/file in 1–2 hops?
@@ -12,9 +21,8 @@ Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-m
 | Rule | Points |
 |------|--------|
 | Root `CLAUDE.md` (or `AGENTS.md`) exists | 3 |
-| Root doc references at least 3 module-level docs / paths | 4 |
-| Module-level docs exist for ≥50% of build-manifest modules | 5 |
-| Module-level coverage ≥80% | +3 (max 5 in this row) |
+| (Multi) Root doc references at least 3 module-level docs / paths<br>(Single) Root doc references the package catalog or ≥3 package paths | 4 |
+| (Multi) Module-level CLAUDE.md coverage<br>(Single) Package catalog (`docs/PACKAGES.md` etc.) exists with ≥3 package sections | 5 |
 | Index/MOC file exists (`docs/INDEX.md` preferred; `INDEX.md`, `wiki/index.md` accepted) | 3 |
 
 ## 2. Context Document Quality (20)
@@ -24,7 +32,7 @@ Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-m
 | Rule | Points |
 |------|--------|
 | Root `CLAUDE.md` ≤ 200 lines | 5 |
-| Module docs average ≤ 50 lines | 5 |
+| (Multi) Module docs average ≤ 50 lines<br>(Single) Package catalog 50–300 lines (not too short, not too bloated for lazy-load) | 5 |
 | At least one doc has explicit "DO NOT" / "절대" / "금지" / "MUST NOT" section | 5 |
 | At least one doc has explicit usage / "when to use" guidance | 5 |
 
@@ -45,8 +53,10 @@ Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-m
 | Rule | Points |
 |------|--------|
 | Module dependency map / diagram (`ARCHITECTURE.md`, `dependencies.md`) | 5 |
-| Build manifests parseable for static dep graph (gradle/maven/npm/cargo) | 5 |
+| (Multi) Build manifests parseable for static dep graph (gradle/maven/npm/cargo)<br>(Single) Package catalog with ≥3 sections **AND** ≥60% of domain packages follow standard layout (`controller/ service/ domain/ repository/` — at least 3 of 4) | 5 |
 | Cross-module API contracts documented (OpenAPI, proto, contracts/) | 5 |
+
+> **Why standard-layout check on single-module**: gradle 같은 빌드 시스템이 모듈 간 의존 그래프를 강제하는 것과 동등한 신호를 단일 모듈에서는 *패키지 간 구조적 일관성* 이 제공한다. 도메인 패키지가 같은 모양이면 (1) AI 가 패턴 모방으로 새 도메인을 추가하기 쉽고, (2) 패키지 경계가 명시적이라 순환 의존이 들어올 자리가 줄어든다.
 
 ## 5. Verification Quality Gates (10)
 

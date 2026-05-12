@@ -35,6 +35,22 @@ ANTIPATTERN_NAMES = {"ANTIPATTERNS.md", "ANTI_PATTERNS.md", "anti-patterns.md"}
 ARCH_NAMES = {"ARCHITECTURE.md", "DEPENDENCIES.md", "dependencies.md"}
 NAMING_NAMES = {"NAMING.md", "naming.md"}
 
+# 단일 모듈 프로젝트에서 모듈 CLAUDE.md 대체 역할을 하는 카탈로그 문서.
+# 패키지(=논리 모듈) 별 진입점·흐름·외부 IO·함정을 한 문서에 모아둔 형태.
+PACKAGE_CATALOG_CANDIDATES = (
+    "docs/PACKAGES.md", "docs/packages.md",
+    "PACKAGES.md", "packages.md",
+    "docs/PACKAGE_CATALOG.md", "docs/MODULES.md",
+)
+
+# 단일 모듈 프로젝트에서 도메인 패키지가 따라야 하는 표준 레이아웃 디렉토리.
+# 4개 중 3개 이상을 가지면 "표준 레이아웃 준수" 로 판정.
+STANDARD_LAYOUT_DIRS = ("controller", "service", "domain", "repository")
+
+# 단일 모듈 base package 자동 감지를 위한 JVM 소스 루트와 Application 마커.
+JVM_SOURCE_ROOTS = ("src/main/kotlin", "src/main/java")
+APPLICATION_MARKERS = ("Application.kt", "Application.java")
+
 # M-1: ADR 디렉토리 — strict는 단독으로도 인정, loose는 .md 파일 ≥2개 필요
 ADR_DIR_HINTS_STRICT = ("docs/adr", "doc/adr", "wiki/decisions", "docs/decisions")
 ADR_DIR_HINTS_LOOSE = ("adr",)
@@ -131,6 +147,94 @@ def _walk_onerror(_err: OSError) -> None:
 def regex_any(text: str, patterns: list[str]) -> bool:
     """T-8: case-insensitive — Don't / DO NOT / dont / don't 모두 매칭."""
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+
+# --- Single-module helpers ------------------------------------------------
+
+def find_package_catalog(target: Path) -> Path | None:
+    """단일 모듈 프로젝트의 패키지 카탈로그 문서 (PACKAGES.md 등) 를 찾는다."""
+    for candidate in PACKAGE_CATALOG_CANDIDATES:
+        p = target / candidate
+        if p.is_file():
+            return p
+    return None
+
+
+def count_package_sections(catalog_text: str) -> int:
+    """카탈로그 문서 안의 패키지 섹션 개수.
+
+    헤더 패턴 후보:
+      ### `packagename/` ...
+      ### packagename — ...
+      ### `packagename` ...
+      ## packagename/ ...
+    """
+    patterns = [
+        r"^#{2,4}\s+`[\w\-]+/`",       # ### `enrollment/`
+        r"^#{2,4}\s+`[\w\-]+`",        # ### `enrollment`
+        r"^#{2,4}\s+[\w\-]+/\s+—",     # ### enrollment/ — ...
+        r"^#{2,4}\s+[\w\-]+\s+—",      # ### enrollment — ...
+    ]
+    count = 0
+    for line in catalog_text.splitlines():
+        if any(re.match(p, line) for p in patterns):
+            count += 1
+    return count
+
+
+def is_single_module(modules: list[Path]) -> bool:
+    """build manifest 가 루트에만 있는 단일 모듈 프로젝트인지."""
+    if not modules:
+        return True
+    non_root = [m for m in modules if m != Path(".")]
+    return len(non_root) == 0
+
+
+def find_base_package(target: Path) -> Path | None:
+    """JVM 소스 루트에서 Application 클래스가 위치한 base package 를 찾는다."""
+    for src in JVM_SOURCE_ROOTS:
+        root = target / src
+        if not root.is_dir():
+            continue
+        for marker in APPLICATION_MARKERS:
+            try:
+                hit = next(root.rglob(marker), None)
+            except OSError:
+                continue
+            if hit is not None:
+                return hit.parent
+    return None
+
+
+def find_domain_packages(base: Path) -> list[Path]:
+    """base package 의 직속 자식 중 Controller 파일을 *하나라도* 포함하는 도메인 패키지."""
+    if not base.is_dir():
+        return []
+    out = []
+    for child in sorted(base.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or child.name.startswith(".") or child.name in EXCLUDE_DIRS:
+            continue
+        try:
+            if next(child.rglob("*Controller.*"), None) is not None:
+                out.append(child)
+        except OSError:
+            continue
+    return out
+
+
+def standard_layout_coverage(domain_packages: list[Path]) -> tuple[int, int]:
+    """도메인 패키지 중 표준 레이아웃 4개 중 3개 이상 보유한 패키지의 비율.
+
+    Returns (compliant_count, total_count).
+    """
+    if not domain_packages:
+        return 0, 0
+    compliant = 0
+    for pkg in domain_packages:
+        present = sum(1 for d in STANDARD_LAYOUT_DIRS if (pkg / d).is_dir())
+        if present >= 3:
+            compliant += 1
+    return compliant, len(domain_packages)
 
 
 # --- Single-pass scanner (M-5) -------------------------------------------
@@ -247,6 +351,10 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
     rules = []
     modules = scan["modules"]
     claude_docs = scan["claude_docs"]
+    single_module = is_single_module(modules)
+    catalog_doc = find_package_catalog(target) if single_module else None
+    catalog_text = read_text(catalog_doc) if catalog_doc else ""
+    catalog_sections = count_package_sections(catalog_text) if catalog_text else 0
 
     # 1.1 루트 CLAUDE.md / AGENTS.md 존재
     r = Rule("루트 CLAUDE.md 또는 AGENTS.md 존재", 3)
@@ -255,33 +363,67 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
         r.award(3, [str(root_doc.relative_to(target))])
     rules.append(r)
 
-    # 1.2 루트 문서가 3개 이상의 모듈 경로/문서 참조
+    # 1.2 루트 문서가 3개 이상의 모듈/패키지 경로 참조
     # T-7: 한글 모듈명 매칭(가-힣) + thin-index 패턴 인식 (docs/wiki/doc 디렉토리도 가산)
-    r = Rule("루트 문서가 3개 이상의 모듈 경로/문서 참조", 4)
-    if root_doc:
-        text = doc_text.get(root_doc, "")
-        path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
-        module_first_segs = {str(m).split("/")[0] for m in modules if m != Path(".")}
-        # docs/*.md, wiki/*.md 같은 lazy-load 트리거 테이블도 인덱스 참조로 인정 (thin-index 패턴)
-        DOC_DIRS = {"docs", "wiki", "doc", "guides", ".ai-ready"}
-        valid_paths = set()
-        for p in path_hits:
-            if "/" not in p or p.startswith("http"):
-                continue
-            seg = p.split("/")[0]
-            if seg in module_first_segs or seg in DOC_DIRS:
-                valid_paths.add(p)
-        if len(valid_paths) >= 3:
-            r.award(4, sorted(valid_paths)[:5], note=f"유효한 모듈/문서 경로 참조 {len(valid_paths)}건")
-        elif len(valid_paths) >= 1:
-            r.award(2, sorted(valid_paths), note=f"{len(valid_paths)}건만 발견 (3건 이상 필요)")
-        else:
-            r.note = "루트 문서에 모듈/문서 경로 참조가 없음"
+    DOC_DIRS = {"docs", "wiki", "doc", "guides", ".ai-ready"}
+    if single_module:
+        # 단일 모듈: 루트 문서가 *패키지 카탈로그 문서* 또는 *3개 이상의 패키지 경로* 를 참조하는가
+        r = Rule("루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조", 4)
+        if root_doc:
+            text = doc_text.get(root_doc, "")
+            refs_catalog = any(c in text for c in PACKAGE_CATALOG_CANDIDATES)
+            path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
+            non_http = {p for p in path_hits if not p.startswith("http") and "/" in p}
+            if refs_catalog:
+                r.award(4, [str(catalog_doc.relative_to(target))] if catalog_doc else ["PACKAGES.md 참조"],
+                        note="루트 문서가 패키지 카탈로그를 참조")
+            elif len(non_http) >= 3:
+                r.award(3, sorted(non_http)[:5],
+                        note=f"패키지 카탈로그 참조 없이 경로 {len(non_http)}건 직접 참조")
+            elif len(non_http) >= 1:
+                r.award(1, sorted(non_http), note=f"{len(non_http)}건만 발견")
+            else:
+                r.note = "루트 문서에 패키지 경로 / 카탈로그 참조가 없음"
+    else:
+        # 멀티 모듈: 모듈 첫 segment 필터 + thin-index 패턴 인식
+        r = Rule("루트 문서가 3개 이상의 모듈 경로/문서 참조", 4)
+        if root_doc:
+            text = doc_text.get(root_doc, "")
+            path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
+            module_first_segs = {str(m).split("/")[0] for m in modules if m != Path(".")}
+            valid_paths = set()
+            for p in path_hits:
+                if "/" not in p or p.startswith("http"):
+                    continue
+                seg = p.split("/")[0]
+                if seg in module_first_segs or seg in DOC_DIRS:
+                    valid_paths.add(p)
+            if len(valid_paths) >= 3:
+                r.award(4, sorted(valid_paths)[:5], note=f"유효한 모듈/문서 경로 참조 {len(valid_paths)}건")
+            elif len(valid_paths) >= 1:
+                r.award(2, sorted(valid_paths), note=f"{len(valid_paths)}건만 발견 (3건 이상 필요)")
+            else:
+                r.note = "루트 문서에 모듈/문서 경로 참조가 없음"
     rules.append(r)
 
-    # 1.3 모듈별 CLAUDE.md 커버리지
-    r = Rule("모듈별 CLAUDE.md 커버리지", 5)
-    if modules:
+    # 1.3 모듈별 CLAUDE.md 커버리지 (단일 모듈은 PACKAGES.md 카탈로그로 대체)
+    if single_module:
+        r = Rule("패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션", 5)
+        if catalog_doc:
+            if catalog_sections >= 3:
+                r.award(5, [str(catalog_doc.relative_to(target))],
+                        note=f"카탈로그에 {catalog_sections}개 패키지 섹션")
+            elif catalog_sections >= 1:
+                r.award(3, [str(catalog_doc.relative_to(target))],
+                        note=f"카탈로그에 {catalog_sections}개 섹션 (3개 이상 권장)")
+            else:
+                r.award(2, [str(catalog_doc.relative_to(target))],
+                        note="카탈로그 존재하나 패키지 섹션 헤더가 인식되지 않음")
+        else:
+            r.note = ("단일 모듈 프로젝트 — 패키지를 논리 모듈로 보고 docs/PACKAGES.md 같은 "
+                      "카탈로그 문서를 만들어 각 패키지의 목적·진입점·흐름·함정을 정리하세요.")
+    else:
+        r = Rule("모듈별 CLAUDE.md 커버리지", 5)
         covered = []
         for m in modules:
             if m == Path("."):
@@ -296,8 +438,6 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
                     note=f"{len(covered)}/{len(non_root_modules)} 모듈 ({pct*100:.0f}%) 에 CLAUDE.md 존재")
         else:
             r.note = f"0/{len(non_root_modules)} 모듈에 CLAUDE.md 없음"
-    else:
-        r.note = "모듈 미감지 (단일 패키지 저장소)"
     rules.append(r)
 
     # 1.4 인덱스 / MOC 파일
@@ -321,6 +461,8 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
     claude_docs = scan["claude_docs"]
     root_doc = next((d for d in claude_docs if d.parent == target), None)
     module_docs = [d for d in claude_docs if d.parent != target]
+    single_module = is_single_module(scan["modules"])
+    catalog_doc = find_package_catalog(target) if single_module else None
 
     # 2.1 루트 CLAUDE.md 200줄 이하
     r = Rule("루트 CLAUDE.md 200줄 이하", 5)
@@ -337,20 +479,38 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
         r.note = "루트 CLAUDE.md 없음"
     rules.append(r)
 
-    # 2.2 모듈 문서 평균 50줄 이하
-    r = Rule("모듈 문서 평균 50줄 이하", 5)
-    if module_docs:
-        counts = [line_count(d) for d in module_docs]
-        avg = sum(counts) / len(counts)
-        if avg <= 50:
-            r.award(5, [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"])
-        elif avg <= 80:
-            r.award(3, [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"],
-                    note="25~35줄 범위로 줄이세요")
+    # 2.2 모듈/패키지 문서 적정 길이
+    if single_module:
+        # 단일 모듈: 카탈로그 문서가 50~300줄 범위 (너무 짧으면 정보 부족, 너무 길면 lazy-load 비용)
+        r = Rule("패키지 카탈로그 문서 적정 길이 (50~300줄)", 5)
+        if catalog_doc:
+            lc = line_count(catalog_doc)
+            if 50 <= lc <= 300:
+                r.award(5, [f"{catalog_doc.relative_to(target)} ({lc}줄)"])
+            elif lc < 50:
+                r.award(2, [f"{catalog_doc.relative_to(target)} ({lc}줄)"],
+                        note="너무 짧음 — 패키지별 진입점·흐름·외부 IO·함정을 보강하세요")
+            elif lc <= 500:
+                r.award(3, [f"{catalog_doc.relative_to(target)} ({lc}줄)"],
+                        note="300줄 초과 — 패키지별 별도 문서로 분리 검토")
+            else:
+                r.note = f"{lc}줄 — 너무 길어 lazy-load 비용이 큼"
         else:
-            r.note = f"모듈 문서 {len(module_docs)}개 / 평균 {avg:.0f}줄 — 너무 장황"
+            r.note = "패키지 카탈로그 문서 없음"
     else:
-        r.note = "모듈 단위 문서 없음"
+        r = Rule("모듈 문서 평균 50줄 이하", 5)
+        if module_docs:
+            counts = [line_count(d) for d in module_docs]
+            avg = sum(counts) / len(counts)
+            if avg <= 50:
+                r.award(5, [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"])
+            elif avg <= 80:
+                r.award(3, [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"],
+                        note="25~35줄 범위로 줄이세요")
+            else:
+                r.note = f"모듈 문서 {len(module_docs)}개 / 평균 {avg:.0f}줄 — 너무 장황"
+        else:
+            r.note = "모듈 단위 문서 없음"
     rules.append(r)
 
     # 2.3 명시적 DO NOT / 절대 금지 섹션 존재
@@ -429,13 +589,45 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
         r.award(5, [str(p.relative_to(target)) for p in scan["arch_docs"]])
     rules.append(r)
 
-    r = Rule("빌드 매니페스트로 의존 그래프 추출 가능", 5)
-    if len(modules) >= 2:
-        r.award(5, [str(m) for m in modules[:6]],
-                note=f"빌드 매니페스트 기반 모듈 {len(modules)}개 감지")
-    elif len(modules) == 1:
-        r.award(2, [str(modules[0])], note="단일 모듈 저장소 — 부분 점수")
-    rules.append(r)
+    if is_single_module(modules):
+        # 단일 모듈 — 카탈로그 + 표준 레이아웃 일관성 둘 다 요구.
+        # 단일 모듈의 *진짜* 모듈성 신호는 패키지 간 일관된 구조다.
+        r = Rule("논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈)", 5)
+        catalog_doc = find_package_catalog(target)
+        sections = count_package_sections(read_text(catalog_doc)) if catalog_doc else 0
+        base_package = find_base_package(target)
+        compliant, layout_total = 0, 0
+        if base_package is not None:
+            domains = find_domain_packages(base_package)
+            compliant, layout_total = standard_layout_coverage(domains)
+        ratio = (compliant / layout_total) if layout_total else 0
+        evidence = []
+        if catalog_doc:
+            evidence.append(str(catalog_doc.relative_to(target)))
+        if layout_total:
+            evidence.append(f"표준 레이아웃 {compliant}/{layout_total} 도메인 ({ratio*100:.0f}%)")
+        if catalog_doc and sections >= 3 and ratio >= 0.6:
+            r.award(5, evidence,
+                    note="카탈로그 + 표준 레이아웃 일관성 모두 만족")
+        elif catalog_doc and sections >= 3:
+            r.award(4, evidence,
+                    note=("카탈로그 OK / 표준 레이아웃 60% 미만 — 도메인 패키지에 "
+                          "controller/service/domain/repository 일관성을 보강하세요"))
+        elif catalog_doc:
+            r.award(3, evidence,
+                    note=f"카탈로그 섹션 {sections}개 (3개 이상 권장)")
+        elif ratio >= 0.6:
+            r.award(2, evidence, note="레이아웃 일관성 OK — 카탈로그 도입 시 만점")
+        else:
+            r.note = ("단일 모듈 — 카탈로그(docs/PACKAGES.md) 도입 + 도메인 패키지 표준 레이아웃 일관성 "
+                      "(controller/service/domain/repository 4개 중 3개 이상) 확보 시 만점")
+        rules.append(r)
+    else:
+        r = Rule("빌드 매니페스트로 의존 그래프 추출 가능", 5)
+        if len(modules) >= 2:
+            r.award(5, [str(m) for m in modules[:6]],
+                    note=f"빌드 매니페스트 기반 모듈 {len(modules)}개 감지")
+        rules.append(r)
 
     r = Rule("모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)", 5)
     contract_signals = []
@@ -660,6 +852,12 @@ ACTION_HINTS = {
         "루트 CLAUDE.md에 '모듈 맵' 섹션을 추가해 각 모듈의 디렉토리와 1줄 목적을 나열하세요."),
     "모듈별 CLAUDE.md 커버리지": (60, 5,
         "scaffold.py 스크립트로 모듈별 CLAUDE.md 초안을 생성하고, 가장 자주 변경되는 핫 모듈부터 채워 넣으세요."),
+    "루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조": (15, 4,
+        "단일 모듈 프로젝트는 패키지 = 논리 모듈. 루트 CLAUDE.md 의 '모듈 맵' 섹션에서 docs/PACKAGES.md 같은 카탈로그 문서를 참조하도록 lazy-load 트리거를 박으세요."),
+    "패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션": (45, 5,
+        "단일 모듈 프로젝트는 패키지를 논리 모듈로 봅니다. docs/PACKAGES.md 를 만들어 각 패키지의 목적 / 진입점 / 흐름 / 외부 IO / 테스트 진입점 / 함정 / 관련 ADR 을 한 곳에 모으세요. AI 가 패키지 진입 시 첫 컨텍스트로 사용합니다."),
+    "패키지 카탈로그 문서 적정 길이 (50~300줄)": (20, 3,
+        "패키지 카탈로그를 50~300줄 범위로 유지하세요. 너무 짧으면 정보 부족, 너무 길면 lazy-load 비용이 큽니다."),
     "인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md)": (10, 2,
         "docs/INDEX.md(권장) 또는 wiki/index.md를 만들어 모든 문서를 잇는 단일 진입점을 제공하세요."),
     "루트 CLAUDE.md 200줄 이하": (30, 4,
@@ -680,6 +878,10 @@ ACTION_HINTS = {
         "ARCHITECTURE.md 또는 DEPENDENCIES.md를 만들고 Mermaid 다이어그램으로 모듈 의존성을 표현하세요."),
     "빌드 매니페스트로 의존 그래프 추출 가능": (0, 0,
         "이미 빌드 시스템이 커버하고 있습니다."),
+    "논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈)": (60, 4,
+        "단일 모듈 프로젝트는 패키지 = 논리 모듈. (1) docs/PACKAGES.md 카탈로그에 3개 이상 패키지 섹션을 채우고, "
+        "(2) 도메인 패키지들이 일관된 표준 레이아웃 (controller/service/domain/repository 4개 중 3개 이상) 을 따르도록 "
+        "정렬하세요. 둘 다 만족하면 만점."),
     "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)": (90, 3,
         "OpenAPI 명세나 proto 스키마를 도입해 계약을 기계 판독 가능한 형태로 유지하세요."),
     "커밋 전 훅 (pre-commit) 존재": (20, 4,
@@ -757,7 +959,13 @@ def render_report(audit: dict) -> str:
     ts_utc = audit["timestamp"]
     lines.append(f"- **생성 시각**: {ts_local} (로컬) · {ts_utc} (UTC)" if ts_local else f"- **생성 시각**: {ts_utc}")
     lines.append(f"- **점수**: **{audit['total_score']} / {audit['max_score']}** — _{audit['grade']}_")
-    lines.append(f"- **감지된 모듈**: {audit['module_count']}")
+    if audit.get("single_module_mode"):
+        catalog = audit.get("package_catalog") or "없음 — 도입 권장"
+        lines.append(f"- **레이아웃**: 단일 모듈 (패키지 = 논리 모듈)")
+        lines.append(f"- **패키지 카탈로그 문서**: `{catalog}`")
+    else:
+        lines.append(f"- **레이아웃**: 멀티 모듈")
+        lines.append(f"- **감지된 모듈**: {audit['module_count']}")
     scaffold_note = ""
     if audit.get("claude_doc_count", 0) > audit.get("module_count", 0) + 1:
         scaffold_note = " (루트 + scaffold 포함 가능)"
@@ -948,8 +1156,10 @@ def run(target: Path, out_dir: Path) -> dict:
     ]
     total = sum(c["score"] for c in categories)
     now_utc = datetime.now(timezone.utc)
+    single_module = is_single_module(scan["modules"])
+    catalog_doc = find_package_catalog(target) if single_module else None
     audit = {
-        "schema_version": 3,  # 2 → 3: timestamp_local, history archive, outcome 부분점수
+        "schema_version": 3,  # 2 → 3: timestamp_local, history archive, outcome 부분점수, single-module mode + package catalog
         "target": str(target),
         "timestamp": now_utc.isoformat(timespec="seconds"),
         "timestamp_local": now_utc.astimezone().isoformat(timespec="seconds"),
@@ -957,6 +1167,8 @@ def run(target: Path, out_dir: Path) -> dict:
         "claude_doc_count": len(scan["claude_docs"]),
         "modules": [str(m) for m in scan["modules"]],
         "claude_docs": [str(d.relative_to(target)) for d in scan["claude_docs"]],
+        "single_module_mode": single_module,
+        "package_catalog": str(catalog_doc.relative_to(target)) if catalog_doc else None,
         "total_score": total,
         "max_score": 100,
         "grade": grade_for(total),
