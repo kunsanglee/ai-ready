@@ -4,25 +4,29 @@
     "name": "kunsanglee"
   },
   "metadata": {
-    "description": "Standalone Claude Code marketplace for the ai-ready plugin — audit codebases for AI-readiness and apply ROI-prioritized improvements.",
-    "version": "0.1.1"
+    "description": "Standalone Claude Code marketplace for the ai-ready plugin — audit codebases for AI-readiness and apply ROI-prioritized improvements. Supports both multi-module and single-module (package-as-module) layouts.",
+    "version": "0.1.2"
   },
   "plugins": [
     {
       "name": "ai-ready",
       "source": "./plugins/ai-ready",
-      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook).",
-      "version": "0.1.1",
+      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics.",
+      "version": "0.1.2",
       "author": {
         "name": "kunsanglee"
       },
+      "homepage": "https://github.com/kunsanglee/ai-ready",
+      "repository": "https://github.com/kunsanglee/ai-ready",
       "keywords": [
         "ai-readiness",
         "claude-code",
         "audit",
         "documentation",
         "codebase-quality",
-        "CLAUDE.md"
+        "CLAUDE.md",
+        "single-module",
+        "package-catalog"
       ],
       "category": "workflow"
     }
