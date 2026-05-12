@@ -11,12 +11,24 @@ Claude Code 마켓플레이스 — 코드베이스의 AI 준비도(AI-readiness)
 
 ## 업데이트
 
-이미 설치한 사용자가 최신 버전으로 갱신하려면:
+이미 설치한 사용자가 최신 버전으로 갱신하려면 세 명령을 *각각 한 줄씩* 입력 (slash command 는 한 줄에 한 명령만 받아서 주석을 같은 줄에 붙이면 marketplace 이름으로 오해석됩니다):
+
+마켓플레이스의 최신 `plugin.json` 정보 fetch:
 
 ```
-/plugin marketplace update ai-ready    # 마켓플레이스의 최신 plugin.json 정보 fetch
-/plugin update ai-ready@ai-ready       # plugin 을 새 version 으로 갱신
-/plugin list                           # version 이 갱신됐는지 확인
+/plugin marketplace update ai-ready
+```
+
+plugin 자체를 새 version 으로 갱신:
+
+```
+/plugin update ai-ready@ai-ready
+```
+
+설치된 version 확인:
+
+```
+/plugin list
 ```
 
 > Claude Code 는 `plugin.json` 의 `version` 필드가 바뀐 경우에만 새 버전으로 인지합니다. 이 repo 는 매 릴리즈에 version 을 bump 합니다.
