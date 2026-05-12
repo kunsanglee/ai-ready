@@ -11,14 +11,25 @@ Turns a codebase into an AI-navigable one. Inspired by Meta's internal "AI had n
 
 For a target codebase you point it at, this skill creates an `.ai-ready/` directory containing:
 
-1. **`audit.json`** — raw scores (per-category, per-rule, evidence)
+1. **`audit.json`** — raw scores (per-category, per-rule, evidence). Includes `single_module_mode: bool` + `package_catalog: path|null` so consumers know which layout was scored.
 2. **`audit-report.md`** — human-readable report with ROI-prioritized action list
 3. **`README.md`** — auto-generated guide for `.ai-ready/` consumers (artifact map, plugin install, score interpretation, re-run instructions)
 4. **`dashboard.html`** — self-contained HTML dashboard with score gauge, category bars, and trend sparkline (open in browser)
 5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete.
-6. **`scaffolds/<module>/CLAUDE.md`** — draft module-level CLAUDE.md files for top hot modules
+6. **`scaffolds/...`** — drafts for the missing docs (see "Layout-aware scaffolds" below)
 7. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history (clustered hotspots)
 8. **`hooks/freshness_check.sh`** — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`
+
+### Layout-aware scaffolds
+
+The audit auto-detects the layout from build manifests and switches scoring + scaffold output:
+
+| Layout | Detection | Module concept | Scaffold output | Module-level doc |
+|---|---|---|---|---|
+| **Multi-module** | Build manifest in ≥1 non-root directory | Each manifest-bearing dir = a module | `scaffolds/<module>/CLAUDE.md` per hot module | Per-module `CLAUDE.md` |
+| **Single-module** | Build manifest only at repo root | Each direct child of the base package (the dir holding `Application.kt|java`) = a logical module | `scaffolds/PACKAGES.md` (one catalog for all packages) | Single `docs/PACKAGES.md` catalog |
+
+> Single-module reasoning: spawning N package-level `CLAUDE.md` files for a single Gradle/Maven/npm module fragments context and adds maintenance burden. A single `docs/PACKAGES.md` catalog (lazy-loaded from root `CLAUDE.md`) covers the same ground while keeping the doc surface small. The audit rubric scores them on parallel rules — see `RUBRIC.md` "Layout-aware scoring".
 
 ## Inputs You Need
 
@@ -39,7 +50,9 @@ mkdir -p "$OUT"
 # 1) Score the codebase
 python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$OUT"
 
-# 2) Generate module CLAUDE.md scaffolds (top 5 modules)
+# 2) Generate scaffolds (auto-branches by layout):
+#    - Multi-module → per-module CLAUDE.md drafts (top N hot modules)
+#    - Single-module → docs/PACKAGES.md catalog draft (one file, all packages)
 python3 "$SKILL_DIR/scripts/scaffold.py" --target "$TARGET" --out "$OUT/scaffolds" --top 5
 
 # 3) Extract anti-patterns from git history (last 180 days)
@@ -73,7 +86,8 @@ Scripts that modify existing files (`inject_module_map.py`, `install_hook.py`) a
 
 - **`audit-report.md`** — read first. Tells you *what* to fix and *in what order*.
 - **`dashboard.html`** — share with team / track progress over time.
-- **`scaffolds/<module>/CLAUDE.md`** — review, edit, then move into the actual module directory.
+- **`scaffolds/<module>/CLAUDE.md`** (multi-module) — review, edit, then move into the actual module directory.
+- **`scaffolds/PACKAGES.md`** (single-module) — review, fill in the `TODO` lines, then move to `docs/PACKAGES.md` and reference it from root `CLAUDE.md` lazy-load.
 - **`scaffolds/ANTIPATTERNS.md`** — review, prune false positives, then move to repo root.
 - **`hooks/freshness_check.sh`** — install as a Claude Code Stop hook (instructions below).
 
