@@ -4,15 +4,15 @@
     "name": "kunsanglee"
   },
   "metadata": {
-    "description": "Standalone Claude Code marketplace for the ai-ready plugin — audit codebases for AI-readiness and apply ROI-prioritized improvements. Supports both multi-module and single-module (package-as-module) layouts.",
-    "version": "0.1.2"
+    "description": "Standalone Claude Code marketplace for the ai-ready plugin — audit codebases for AI-readiness and apply ROI-prioritized improvements. Supports both multi-module and single-module (package-as-module) layouts. v0.2.0+: config-driven frontmatter-aware INDEX + lazy-load user/auto split.",
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "ai-ready",
       "source": "./plugins/ai-ready",
-      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics.",
-      "version": "0.1.2",
+      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics. v0.2.0+: optional .ai-ready/config.json drives frontmatter-aware INDEX grouping and preserves user-edited lazy-load triggers.",
+      "version": "0.2.0",
       "author": {
         "name": "kunsanglee"
       },

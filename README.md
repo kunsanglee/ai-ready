@@ -35,7 +35,43 @@ plugin 자체를 새 version 으로 갱신:
 
 ### 최근 주요 변경
 
+- **0.2.0** — 프로젝트별 `.ai-ready/config.json` 으로 *frontmatter 인지 INDEX 그룹화* 활성화. `gen_index.py` 가 frontmatter 의 `feature` / `aliases` / `tags` / `supersedes` 필드를 스캔해 ① 그룹별 sub-group 분류, ② 한영 자연어 query 의 1차 인덱스가 되는 cross-reference 섹션, ③ ADR 결정 진화 (supersedes/superseded-by) 그래프를 자동 빌드. `inject_lazy_load_index.py` 는 `<!-- lazy-load:user-begin -->` ~ `<!-- lazy-load:user-end -->` 마커로 사용자 수동 추가 행 보존 (v0.1.x 시한폭탄 해소 — 기존 단일 마커 환경에서도 자동 마이그레이션). config 없으면 기존 동작 100% 유지 (backward compat). stdlib-only 정책 유지 — 신규 의존성 0.
 - **0.1.2** — manifest schema 오류 수정 (`repository` 가 string URL 이어야 함), 단일 모듈 프로젝트 평가/스캐폴드 분기 추가 (패키지 = 논리 모듈 관점, `docs/PACKAGES.md` 카탈로그 + 표준 레이아웃 일관성 평가), thin-index 인식, sparkline / history archive, ANTIPATTERNS 클러스터링, `.ai-ready/README.md` 자동 생성, iOS 빌드 매니페스트 지원.
+
+### v0.2.0 config 사용법 (선택)
+
+대상 코드베이스의 `<target>/.ai-ready/config.json` 을 만들면 활성. 없으면 v0.1.x 동작 그대로.
+
+```json
+{
+  "version": 1,
+  "frontmatter": {
+    "required": ["type", "feature", "module", "status", "created", "updated"],
+    "search":   ["aliases", "tags"],
+    "evolution": ["supersedes", "superseded-by"]
+  },
+  "index": {
+    "groups": [
+      {
+        "id": "adr",
+        "title": "ADR (`docs/adr/`)",
+        "match": { "path_prefix": "docs/adr/" },
+        "sub_group_by": "feature"
+      }
+    ],
+    "cross_reference": { "enabled": true, "title": "한영 검색 인덱스" },
+    "evolution_graph": { "enabled": true, "title": "ADR 결정 진화", "scope": "adr" }
+  },
+  "lazy_load_triggers": {
+    "detect": [
+      { "path": "docs/adr/", "label": "[`docs/adr/`](docs/adr/)", "trigger": "ADR 조회" }
+    ],
+    "override_hardcoded": ["docs/decisions"]
+  }
+}
+```
+
+전체 스키마는 `plugins/ai-ready/skills/audit/scripts/config_loader.py` 의 모듈 docstring 에 정의되어 있습니다.
 
 ## 사용
 
