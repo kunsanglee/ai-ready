@@ -10,6 +10,20 @@
 
 ROI 액션 매핑: "'사용 시점' 가이드 존재" + "lazy-load 인덱스" (Rule 2.4 + 1.5).
 
+# 변경 이력
+- v0.1.x: `<!-- lazy-load:begin -->` ~ `<!-- lazy-load:end -->` 단일 마커. 사용자 수동 추가 행이 다음 실행 시 *전부 덮어쓰임*. (시한폭탄)
+- v0.2.0+: **사용자 영역 / 자동 영역 분리** —
+    `<!-- lazy-load:user-begin -->` ~ `<!-- lazy-load:user-end -->` 는 *절대 건드리지 않음*,
+    `<!-- lazy-load:auto-begin -->` ~ `<!-- lazy-load:auto-end -->` 만 자동 갱신.
+  + (선택) `.ai-ready/config.json` 의 `lazy_load_triggers.detect` 추가 룰 적용,
+    `override_hardcoded` 로 기본 룰 일부 제거 가능.
+
+# 마이그레이션
+기존 단일 마커 (`lazy-load:begin`/`lazy-load:end`) 또는 마커 없이 `## Lazy-load docs`
+헤더만 있는 CLAUDE.md 에 대해서는 *기존 표 내용을 user-section 으로 안전하게 흡수* 후
+auto-section 을 별도 생성. 사용자가 한 번 더 audit:apply 만 실행해도 수동 추가 행이
+보존됨.
+
 실행:
   python3 inject_lazy_load_index.py --target /path/to/repo
 
@@ -19,13 +33,34 @@ ROI 액션 매핑: "'사용 시점' 가이드 존재" + "lazy-load 인덱스" (R
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
+# 동일 디렉토리의 config_loader import
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from config_loader import (  # noqa: E402
+    load_config,
+    lazy_load_detect_rules,
+    lazy_load_override_hardcoded,
+)
+
 CLAUDE_DOC_NAMES = ("CLAUDE.md", "AGENTS.md")
 
-BEGIN_MARKER = "<!-- lazy-load:begin (auto-generated) -->"
-END_MARKER = "<!-- lazy-load:end -->"
+# v0.2.0 마커 (auto / user 분리)
+AUTO_BEGIN = "<!-- lazy-load:auto-begin (auto-generated) -->"
+AUTO_END = "<!-- lazy-load:auto-end -->"
+USER_BEGIN = "<!-- lazy-load:user-begin -->"
+USER_END = "<!-- lazy-load:user-end -->"
+
+# v0.1.x legacy 단일 마커 (마이그레이션 대상)
+LEGACY_BEGIN = "<!-- lazy-load:begin (auto-generated) -->"
+LEGACY_END = "<!-- lazy-load:end -->"
+
+SECTION_HEADING = "## Lazy-load docs"
 
 # 감지 패턴: (파일/디렉토리 경로, 문서 표기, 트리거 설명)
 DETECTION_RULES = [
@@ -80,30 +115,51 @@ def find_root_doc(target: Path) -> Path | None:
     return None
 
 
-def detect_present(target: Path) -> list[tuple[str, str]]:
+def detect_present(target: Path, cfg: dict | None = None) -> list[tuple[str, str]]:
     """존재하는 detail 문서만 (문서 표기, 트리거) 튜플 리스트로 반환.
 
-    같은 트리거를 가진 docs/ 우선 / 루트 fallback 항목이 둘 다 있으면 docs/ 만 표시."""
-    found = []
-    seen_triggers = set()
+    같은 트리거를 가진 docs/ 우선 / 루트 fallback 항목이 둘 다 있으면 docs/ 만 표시.
+    config 의 override_hardcoded 가 있으면 그 경로를 hardcode 룰에서 제거.
+    config 의 detect 추가 룰을 hardcode 다음에 append.
+    """
+    override = set(lazy_load_override_hardcoded(cfg))
+    extra_rules = lazy_load_detect_rules(cfg)
+
+    found: list[tuple[str, str]] = []
+    seen_triggers: set[str] = set()
+
+    # 1. hardcoded rules
     for path, label, trigger in DETECTION_RULES:
+        if path in override:
+            continue
         if trigger in seen_triggers:
             continue
         if (target / path).exists():
             found.append((label, trigger))
             seen_triggers.add(trigger)
+
+    # 2. config 추가 rules
+    for rule in extra_rules:
+        path = rule.get("path")
+        label = rule.get("label")
+        trigger = rule.get("trigger")
+        if not (path and label and trigger):
+            continue
+        if trigger in seen_triggers:
+            continue
+        if (target / path).exists():
+            found.append((label, trigger))
+            seen_triggers.add(trigger)
+
     return found
 
 
-def render_block(rows: list[tuple[str, str]]) -> str:
-    if not rows:
-        return ""
+def _render_auto_block(rows: list[tuple[str, str]]) -> str:
+    """auto-section 블록 (마커 포함) 렌더링."""
     lines = []
-    lines.append("## Lazy-load docs (트리거 시 즉시 read)")
+    lines.append(AUTO_BEGIN)
     lines.append("")
-    lines.append(BEGIN_MARKER)
-    lines.append("")
-    lines.append("> 자동 생성됩니다. 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
+    lines.append("> 자동 생성됩니다. 본 영역 (`lazy-load:auto-begin` ~ `lazy-load:auto-end`) 의 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
     lines.append("> 갱신: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"lazy-load 인덱스 갱신해줘\" 라고 말하세요.")
     lines.append(">")
     lines.append("> **읽기 강제 시점**: 작업 영역이 트리거에 해당하면 사용자 추가 지시 없이도 즉시 read.")
@@ -114,40 +170,136 @@ def render_block(rows: list[tuple[str, str]]) -> str:
     for label, trigger in rows:
         lines.append(f"| {trigger} | {label} |")
     lines.append("")
-    lines.append(END_MARKER)
+    lines.append(AUTO_END)
     return "\n".join(lines)
 
 
-def update_root(text: str, block: str) -> tuple[str, bool]:
-    """루트 CLAUDE.md 의 lazy-load 블록을 idempotent 으로 갱신.
+def _render_empty_user_block() -> str:
+    """비어 있는 user-section 블록 (사용자가 추후 행 추가)."""
+    lines = []
+    lines.append(USER_BEGIN)
+    lines.append("")
+    lines.append("> 본 영역 (`lazy-load:user-begin` ~ `lazy-load:user-end`) 의 행은 사용자 수동 편집용 — `ai-ready:apply` 가 *절대 덮어쓰지 않음*.")
+    lines.append("> 자동 감지에서 누락된 트리거를 여기에 추가하세요. 예:")
+    lines.append("> ")
+    lines.append("> ```")
+    lines.append("> | 트리거 설명 | [`docs/custom.md`](docs/custom.md) |")
+    lines.append("> ```")
+    lines.append("")
+    lines.append(USER_END)
+    return "\n".join(lines)
 
-    - 기존 블록이 있으면 그 자리(섹션 헤딩 포함)를 새 block 으로 교체
-    - 없으면 `## 모듈 맵` 섹션 직전에 삽입, 그것도 없으면 EOF 에 append
+
+def _render_user_block_with_rows(rows_content: str) -> str:
+    """사용자 행이 이미 있는 user-section 을 마커로 감싸 반환."""
+    lines = []
+    lines.append(USER_BEGIN)
+    lines.append("")
+    lines.append("> 본 영역 (`lazy-load:user-begin` ~ `lazy-load:user-end`) 의 행은 사용자 수동 편집용 — `ai-ready:apply` 가 *절대 덮어쓰지 않음*.")
+    lines.append("")
+    content = rows_content.strip("\n")
+    if content:
+        lines.append(content)
+        lines.append("")
+    lines.append(USER_END)
+    return "\n".join(lines)
+
+
+def _build_full_section(user_block: str, auto_block: str) -> str:
+    """`## Lazy-load docs` 헤더 + user + auto 통합 섹션.
+
+    auto-block 마지막에 빈 줄 1개 보장 — 다음 `## ` 헤더와 시각적 분리.
     """
-    if BEGIN_MARKER in text and END_MARKER in text:
-        # 섹션 헤딩 ~ END_MARKER 까지 교체
-        # 안전하게 헤딩 라인부터 검색
-        start_marker = "## Lazy-load docs"
-        idx_heading = text.find(start_marker)
-        idx_begin = text.find(BEGIN_MARKER)
-        # 헤딩이 begin 보다 앞에 있고 가까우면 그 헤딩부터 교체
+    lines = []
+    lines.append(SECTION_HEADING + " (트리거 시 즉시 read)")
+    lines.append("")
+    lines.append(user_block)
+    lines.append("")
+    lines.append(auto_block)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]:
+    """루트 CLAUDE.md 의 lazy-load 섹션을 갱신.
+
+    반환: (new_text, changed, mode)
+      mode ∈ {"updated-auto", "migrated-legacy", "migrated-unmarked", "inserted-new", "no-rows"}
+
+    동작 분기:
+    - case A (정상 v0.2.0): user/auto 마커 둘 다 존재 — auto-block 만 교체
+    - case B (legacy 단일 마커): lazy-load:begin/end 존재 — auto 로 격하, user 는 빈 마커 신설
+    - case C (마커 없는 표): SECTION_HEADING 존재하지만 마커 없음 — 기존 표를 user-section 으로 흡수, auto 별도 생성
+    - case D: 없음 — 신규 삽입 (## 모듈 맵 직전 또는 EOF)
+    """
+    if not rows:
+        return text, False, "no-rows"
+
+    auto_block = _render_auto_block(rows)
+
+    # case A: user/auto 마커 둘 다 존재
+    has_auto = AUTO_BEGIN in text and AUTO_END in text
+    has_user = USER_BEGIN in text and USER_END in text
+    if has_auto:
+        # auto 블록만 교체
+        new_text = re.sub(
+            re.escape(AUTO_BEGIN) + r".*?" + re.escape(AUTO_END),
+            lambda _: auto_block,
+            text,
+            count=1,
+            flags=re.DOTALL,
+        )
+        if not has_user:
+            # auto 만 있고 user 가 없는 비정상 케이스 — user 마커도 신설
+            user_block = _render_empty_user_block()
+            new_text = new_text.replace(auto_block, user_block + "\n\n" + auto_block, 1)
+            return new_text, new_text != text, "updated-auto+user-inserted"
+        return new_text, new_text != text, "updated-auto"
+
+    # case B: legacy 단일 마커
+    if LEGACY_BEGIN in text and LEGACY_END in text:
+        # 기존 LEGACY 블록의 표 내용은 *모두 자동 생성된 것* 이므로 사용자 행 흡수 불필요.
+        # SECTION_HEADING 부터 LEGACY_END 까지 통째로 새 user(empty) + auto 로 교체.
+        idx_heading = text.find(SECTION_HEADING)
+        idx_begin = text.find(LEGACY_BEGIN)
         if 0 <= idx_heading < idx_begin:
             start = idx_heading
         else:
             start = idx_begin
-        end = text.find(END_MARKER) + len(END_MARKER)
-        # END 다음의 trailing newline 1개도 같이 처리
-        return text[:start] + block + text[end:], True
+        end = text.find(LEGACY_END) + len(LEGACY_END)
+        user_block = _render_empty_user_block()
+        full = _build_full_section(user_block, auto_block)
+        new_text = text[:start] + full + text[end:]
+        return new_text, True, "migrated-legacy"
 
-    # 신규 삽입 — `## 모듈 맵` 직전, 또는 EOF
+    # case C: SECTION_HEADING 만 존재 (마커 없는 수동 표) — 사용자 수동 행 흡수
+    if SECTION_HEADING in text:
+        idx_heading = text.find(SECTION_HEADING)
+        # 해당 섹션의 끝 = 다음 `## ` 헤더 직전 또는 EOF
+        body_start = text.find("\n", idx_heading) + 1
+        next_section = re.search(r"^## ", text[body_start:], re.MULTILINE)
+        if next_section:
+            body_end = body_start + next_section.start()
+        else:
+            body_end = len(text)
+        existing_body = text[body_start:body_end]
+        # 사용자 수동 표를 user-section 으로 흡수
+        user_block = _render_user_block_with_rows(existing_body)
+        full = _build_full_section(user_block, auto_block)
+        new_text = text[:idx_heading] + full + text[body_end:]
+        return new_text, True, "migrated-unmarked"
+
+    # case D: 신규 삽입 — `## 모듈 맵` 직전, 또는 EOF
+    user_block = _render_empty_user_block()
+    full = _build_full_section(user_block, auto_block)
     target_heading = "## 모듈 맵"
     idx = text.find(target_heading)
     if idx >= 0:
-        return text[:idx] + block + "\n\n" + text[idx:], True
+        new_text = text[:idx] + full + "\n\n" + text[idx:]
+        return new_text, True, "inserted-new"
     # EOF append
-    if not text.endswith("\n"):
-        text += "\n"
-    return text + "\n" + block + "\n", True
+    base = text if text.endswith("\n") else text + "\n"
+    return base + "\n" + full + "\n", True, "inserted-new"
 
 
 def main():
@@ -164,25 +316,37 @@ def main():
     if not root:
         print("루트 CLAUDE.md / AGENTS.md 가 없어서 주입할 위치가 없습니다.", file=sys.stderr)
         sys.exit(1)
-    rows = detect_present(target)
+
+    cfg = load_config(target)
+    rows = detect_present(target, cfg)
     if not rows:
         print("감지된 detail 문서가 없습니다 — lazy-load 인덱스를 만들 대상이 없습니다.")
         sys.exit(0)
-    block = render_block(rows)
+
     text = root.read_text(encoding="utf-8")
-    new_text, _ = update_root(text, block)
+    new_text, changed, mode = update_root(text, rows)
+
     if args.dry_run:
         print("=== dry-run 결과 ===")
-        print(block)
+        print(f"_모드: {mode}_")
         print()
-        print(f"_변경 여부: {'있음' if new_text != text else '없음'}_")
+        # diff 가 아니라 전체 섹션만 표시 (간략하게 — auto+user 블록)
+        print(_render_user_block_with_rows("(기존 사용자 표 또는 빈 마커)"))
+        print()
+        print(_render_auto_block(rows))
+        print()
+        print(f"_변경 여부: {'있음' if changed else '없음'}_")
         return
-    if new_text == text:
-        print(f"변경 없음: {root}  (lazy-load 인덱스 최신)")
+
+    if not changed:
+        print(f"변경 없음: {root}  (lazy-load 인덱스 최신, 모드={mode})")
         return
     root.write_text(new_text, encoding="utf-8")
     print(f"lazy-load 인덱스 갱신: {root}")
-    print(f"  감지된 detail 문서 {len(rows)}개")
+    print(f"  모드: {mode}")
+    print(f"  자동 감지 detail 문서 {len(rows)}개")
+    if cfg is not None:
+        print(f"  config 추가 룰 {len(lazy_load_detect_rules(cfg))}개, override {len(lazy_load_override_hardcoded(cfg))}개 적용")
 
 
 if __name__ == "__main__":
