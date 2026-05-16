@@ -12,6 +12,12 @@ INDEX.md 자동 생성기.
 
 ROI 액션 매핑: "docs/INDEX.md (권장) 또는 wiki/index.md 생성" (Rule 1.4, +3점).
 
+확장 동작 (v0.2.0+):
+  대상에 `.ai-ready/config.json` 이 존재하면 *config-driven 그룹화* 활성화 —
+  frontmatter 의 `feature` / `aliases` / `tags` / `supersedes` 같은 필드를 스캔해
+  feature 그룹 / 한영 cross-reference / 결정 진화 그래프 섹션을 추가로 빌드합니다.
+  config 가 없으면 기존 동작 (claude / guides / docs-decisions / docs-other 카테고리) 그대로.
+
 실행:
   python3 gen_index.py --target /path/to/repo --out /path/to/repo/docs/INDEX.md
 """
@@ -22,6 +28,20 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# 동일 디렉토리의 두 모듈 import — ai-ready 의 standard layout
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from frontmatter_parser import parse_frontmatter  # noqa: E402
+from config_loader import (  # noqa: E402
+    load_config,
+    index_groups,
+    cross_reference_config,
+    evolution_graph_config,
+    frontmatter_section,
+)
 
 DOC_NAMES = {"CLAUDE.md", "AGENTS.md"}
 ROOT_GUIDE_NAMES = {
@@ -81,7 +101,7 @@ def extract_summary(path: Path, max_chars: int = 120) -> str:
 
 
 def collect_docs(target: Path) -> dict[str, list[tuple[Path, str]]]:
-    """카테고리별로 문서를 수집해 dict 로 반환.
+    """카테고리별로 문서를 수집해 dict 로 반환 (legacy — config 없을 때 사용).
 
     카테고리:
       - 'claude'   : 루트/모듈 CLAUDE.md / AGENTS.md
@@ -113,7 +133,51 @@ def collect_docs(target: Path) -> dict[str, list[tuple[Path, str]]]:
     }
 
 
+def collect_with_meta(target: Path) -> list[dict]:
+    """모든 .md 파일을 frontmatter + summary + 경로와 함께 수집 (config-driven 동작용)."""
+    docs: list[dict] = []
+    for dirpath, _, filenames in walk(target):
+        for f in filenames:
+            if not f.endswith(".md"):
+                continue
+            full = dirpath / f
+            try:
+                rel = full.relative_to(target)
+            except ValueError:
+                continue
+            try:
+                text = full.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            fm = parse_frontmatter(text)
+            summary = extract_summary(full)
+            docs.append({
+                "path": rel,
+                "frontmatter": fm,
+                "summary": summary,
+            })
+    return sorted(docs, key=lambda d: str(d["path"]))
+
+
+def _matches_group(rel_path: Path, group: dict) -> bool:
+    """문서 경로가 group.match 룰에 매치되는지 검사."""
+    match = group.get("match", {}) or {}
+    rel_str = str(rel_path).replace(os.sep, "/")
+    prefix = match.get("path_prefix")
+    if prefix:
+        prefix_norm = prefix.rstrip("/") + "/"
+        if not rel_str.startswith(prefix_norm):
+            return False
+    excluding = match.get("excluding", []) or []
+    for exc in excluding:
+        exc_norm = exc.rstrip("/") + "/"
+        if rel_str.startswith(exc_norm):
+            return False
+    return True
+
+
 def render(target: Path, collected: dict[str, list[tuple[Path, str]]]) -> str:
+    """Legacy 렌더링 — config 없을 때."""
     today = datetime.now().strftime("%Y-%m-%d")
     claude = collected["claude"]
     guides = collected["guides"]
@@ -173,6 +237,155 @@ def render(target: Path, collected: dict[str, list[tuple[Path, str]]]) -> str:
     return "\n".join(lines)
 
 
+def render_with_config(target: Path, cfg: dict, all_docs: list[dict]) -> str:
+    """Config-driven 렌더링 — frontmatter 기반 그룹화 + 한영 cross-reference + 결정 진화 그래프."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    total = len(all_docs)
+
+    lines: list[str] = []
+    lines.append("# 문서 인덱스")
+    lines.append("")
+    lines.append(f"_자동 생성: {today} · 대상: `{target.name}` · 문서 {total}개 · config v1 활성_")
+    lines.append("")
+
+    if total == 0:
+        lines.append("스캔된 문서가 없습니다.")
+        return "\n".join(lines)
+
+    # 1. config groups 룰로 분류
+    grouped_paths: set[str] = set()
+    for group in index_groups(cfg):
+        matched = [d for d in all_docs if _matches_group(d["path"], group)]
+        if not matched:
+            continue
+        title = group.get("title") or group.get("id") or "(이름 없음)"
+        lines.append(f"## {title}")
+        lines.append("")
+        sub_key = group.get("sub_group_by")
+        if sub_key:
+            sub_groups: dict[str, list[dict]] = {}
+            for d in matched:
+                sub_value = d["frontmatter"].get(sub_key)
+                if isinstance(sub_value, list):
+                    # list 값이면 각 원소를 별도 그룹에 등장시킴
+                    if not sub_value:
+                        sub_groups.setdefault("(미분류)", []).append(d)
+                    else:
+                        for v in sub_value:
+                            sub_groups.setdefault(str(v), []).append(d)
+                else:
+                    sub_groups.setdefault(str(sub_value) if sub_value else "(미분류)", []).append(d)
+            for sub_name in sorted(sub_groups.keys()):
+                lines.append(f"### {sub_name}")
+                lines.append("")
+                for d in sorted(sub_groups[sub_name], key=lambda x: str(x["path"])):
+                    lines.append(f"- [`{d['path']}`]({d['path']}) — {d['summary']}")
+                    grouped_paths.add(str(d["path"]))
+                lines.append("")
+        else:
+            for d in sorted(matched, key=lambda x: str(x["path"])):
+                lines.append(f"- [`{d['path']}`]({d['path']}) — {d['summary']}")
+                grouped_paths.add(str(d["path"]))
+            lines.append("")
+
+    # 2. config groups 에 매치 안 된 나머지 — 기존 카테고리 보존
+    remaining = [d for d in all_docs if str(d["path"]) not in grouped_paths]
+    if remaining:
+        # 루트/모듈 CLAUDE.md
+        claude_docs = [d for d in remaining if d["path"].name in DOC_NAMES]
+        guide_docs = [
+            d for d in remaining
+            if d["path"].parent == Path(".") and d["path"].name in ROOT_GUIDE_NAMES
+        ]
+        other_docs = [
+            d for d in remaining
+            if d not in claude_docs and d not in guide_docs
+        ]
+        root_claude = [d for d in claude_docs if d["path"].parent == Path(".")]
+        module_claude = [d for d in claude_docs if d["path"].parent != Path(".")]
+
+        if root_claude or guide_docs:
+            lines.append("## 루트 가이드")
+            lines.append("")
+            for d in sorted(root_claude, key=lambda x: str(x["path"])):
+                lines.append(f"- [`{d['path']}`]({d['path']}) — {d['summary']}")
+            for d in sorted(guide_docs, key=lambda x: str(x["path"])):
+                lines.append(f"- [`{d['path']}`]({d['path']}) — {d['summary']}")
+            lines.append("")
+        if module_claude:
+            lines.append("## 모듈 CLAUDE.md")
+            lines.append("")
+            for d in sorted(module_claude, key=lambda x: str(x["path"])):
+                lines.append(f"- [`{d['path']}`]({d['path']}) — {d['summary']}")
+            lines.append("")
+        if other_docs:
+            lines.append("## 기타 문서")
+            lines.append("")
+            for d in sorted(other_docs, key=lambda x: str(x["path"])):
+                lines.append(f"- [`{d['path']}`]({d['path']}) — {d['summary']}")
+            lines.append("")
+
+    # 3. cross_reference 섹션 (frontmatter 의 aliases / tags 등 search 필드 역 인덱스)
+    cr = cross_reference_config(cfg)
+    if cr.get("enabled"):
+        search_fields = frontmatter_section(cfg).get("search", ["aliases", "tags"])
+        index_map: dict[str, list[Path]] = {}
+        for d in all_docs:
+            fm = d["frontmatter"]
+            for field in search_fields:
+                values = fm.get(field, [])
+                if not isinstance(values, list):
+                    continue
+                for term in values:
+                    if term is None or term == "":
+                        continue
+                    index_map.setdefault(str(term), []).append(d["path"])
+        if index_map:
+            title = cr.get("title", "한영 검색 인덱스")
+            lines.append(f"## {title}")
+            lines.append("")
+            lines.append("_frontmatter 의 aliases / tags 역 인덱스 — 한국어 / 영어 자연어 query 매칭_")
+            lines.append("")
+            for term in sorted(index_map.keys()):
+                paths = sorted(set(str(p) for p in index_map[term]))
+                links = " · ".join(f"[`{p}`]({p})" for p in paths)
+                lines.append(f"- **{term}** → {links}")
+            lines.append("")
+
+    # 4. evolution_graph 섹션 (supersedes / superseded-by)
+    eg = evolution_graph_config(cfg)
+    if eg.get("enabled"):
+        evolution_fields = frontmatter_section(cfg).get("evolution", ["supersedes", "superseded-by"])
+        scope_type = eg.get("scope")
+        scope_docs = (
+            [d for d in all_docs if d["frontmatter"].get("type") == scope_type]
+            if scope_type
+            else all_docs
+        )
+        edges: list[tuple[Path, int]] = []
+        for d in scope_docs:
+            sup = d["frontmatter"].get("supersedes", [])
+            if not isinstance(sup, list):
+                continue
+            for old in sup:
+                if isinstance(old, int):
+                    edges.append((d["path"], old))
+        if edges:
+            title = eg.get("title", "결정 진화")
+            lines.append(f"## {title}")
+            lines.append("")
+            lines.append("_ADR 의 `supersedes` / `superseded-by` 추적 — 옛 결정 → 새 결정의 영향 관계_")
+            lines.append("")
+            for new_path, old_num in sorted(edges, key=lambda x: (str(x[0]), x[1])):
+                lines.append(f"- [`{new_path}`]({new_path}) → ADR-{old_num:04d}")
+            lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("_재생성: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"INDEX 재생성해줘\" 라고 말하세요._")
+    return "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
@@ -183,19 +396,38 @@ def main():
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
-    collected = collect_docs(target)
-    # 자기 자신은 인덱스에서 제외
-    try:
-        out_rel = out_path.relative_to(target)
-        for k in collected:
-            collected[k] = [(p, s) for (p, s) in collected[k] if p != out_rel]
-    except ValueError:
-        pass
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(render(target, collected), encoding="utf-8")
-    total = sum(len(v) for v in collected.values())
-    print(f"인덱스 생성: {out_path}")
-    print(f"  대상 문서: claude={len(collected['claude'])}, guides={len(collected['guides'])}, docs={len(collected['docs'])} (총 {total}개)")
+
+    cfg = load_config(target)
+
+    if cfg is None:
+        # Legacy path — config 없으면 기존 동작 유지
+        collected = collect_docs(target)
+        # 자기 자신은 인덱스에서 제외
+        try:
+            out_rel = out_path.relative_to(target)
+            for k in collected:
+                collected[k] = [(p, s) for (p, s) in collected[k] if p != out_rel]
+        except ValueError:
+            pass
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(render(target, collected), encoding="utf-8")
+        total = sum(len(v) for v in collected.values())
+        print(f"인덱스 생성: {out_path}")
+        print(f"  대상 문서: claude={len(collected['claude'])}, guides={len(collected['guides'])}, docs={len(collected['docs'])} (총 {total}개)")
+    else:
+        # Config-driven path — frontmatter 기반 그룹화
+        all_docs = collect_with_meta(target)
+        # 자기 자신은 인덱스에서 제외
+        try:
+            out_rel = out_path.relative_to(target)
+            all_docs = [d for d in all_docs if d["path"] != out_rel]
+        except ValueError:
+            pass
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(render_with_config(target, cfg, all_docs), encoding="utf-8")
+        n_groups = len(index_groups(cfg))
+        print(f"인덱스 생성: {out_path} (config v1, {n_groups}개 그룹 룰 적용)")
+        print(f"  대상 문서: {len(all_docs)}개")
 
 
 if __name__ == "__main__":
