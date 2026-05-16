@@ -70,9 +70,9 @@ To raise the score by executing ROI actions directly, use the scripts below. The
 
 | Script | ROI action it covers | What it does |
 |--------|---------------------|--------------|
-| `gen_index.py` | "Create docs/INDEX.md (preferred) / wiki/index.md" | Builds a single-line summary index from every CLAUDE.md / AGENTS.md found |
+| `gen_index.py` | "Create docs/INDEX.md (preferred) / wiki/index.md" | Builds a single-line summary index from every CLAUDE.md / AGENTS.md found. **v0.2.0+**: if `<target>/.ai-ready/config.json` exists, switches to *frontmatter-driven grouping* — feature/module sub-groups + 한영 cross-reference + ADR supersedes graph. |
 | `inject_module_map.py` | "Add module map to root CLAUDE.md" | Injects an auto-regenerable "## 모듈 맵" section into root CLAUDE.md (idempotent, marker-fenced) |
-| `inject_lazy_load_index.py` | "Thin index pattern" | Injects a lazy-load trigger table into root CLAUDE.md, mapping triggers to `docs/*.md` for thin-index style |
+| `inject_lazy_load_index.py` | "Thin index pattern" | Injects a lazy-load trigger table into root CLAUDE.md, mapping triggers to `docs/*.md`. **v0.2.0+**: splits into `lazy-load:user-begin/user-end` (never overwritten) + `lazy-load:auto-begin/auto-end` (regenerated). Legacy single-marker / unmarked tables are migrated safely. Config's `lazy_load_triggers.detect` adds project-specific rules; `override_hardcoded` removes built-in rules (e.g., when migrating `docs/decisions` → `docs/adr`). |
 | `extract_section.py --kind testing` | "Split TESTING.md" | Lifts the testing section out of CLAUDE.md into a dedicated file |
 | `extract_section.py --kind naming` | "Split NAMING.md" | Lifts the naming/conventions section out into NAMING.md |
 | `install_hook.py` | "Install freshness Stop hook" | Adds the hook to `.claude/settings.json` (idempotent) |
@@ -81,6 +81,40 @@ To raise the score by executing ROI actions directly, use the scripts below. The
 | `extract_antipatterns.py` | "Seed ANTIPATTERNS.md" | Clusters `fix` / `hotfix` / `revert` (and Korean equivalents) commits by keyword and module hotspot |
 
 Scripts that modify existing files (`inject_module_map.py`, `install_hook.py`) are idempotent and expose a `--dry-run` option so changes can be previewed first.
+
+## Project Config (`.ai-ready/config.json`) — v0.2.0+
+
+Optional file at `<target>/.ai-ready/config.json` enables frontmatter-aware behavior. Without it, the v0.1.x defaults apply (backward compatible — no changes for existing users).
+
+```json
+{
+  "version": 1,
+  "frontmatter": {
+    "required":  ["type", "feature", "module", "status", "created", "updated"],
+    "search":    ["aliases", "tags"],
+    "evolution": ["supersedes", "superseded-by"]
+  },
+  "index": {
+    "groups": [
+      { "id": "adr", "title": "ADR (`docs/adr/`)",
+        "match": { "path_prefix": "docs/adr/" }, "sub_group_by": "feature" }
+    ],
+    "cross_reference": { "enabled": true, "title": "한영 검색 인덱스" },
+    "evolution_graph": { "enabled": true, "title": "ADR 결정 진화", "scope": "adr" }
+  },
+  "lazy_load_triggers": {
+    "detect":               [ { "path": "docs/adr/", "label": "[`docs/adr/`](docs/adr/)", "trigger": "ADR 조회" } ],
+    "override_hardcoded":   [ "docs/decisions" ]
+  }
+}
+```
+
+What it changes:
+1. `gen_index.py` switches from hardcoded categories (claude / guides / docs-decisions / docs-other) to *config-defined groups* with frontmatter `sub_group_by` (e.g., feature/module), plus optional `cross_reference` and `evolution_graph` sections.
+2. `inject_lazy_load_index.py` adds project-specific triggers (`detect`) and removes obsolete built-in ones (`override_hardcoded`).
+3. Each .md file's YAML frontmatter is parsed via the bundled stdlib-only parser (`frontmatter_parser.py`) — no PyYAML dependency added.
+
+Full schema is documented in `skills/audit/scripts/config_loader.py`.
 
 ## When To Use Each Output
 
