@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # 동일 디렉토리의 두 모듈 import — ai-ready 의 standard layout
@@ -178,7 +177,6 @@ def _matches_group(rel_path: Path, group: dict) -> bool:
 
 def render(target: Path, collected: dict[str, list[tuple[Path, str]]]) -> str:
     """Legacy 렌더링 — config 없을 때."""
-    today = datetime.now().strftime("%Y-%m-%d")
     claude = collected["claude"]
     guides = collected["guides"]
     docs_dir = collected["docs"]
@@ -187,7 +185,9 @@ def render(target: Path, collected: dict[str, list[tuple[Path, str]]]) -> str:
     lines = []
     lines.append("# 문서 인덱스")
     lines.append("")
-    lines.append(f"_자동 생성: {today} · 대상: `{target.name}` · 문서 {total}개_")
+    # 휘발성 메타(생성일자 · 대상 워크트리명 · 문서 개수)를 헤더에 넣지 않는다 — 브랜치마다
+    # 달라져 머지 충돌을 보장하던 줄. 내용이 같으면 재생성 결과도 동일하도록 안정 헤더만 둔다.
+    lines.append("_자동 생성 (`ai-ready:apply`) — 재생성 시 전체를 덮어씁니다._")
     lines.append("")
 
     if total == 0:
@@ -239,13 +239,14 @@ def render(target: Path, collected: dict[str, list[tuple[Path, str]]]) -> str:
 
 def render_with_config(target: Path, cfg: dict, all_docs: list[dict]) -> str:
     """Config-driven 렌더링 — frontmatter 기반 그룹화 + 한영 cross-reference + 결정 진화 그래프."""
-    today = datetime.now().strftime("%Y-%m-%d")
     total = len(all_docs)
 
     lines: list[str] = []
     lines.append("# 문서 인덱스")
     lines.append("")
-    lines.append(f"_자동 생성: {today} · 대상: `{target.name}` · 문서 {total}개 · config v1 활성_")
+    # 휘발성 메타(생성일자 · 대상 워크트리명 · 문서 개수)를 헤더에 넣지 않는다 — 브랜치마다
+    # 달라져 머지 충돌을 보장하던 줄. 내용이 같으면 재생성 결과도 동일하도록 안정 헤더만 둔다.
+    lines.append("_자동 생성 (`ai-ready:apply`, config v1) — 재생성 시 전체를 덮어씁니다._")
     lines.append("")
 
     if total == 0:
@@ -386,6 +387,49 @@ def render_with_config(target: Path, cfg: dict, all_docs: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def ensure_gitattributes_union(target: Path, out_path: Path) -> bool:
+    """`<target>/.gitattributes` 에 INDEX 파일의 `merge=union` 룰을 idempotent 하게 보장.
+
+    INDEX.md 는 전체 재생성되는 집계 산출물이라 브랜치마다 항목이 추가되면 같은 영역에서
+    머지 충돌이 난다. union 머지 드라이버를 걸면 git 이 양쪽 추가분을 자동 합쳐 충돌을 없앤다
+    (드물게 생기는 중복 항목은 다음 재생성이 정리). 헤더의 휘발성 메타 제거와 한 쌍으로 동작.
+
+    target 이 git 저장소가 아니어도 .gitattributes 자체는 무해하므로 항상 보장한다.
+    이미 룰이 있으면 건드리지 않는다. 추가했으면 True 반환.
+    """
+    try:
+        rel = out_path.relative_to(target)
+    except ValueError:
+        rel = Path(out_path.name)
+    rel_str = str(rel).replace(os.sep, "/")
+    rule = f"{rel_str} merge=union"
+    ga = target / ".gitattributes"
+    existing = ""
+    if ga.exists():
+        try:
+            existing = ga.read_text(encoding="utf-8")
+        except OSError:
+            return False
+    # 이미 해당 경로에 대한 룰이 있으면 추가하지 않음 (룰 종류 무관 — 사용자 설정 존중)
+    for line in existing.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.split()[0] == rel_str:
+            return False
+    block = "" if existing == "" or existing.endswith("\n") else "\n"
+    block += (
+        "# ai-ready: 집계 산출물 — 브랜치 간 머지 충돌 방지 (양쪽 추가분 자동 union)\n"
+        f"{rule}\n"
+    )
+    try:
+        with ga.open("a", encoding="utf-8") as fh:
+            fh.write(block)
+    except OSError:
+        return False
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
@@ -411,9 +455,12 @@ def main():
             pass
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(render(target, collected), encoding="utf-8")
+        added_ga = ensure_gitattributes_union(target, out_path)
         total = sum(len(v) for v in collected.values())
         print(f"인덱스 생성: {out_path}")
         print(f"  대상 문서: claude={len(collected['claude'])}, guides={len(collected['guides'])}, docs={len(collected['docs'])} (총 {total}개)")
+        if added_ga:
+            print("  .gitattributes: docs INDEX merge=union 룰 추가 (머지 충돌 방지)")
     else:
         # Config-driven path — frontmatter 기반 그룹화
         all_docs = collect_with_meta(target)
@@ -425,9 +472,12 @@ def main():
             pass
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(render_with_config(target, cfg, all_docs), encoding="utf-8")
+        added_ga = ensure_gitattributes_union(target, out_path)
         n_groups = len(index_groups(cfg))
         print(f"인덱스 생성: {out_path} (config v1, {n_groups}개 그룹 룰 적용)")
         print(f"  대상 문서: {len(all_docs)}개")
+        if added_ga:
+            print("  .gitattributes: docs INDEX merge=union 룰 추가 (머지 충돌 방지)")
 
 
 if __name__ == "__main__":

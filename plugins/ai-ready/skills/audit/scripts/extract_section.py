@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime
 from pathlib import Path
 
 DOC_NAMES = {"CLAUDE.md", "AGENTS.md"}
@@ -89,9 +88,9 @@ def extract_matching_sections(text: str, keywords: tuple[str, ...]) -> list[str]
 
 def render(kind: str, source_target: Path, results: list[tuple[Path, list[str]]]) -> str:
     title = TITLE_FOR_KIND.get(kind, kind.title())
-    today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"# {title}", ""]
-    lines.append(f"_자동 추출: {today} · 대상: `{source_target.name}`_")
+    # 휘발성 메타(추출일자 · 대상 워크트리명) 제거 — 브랜치마다 달라져 머지 충돌을 내던 줄.
+    lines.append("_자동 추출 (`ai-ready:apply`) — 재추출 시 전체를 덮어씁니다._")
     lines.append("")
     lines.append(f"> CLAUDE.md / AGENTS.md에 흩어진 `{kind}` 관련 섹션을 모은 초안입니다.")
     lines.append("> 검토·정제 후 원본 문서에서 해당 섹션을 제거하고 이 파일을 참조하도록 하세요.")
