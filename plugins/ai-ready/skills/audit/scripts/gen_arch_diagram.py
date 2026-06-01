@@ -19,7 +19,6 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
 EXCLUDE_DIRS = {
@@ -156,9 +155,9 @@ def sanitize_id(s: str) -> str:
 
 
 def render(target: Path, edges: list[tuple[str, str]]) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
     lines = ["# 모듈 의존성", ""]
-    lines.append(f"_자동 생성: {today} · 대상: `{target.name}`_")
+    # 휘발성 메타(생성일자 · 대상 워크트리명) 제거 — 브랜치마다 달라져 머지 충돌을 내던 줄.
+    lines.append("_자동 생성 (`ai-ready:apply`) — 재생성 시 전체를 덮어씁니다._")
     lines.append("")
 
     if not edges:
