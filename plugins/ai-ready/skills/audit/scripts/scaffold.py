@@ -328,7 +328,7 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 
 ## 이 모듈이 하는 일
 {what_block}
-
+{design_pointer_block}
 ## 일반적인 변경 방법
 {how_block}
 
@@ -355,6 +355,22 @@ def render_what_block(module_path: str, stack_hint: str, file_count: int, summar
     """T-10: 루트 CLAUDE.md 의 module map 1줄 설명을 자동으로 cherry-pick."""
     head = f"- {summary}" if summary else f"- TODO: `{module_path}` 의 책임을 한 문장으로 적으세요."
     return f"{head}\n- {stack_hint} 소스 파일 {file_count}개."
+
+
+def render_design_pointer_block(target: Path, module_path: str) -> str:
+    """모듈이 속한 도메인의 living design 문서 (docs/design/domain_{name}.md) 가 있으면 포인터 한 줄.
+
+    도메인명은 모듈 경로의 최상위 세그먼트 (casting/casting-api → casting).
+    design 문서가 없으면 빈 문자열 — TODO 자리표시자를 만들지 않는다 (점진 확장 정책:
+    design 문서가 생기는 도메인부터 포인터가 따라붙는다).
+    """
+    domain = Path(module_path).parts[0]
+    rel = Path("docs/design") / f"domain_{domain}.md"
+    if not (target / rel).exists():
+        return ""
+    depth = len(Path(module_path).parts)
+    href = "../" * depth + str(rel)
+    return f"- **도메인 설계 문서**: 비즈니스 룰·결정 이력은 [{rel}]({href}) 참조.\n"
 
 
 def render_how_block(layer_hints: list[str]) -> str:
@@ -590,6 +606,7 @@ def run(target: Path, out_dir: Path, top_n: int):
             module_path=str(m),
             stack_hint=stack,
             what_block=render_what_block(str(m), stack, file_count, summary),
+            design_pointer_block=render_design_pointer_block(target, str(m)),
             how_block=render_how_block(layers),
             antipattern_block=render_antipattern_block(fix_subjects),
             deps_block=render_deps_block(deps),

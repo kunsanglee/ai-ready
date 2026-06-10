@@ -183,3 +183,5 @@ The audit script looks at:
 ## Re-running
 
 This is meant to be run periodically (monthly is a good cadence). Each run overwrites `audit.json` / `audit-report.md` / `dashboard.html` / `README.md`, but **also archives the result to `history/{timestamp}.json`** so the dashboard can render a trend sparkline. Don't delete the `history/` directory.
+
+**월간 정합 스캔 연계**: 대상 repo 가 living design 문서 체계 (`docs/design/domain_{name}.md`) 를 쓰면, 월간 audit 와 *같은 날* `/sync-docs --all` (전역 드리프트 스캔) 을 함께 수행하는 리듬을 권장한다. 역할 분담 — audit 는 구조 지표 (커버리지 / 길이 / freshness 메타), 전역 스캔은 내용 정합 (문서 서술 ↔ 코드 동작의 양방향 드리프트). audit 만으로는 문서 내용이 코드와 맞는지 보장되지 않는다.
