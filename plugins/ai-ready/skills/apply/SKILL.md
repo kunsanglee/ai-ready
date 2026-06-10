@@ -19,7 +19,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 모드 | 동작 차이 |
 |---|---|
 | `single_module_mode: true` | (a) `scaffold.py` 가 `scaffolds/PACKAGES.md` 한 파일을 생성 → 사용자 검토 후 `docs/PACKAGES.md` 로 이동. 패키지별 `CLAUDE.md` 분산 생성하지 않는다. (b) 도메인 패키지의 표준 레이아웃 (`controller/ service/ domain/ repository/` 4개 중 3개 이상) 일관성도 평가됨 — 부족 시 `audit-report.md` 의 권고대로 정렬 권장. |
-| `single_module_mode: false` | 멀티 모듈 기본 흐름 — 핫 모듈 top-N 의 `CLAUDE.md` 초안 생성. |
+| `single_module_mode: false` | 멀티 모듈 기본 흐름 — 핫 모듈 top-N 의 `CLAUDE.md` 초안 생성. **점진 확장 정책**: 전 모듈 일괄 생성 금지 — 저빈도 모듈의 빈 스캐폴드 양산은 채움 비용과 검토일 안 갱신되는 썩는 문서만 늘린다. 대상은 핫 모듈 top-N + (대상 repo 가 living design 체계를 쓰면) `docs/design/domain_{name}.md` 가 있는 도메인의 연관 모듈. scaffold 는 모듈의 도메인 design 문서가 존재하면 "도메인 설계 문서" 포인터 한 줄을 자동 포함한다. |
 
 매핑 테이블의 일부 룰은 *룰 이름 자체가 모드에 따라 다르다*. apply 는 `rule.name` 의 정확한 문자열로 매핑하므로 audit.json 에 들어온 이름을 그대로 키로 사용하면 된다.
 
@@ -48,7 +48,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈) | **judgment** | (1) 카탈로그 섹션이 부족하면 위 룰 흐름. (2) 도메인 패키지 표준 레이아웃 부족 시 Claude 가 누락 디렉토리 (controller/service/domain/repository) 정렬 제안 — *코드 이동 동반* 이라 사용자 명시 승인 필수 |
 | 인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_index.py --target <T> --out <T>/docs/INDEX.md` — **v0.2.0+**: 대상에 `.ai-ready/config.json` 이 있으면 frontmatter 기반 그룹화 + 한영 cross-reference + ADR 진화 그래프 자동 활성. **머지 충돌 방지**: 헤더에 생성일자·대상명·문서 개수 같은 휘발성 메타를 넣지 않아(내용 동일 → 재생성 결과 동일) 브랜치 간 충돌을 없애고, `<T>/.gitattributes` 에 `<index> merge=union` 룰을 idempotent 하게 추가해 동시 추가분을 git 이 자동 union 한다 |
 | 루트 CLAUDE.md 200줄 이하 | **mechanical+judgment** | thin index 패턴 권장: `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 lazy-load 트리거 표를 주입한 뒤, Claude 가 인라인된 detail 을 `docs/CONVENTIONS.md` / `docs/API_COMPATIBILITY.md` / `docs/ERROR_HANDLING.md` / `docs/GIT_WORKFLOW.md` / `docs/DDL_DML.md` 등으로 분리 (사용자 승인 후). **v0.2.0+**: `lazy-load:user-begin/user-end` 마커 안 사용자 수동 행은 절대 덮어쓰지 않음 (기존 마커 없는 표는 첫 실행 시 안전 마이그레이션) |
-| 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트 |
+| 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트. **보존 가드**: "도메인 설계 문서" 포인터 줄 (`docs/design/domain_{name}.md` 참조) 은 다이어트 대상에서 제외 — design 문서가 있는 도메인의 모듈엔 반드시 포인터가 남아야 한다 (불변식) |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
 | '사용 시점' 가이드 존재 | **mechanical+judgment** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 루트 CLAUDE.md 에 lazy-load 트리거 표 주입 (감지된 docs/ 자동 매핑). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
 | ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |
