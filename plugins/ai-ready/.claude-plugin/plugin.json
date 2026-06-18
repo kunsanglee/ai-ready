@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
-  "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics. v0.2.0+: optional .ai-ready/config.json drives frontmatter-aware INDEX grouping and preserves user-edited lazy-load triggers. v0.3.0+: the config.json rubric section makes scoring respect project reality — a consolidated decision dir (docs/design) counts as ADR, code-gen deps (springdoc) count as API contracts, and project-level .claude/settings.json lint/test hooks count as a verification gate.",
-  "version": "0.3.0",
+  "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics. v0.2.0+: optional .ai-ready/config.json drives frontmatter-aware INDEX grouping and preserves user-edited lazy-load triggers. v0.3.0+: the config.json rubric section makes scoring respect project reality — a consolidated decision dir (docs/design) counts as ADR, code-gen deps (springdoc) count as API contracts, and project-level .claude/settings.json lint/test hooks count as a verification gate. v0.4.0+: apply guards human-adopted docs — generators refuse to overwrite a file that lacks the auto-generated signature (--force to override), and apply runs a per-doc diff-confirm loop instead of blind overwrite.",
+  "version": "0.4.0",
   "author": {
     "name": "kunsanglee"
   },
