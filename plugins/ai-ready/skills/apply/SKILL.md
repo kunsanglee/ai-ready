@@ -52,12 +52,12 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
 | '사용 시점' 가이드 존재 | **mechanical+judgment** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 루트 CLAUDE.md 에 lazy-load 트리거 표 주입 (감지된 docs/ 자동 매핑). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
 | ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |
-| 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 (`<T>/docs/decisions/00NN-*.md`) |
+| 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 (`<T>/docs/decisions/00NN-*.md`). *이미 design 통합 문서 등으로 결정을 기록 중이면* `.ai-ready/config.json` 의 `rubric.decision_records.dir_hints` 에 그 디렉토리를 선언해 인정시키는 게 우선 |
 | 네이밍 컨벤션 문서화 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/docs/NAMING.md --kind naming` |
 | 모듈 의존성 맵 / 다이어그램 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_arch_diagram.py --target <T> --out <T>/docs/ARCHITECTURE.md` |
 | 빌드 매니페스트로 의존 그래프 추출 가능 | **skip** | 빌드 시스템이 이미 커버 |
-| 모듈 간 API 계약 문서화 (OpenAPI/proto/contracts) | **judgment (대) ** | 큰 작업 — 추천만 하고 본격 도입은 별도 세션 |
-| 커밋 전 훅 (pre-commit) 존재 | **judgment** | Claude 가 husky/lefthook 중 적절한 도구 설정 제안 |
+| 모듈 간 API 계약 문서화 (OpenAPI/proto/contracts) | **judgment (대) ** | 큰 작업 — 추천만 하고 본격 도입은 별도 세션. *springdoc/springfox 처럼 코드에서 OpenAPI 를 런타임 생성 중이면* `.ai-ready/config.json` 의 `rubric.api_contracts.build_deps` 에 선언해 인정시키는 게 우선 |
+| 기계적 검증 훅 (pre-commit / AI 에이전트 hook) | **judgment** | AI 코딩 환경이면 `.claude/settings.json` PostToolUse(편집 후 ktlint/format)·PreToolUse(커밋 전 test/check) hook 을 먼저 제안. 추가 안전망으로 lefthook pre-commit / CI. 글로벌(~/.claude) 말고 *프로젝트* 설정에 둘 것 |
 | CI 설정 존재 + 테스트 참조 | **judgment** | CI provider 에 따라 다름 — Claude 가 추천 |
 | 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/docs/TESTING.md --kind testing` |
 | CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/install_hook.py --target <T>` |

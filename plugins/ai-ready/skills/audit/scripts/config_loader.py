@@ -33,10 +33,22 @@ config.json 표준 스키마 (v1):
       { "path": "docs/adr/", "label": "[`docs/adr/`](docs/adr/)", "trigger": "ADR 조회" }
     ],
     "override_hardcoded": ["docs/decisions"]
+  },
+  "rubric": {
+    "decision_records": { "dir_hints": ["docs/design"] },
+    "api_contracts":    { "build_deps": ["springdoc", "springfox"] }
   }
 }
 
 각 섹션은 *선택적* — 누락된 섹션은 빈 / 비활성으로 취급.
+
+`rubric` 섹션 (v0.3.0+) — audit.py 채점 로직이 프로젝트 현실을 존중하도록 하는 선언:
+  - decision_records.dir_hints: 의사결정 기록(ADR rule 3.2)으로 인정할 *추가* 디렉토리.
+    하드코딩된 docs/adr·docs/decisions 외에, design 통합 문서 (PRD/ADR/api-doc 흡수) 를
+    docs/design/ 에 두는 프로젝트가 그 디렉토리를 결정 기록 신호로 선언할 때 사용.
+  - api_contracts.build_deps: API 계약(rule 4.3)으로 인정할 빌드 의존성 문자열.
+    정적 openapi.yaml 대신 springdoc/springfox 처럼 *코드에서 OpenAPI 를 런타임 생성* 하는
+    의존성을 빌드 매니페스트에서 감지하면 계약 문서화로 인정.
 
 사용:
   from config_loader import load_config
@@ -56,7 +68,10 @@ from pathlib import Path
 from typing import Any
 
 
-__all__ = ["load_config", "CONFIG_FILE_NAME", "CONFIG_VERSION"]
+__all__ = [
+    "load_config", "CONFIG_FILE_NAME", "CONFIG_VERSION",
+    "rubric_section", "decision_record_hints", "api_contract_build_deps",
+]
 
 
 CONFIG_FILE_NAME = ".ai-ready/config.json"
@@ -133,6 +148,26 @@ def lazy_load_detect_rules(cfg: dict | None) -> list[dict]:
 
 def lazy_load_override_hardcoded(cfg: dict | None) -> list[str]:
     return lazy_load_triggers_section(cfg).get("override_hardcoded", []) or []
+
+
+# ---- rubric 채점 조정 (v0.3.0+) ----
+
+def rubric_section(cfg: dict | None) -> dict:
+    if cfg is None:
+        return {}
+    return cfg.get("rubric", {}) or {}
+
+
+def decision_record_hints(cfg: dict | None) -> list[str]:
+    """ADR rule(3.2) 에서 의사결정 기록으로 인정할 *추가* 디렉토리 (예: docs/design)."""
+    dr = rubric_section(cfg).get("decision_records", {}) or {}
+    return [h.strip("/").lower().replace("\\", "/") for h in (dr.get("dir_hints", []) or [])]
+
+
+def api_contract_build_deps(cfg: dict | None) -> list[str]:
+    """API 계약 rule(4.3) 에서 인정할 빌드 의존성 문자열 (예: springdoc)."""
+    ac = rubric_section(cfg).get("api_contracts", {}) or {}
+    return [d.lower() for d in (ac.get("build_deps", []) or [])]
 
 
 # CLI 진단 — config 가 정상 로드되는지 확인

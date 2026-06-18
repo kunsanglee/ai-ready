@@ -105,6 +105,10 @@ Optional file at `<target>/.ai-ready/config.json` enables frontmatter-aware beha
   "lazy_load_triggers": {
     "detect":               [ { "path": "docs/adr/", "label": "[`docs/adr/`](docs/adr/)", "trigger": "ADR 조회" } ],
     "override_hardcoded":   [ "docs/decisions" ]
+  },
+  "rubric": {
+    "decision_records": { "dir_hints": ["docs/design"] },
+    "api_contracts":    { "build_deps": ["springdoc", "springfox"] }
   }
 }
 ```
@@ -113,6 +117,7 @@ What it changes:
 1. `gen_index.py` switches from hardcoded categories (claude / guides / docs-decisions / docs-other) to *config-defined groups* with frontmatter `sub_group_by` (e.g., feature/module), plus optional `cross_reference` and `evolution_graph` sections.
 2. `inject_lazy_load_index.py` adds project-specific triggers (`detect`) and removes obsolete built-in ones (`override_hardcoded`).
 3. Each .md file's YAML frontmatter is parsed via the bundled stdlib-only parser (`frontmatter_parser.py`) — no PyYAML dependency added.
+4. **`audit.py` scoring respects the `rubric` section (v0.3.0+)**: `decision_records.dir_hints` makes the ADR rule (3.2) credit a consolidated decision directory such as `docs/design/` (when a project absorbed ADR/PRD/api-doc into one living doc); `api_contracts.build_deps` makes the API-contract rule (4.3) credit code-gen dependencies such as springdoc/springfox that emit OpenAPI at runtime. Separately — no config needed — the verification-gate rule (5.1) now also credits project-level `.claude/settings.json` hooks that run lint/test/format on edit/commit, recognizing the AI-agent harness as a mechanical verification gate.
 
 Full schema is documented in `skills/audit/scripts/config_loader.py`.
 

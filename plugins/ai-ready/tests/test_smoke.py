@@ -10,6 +10,7 @@ from the plugin root, or:
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ SCRIPTS = PLUGIN_ROOT / "skills" / "audit" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import audit  # noqa: E402
+import config_loader  # noqa: E402
 import dashboard  # noqa: E402
 import extract_antipatterns  # noqa: E402
 import scaffold  # noqa: E402
@@ -166,6 +168,60 @@ class TestAuditEndToEndOnEmptyRepo(unittest.TestCase):
             result = audit.run(target, out_dir)
             self.assertEqual(result["claude_doc_count"], 0,
                              "scaffolds 의 CLAUDE.md 는 점수에 카운트되면 안 됨")
+
+
+class TestConfigAwareScoring(unittest.TestCase):
+    """v0.3.0+ config rubric 섹션이 채점에 반영되는지 (없으면 기존 동작)."""
+
+    @staticmethod
+    def _write(root: Path, rel: str, content: str) -> None:
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+
+    def test_design_dir_counts_as_adr_via_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, "docs/design/domain_member.md", "# member\n결정 이력")
+            self._write(root, ".ai-ready/config.json", json.dumps(
+                {"version": 1, "rubric": {"decision_records": {"dir_hints": ["docs/design"]}}}))
+            cfg = config_loader.load_config(root)
+            scan = audit.scan_target(root, cfg)
+            self.assertTrue(any("design" in d for d in scan["adr_dirs"]))
+
+    def test_design_dir_not_counted_without_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, "docs/design/domain_member.md", "# member")
+            scan = audit.scan_target(root, None)
+            self.assertFalse(any("design" in d for d in scan["adr_dirs"]))
+
+    def test_springdoc_counts_as_api_contract_via_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, "build.gradle.kts",
+                        'implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui")')
+            self._write(root, ".ai-ready/config.json", json.dumps(
+                {"version": 1, "rubric": {"api_contracts": {"build_deps": ["springdoc"]}}}))
+            cfg = config_loader.load_config(root)
+            scan = audit.scan_target(root, cfg)
+            self.assertIn("springdoc", scan["api_build_deps"])
+
+    def test_claude_hook_counts_as_verification_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, ".claude/settings.json", json.dumps(
+                {"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
+                    {"type": "command", "command": "./gradlew ktlintFormat"}]}]}}))
+            self.assertTrue(audit._ai_harness_verification_hooks(root))
+
+    def test_freshness_hook_excluded_from_verification(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write(root, ".claude/settings.json", json.dumps(
+                {"hooks": {"Stop": [{"matcher": ".*", "hooks": [
+                    {"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/.ai-ready/hooks/freshness_check.sh"}]}]}}))
+            self.assertEqual(audit._ai_harness_verification_hooks(root), [])
 
 
 if __name__ == "__main__":
