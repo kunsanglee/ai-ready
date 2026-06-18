@@ -81,10 +81,12 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
    4. [skip]       빌드 매니페스트 — 이미 커버됨
    5. [mechanical] freshness Stop hook — install_hook.py 실행
    ```
-4. mechanical 부터 일괄 실행. 각 명령마다:
-   - 어떤 명령을 실행하는지 announce
-   - Bash 로 호출 (timeout 적절히)
-   - stdout 캡처해서 결과 보고
+4. mechanical 중 **문서를 전체 생성/덮어쓰는** 액션(`gen_index.py` / `gen_arch_diagram.py` / `extract_section.py` / `inject_module_map.py`)은 일괄 실행하지 말고 **문서별 confirm 루프**로 — grill-me 식으로 한 번에 하나씩:
+   - 기존 파일이 있으면 `Read` 로 현재 내용 확보
+   - 스크립트를 `--dry-run`(지원 시) 또는 `--out` 을 `<T>/.ai-ready/proposed/` 임시 경로로 돌려 *새 제안* 생성 (실제 대상 직접 덮어쓰기 금지)
+   - 기존 vs 제안 **diff** 를 사용자에게 보여주고 추가/수정 항목을 확인 → 승인분만 실제 파일에 반영
+   - 스크립트가 `중단(사람 인수 추정)` 으로 거부(exit 3)하면, 그 문서는 사람이 관리 중이라는 신호다. `--force` 를 무심코 붙이지 말고, 사용자에게 알리고 어떻게 할지 물을 것
+   - 부수효과 없는 멱등 작업(`install_hook.py` 등)은 announce 후 바로 실행 가능
 5. judgment 항목들은 한 번에 하나씩:
    - 관련 파일 읽기 (`Read`)
    - 초안 작성 (메시지로 보여주기)
@@ -97,6 +99,8 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
 ## 안전 원칙
 
+- **사람 인수 문서 보호 (v0.4.0+)**: `gen_index` / `gen_arch_diagram` / `extract_section` / `inject_module_map` 은 출력 대상에 ai-ready 자동 생성 시그니처가 없으면(= 사람이 직접 손봤다는 신호) `중단` + exit 3 으로 *덮어쓰기를 거부* 한다 (`managed_doc` 가드). 이 거부는 **정상 동작**이다. `--force` 로 우회하기 전에 반드시 diff 를 확인하고 사용자 승인을 받을 것. 특히 NAMING.md / TESTING.md / ARCHITECTURE.md 처럼 사람이 산문으로 다듬은 문서가 대상이 되기 쉽다.
+- **모든 생성은 diff confirm 후 반영**: 문서 전체를 덮어쓰는 액션은 임시 출력 → diff → 사용자 승인분만 반영 (위 실행 가이드 4번). 무조건 덮어쓰지 않는다 — 어떤 ai-ready 문서든 사람이 손댔을 수 있다는 전제.
 - **항상 dry-run 우선**: `inject_module_map.py` 와 같이 기존 파일을 수정하는 스크립트는 가능한 경우 `--dry-run` 으로 미리 보여준 뒤 사용자 승인 → 실제 실행.
 - **judgment 항목은 항상 사용자 승인**: AI 가 임의로 컨벤션을 결정하지 않도록.
 - **백업 권장**: 사용자가 git commit 하지 않은 변경이 있으면 적용 전에 안내.
@@ -109,3 +113,5 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 - 한 번에 여러 judgment 항목을 묶어서 처리 (사용자가 검토 못 함)
 - 사용자 동의 없이 git commit / push / 외부 시스템 호출
 - 적용 결과를 보지 않고 다음 액션으로 넘어가기 (실패해도 계속 가다가 누적 오류)
+- 가드의 `중단(사람 인수 추정)` (exit 3) 을 사용자 승인 없이 `--force` 로 우회
+- 기존 문서를 diff 확인 없이 통째로 덮어쓰기 (사람 편집 손실 위험)

@@ -24,6 +24,7 @@ import audit  # noqa: E402
 import config_loader  # noqa: E402
 import dashboard  # noqa: E402
 import extract_antipatterns  # noqa: E402
+import managed_doc  # noqa: E402
 import scaffold  # noqa: E402
 
 
@@ -222,6 +223,35 @@ class TestConfigAwareScoring(unittest.TestCase):
                 {"hooks": {"Stop": [{"matcher": ".*", "hooks": [
                     {"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/.ai-ready/hooks/freshness_check.sh"}]}]}}))
             self.assertEqual(audit._ai_harness_verification_hooks(root), [])
+
+
+class TestManagedDocGuard(unittest.TestCase):
+    """v0.4.0+ 사람이 인수한(자동 생성 시그니처 없는) 문서 덮어쓰기 가드."""
+
+    def test_human_doc_blocks_overwrite(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "NAMING.md"
+            p.write_text("# 네이밍 컨벤션\n\n> 충돌 시 이 문서가 권위.\n", encoding="utf-8")
+            self.assertFalse(managed_doc.guard_overwrite(p, force=False))
+            self.assertTrue(managed_doc.guard_overwrite(p, force=True))
+
+    def test_new_signature_allows_overwrite(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "INDEX.md"
+            p.write_text("# 문서 인덱스\n\n_자동 생성 (`ai-ready:apply`) — 재생성 시 전체를 덮어씁니다._\n",
+                         encoding="utf-8")
+            self.assertTrue(managed_doc.is_ai_ready_generated(p))
+            self.assertTrue(managed_doc.guard_overwrite(p, force=False))
+
+    def test_legacy_signature_allows_overwrite(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "ARCHITECTURE.md"
+            p.write_text("# 모듈 의존성\n\n_자동 생성: 2026-05-06 · 대상: `x`_\n", encoding="utf-8")
+            self.assertTrue(managed_doc.guard_overwrite(p, force=False))
+
+    def test_missing_file_allows_create(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertTrue(managed_doc.guard_overwrite(Path(td) / "NEW.md", force=False))
 
 
 if __name__ == "__main__":

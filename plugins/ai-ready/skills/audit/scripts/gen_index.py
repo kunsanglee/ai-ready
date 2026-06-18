@@ -34,6 +34,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from frontmatter_parser import parse_frontmatter  # noqa: E402
+from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
 from config_loader import (  # noqa: E402
     load_config,
     index_groups,
@@ -434,12 +435,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
     ap.add_argument("--out", required=True, help="INDEX.md 출력 경로")
+    add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if not guard_overwrite(out_path, args.force):
+        sys.exit(3)
 
     cfg = load_config(target)
 

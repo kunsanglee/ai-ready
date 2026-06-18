@@ -28,6 +28,11 @@ import re as _re
 import sys
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
+
 DOC_NAMES = ("CLAUDE.md", "AGENTS.md")
 BUILD_MANIFESTS = {
     "build.gradle.kts", "build.gradle", "pom.xml",
@@ -190,6 +195,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
     ap.add_argument("--dry-run", action="store_true", help="실제 파일은 수정하지 않고 결과만 출력")
+    add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     if not target.is_dir():
@@ -220,8 +226,11 @@ def main():
 
     full_path.parent.mkdir(parents=True, exist_ok=True)
     if full_doc_text != original_full:
-        full_path.write_text(full_doc_text, encoding="utf-8")
-        print(f"전체 모듈 맵 갱신: {full_path}")
+        if guard_overwrite(full_path, args.force):
+            full_path.write_text(full_doc_text, encoding="utf-8")
+            print(f"전체 모듈 맵 갱신: {full_path}")
+        else:
+            print(f"건너뜀(사람 인수 추정): {full_path} — 루트 stub 은 마커 기반이라 계속 진행")
     else:
         print(f"변경 없음: {full_path}")
     if new_root != original_root:

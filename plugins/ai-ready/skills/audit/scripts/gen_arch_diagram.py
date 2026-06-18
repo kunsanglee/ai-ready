@@ -21,6 +21,11 @@ import re
 import sys
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
+
 EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
@@ -196,12 +201,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True)
     ap.add_argument("--out", required=True, help="ARCHITECTURE.md 출력 경로")
+    add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if not guard_overwrite(out_path, args.force):
+        sys.exit(3)
     edges = parse_gradle_deps(target) + parse_npm_deps(target) + parse_swift_deps(target)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(target, edges), encoding="utf-8")

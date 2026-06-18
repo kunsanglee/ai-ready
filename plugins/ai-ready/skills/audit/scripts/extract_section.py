@@ -20,6 +20,11 @@ import os
 import sys
 from pathlib import Path
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
+
 DOC_NAMES = {"CLAUDE.md", "AGENTS.md"}
 EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
@@ -117,12 +122,15 @@ def main():
     ap.add_argument("--target", required=True)
     ap.add_argument("--out", required=True, help="출력 파일 경로")
     ap.add_argument("--kind", required=True, choices=sorted(KEYWORD_SETS.keys()))
+    add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if not guard_overwrite(out_path, args.force):
+        sys.exit(3)
     keywords = KEYWORD_SETS[args.kind]
     docs = find_docs(target)
     results = []
