@@ -43,7 +43,7 @@ Rules below show both forms where they differ.
 | Rule | Points |
 |------|--------|
 | `ANTIPATTERNS.md` (or `wiki/anti-patterns/`) exists | 5 |
-| Architecture decisions captured (`ADR/`, `docs/decisions/`, `wiki/decisions/`) | 5 |
+| Architecture decisions captured (`ADR/`, `docs/decisions/`, `wiki/decisions/`; config `rubric.decision_records.dir_hints` adds dirs, e.g. a consolidated `docs/design/` that absorbs ADRs) | 5 |
 | Naming conventions documented in CLAUDE.md or NAMING.md | 5 |
 
 ## 4. Cross-module Dependency Tracking (15)
@@ -54,7 +54,7 @@ Rules below show both forms where they differ.
 |------|--------|
 | Module dependency map / diagram (`ARCHITECTURE.md`, `dependencies.md`) | 5 |
 | (Multi) Build manifests parseable for static dep graph (gradle/maven/npm/cargo)<br>(Single) Package catalog with ≥3 sections **AND** ≥60% of domain packages follow standard layout (`controller/ service/ domain/ repository/` — at least 3 of 4) | 5 |
-| Cross-module API contracts documented (OpenAPI, proto, contracts/) | 5 |
+| Cross-module API contracts documented (OpenAPI, proto, contracts/; config `rubric.api_contracts.build_deps` accepts code-gen deps, e.g. springdoc/springfox that emit OpenAPI at runtime) | 5 |
 
 > **Why standard-layout check on single-module**: gradle 같은 빌드 시스템이 모듈 간 의존 그래프를 강제하는 것과 동등한 신호를 단일 모듈에서는 *패키지 간 구조적 일관성* 이 제공한다. 도메인 패키지가 같은 모양이면 (1) AI 가 패턴 모방으로 새 도메인을 추가하기 쉽고, (2) 패키지 경계가 명시적이라 순환 의존이 들어올 자리가 줄어든다.
 
@@ -64,9 +64,11 @@ Rules below show both forms where they differ.
 
 | Rule | Points |
 |------|--------|
-| Pre-commit hooks present (`.husky/`, `.git/hooks/pre-commit`, lefthook, etc.) | 3 |
+| Mechanical verification hook present — git pre-commit (`.husky/`, `.git/hooks/pre-commit`, lefthook) **or** project-level AI-agent hook (`.claude/settings.json` PostToolUse/PreToolUse/Stop running lint/test/format/check; doc-freshness hooks excluded) | 3 |
 | CI config present and references tests | 3 |
 | Test convention documented (location, naming, assertion style) | 4 |
+
+> **Why count AI-agent hooks**: in an AI-coding workflow the code's entry point is the agent's edit, so a `.claude/settings.json` hook that runs ktlint/test right there is the same kind of mechanical guard a git pre-commit gives — it catches AI hallucinations before they land. Only **project-level** settings (committed to the repo) count; user-global `~/.claude` hooks don't, since a teammate or CI cloning the repo won't have them.
 
 ## 6. Freshness Auto-Maintenance (10)
 

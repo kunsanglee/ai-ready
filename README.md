@@ -35,6 +35,7 @@ plugin 자체를 새 version 으로 갱신:
 
 ### 최근 주요 변경
 
+- **0.3.0** — `.ai-ready/config.json` 에 `rubric` 섹션 신설 — *채점 로직이 프로젝트 현실을 존중* 하도록 확장 (지금까지 config 는 INDEX/lazy-load 생성에만 작용하고 `audit.py` 채점은 무시했음). ① `rubric.decision_records.dir_hints` 로 ADR/PRD/api-doc 을 흡수한 통합 design 디렉토리(`docs/design/`)를 의사결정 기록(rule 3.2)으로 인정, ② `rubric.api_contracts.build_deps` 로 springdoc/springfox 처럼 코드에서 OpenAPI 를 런타임 생성하는 의존성을 API 계약(rule 4.3)으로 인정. 추가로 config 없이도 — 검증 게이트(rule 5.1)가 프로젝트 레벨 `.claude/settings.json` 의 편집/커밋 시점 lint/test/format hook 을 pre-commit 과 동등한 *기계적 검증 장치* 로 인정 (AI 코딩 harness 자체가 검증 게이트라는 관점, 글로벌 `~/.claude` 는 제외). config 없으면 기존 동작 100% 유지. stdlib-only 정책 유지.
 - **0.2.0** — 프로젝트별 `.ai-ready/config.json` 으로 *frontmatter 인지 INDEX 그룹화* 활성화. `gen_index.py` 가 frontmatter 의 `feature` / `aliases` / `tags` / `supersedes` 필드를 스캔해 ① 그룹별 sub-group 분류, ② 한영 자연어 query 의 1차 인덱스가 되는 cross-reference 섹션, ③ ADR 결정 진화 (supersedes/superseded-by) 그래프를 자동 빌드. `inject_lazy_load_index.py` 는 `<!-- lazy-load:user-begin -->` ~ `<!-- lazy-load:user-end -->` 마커로 사용자 수동 추가 행 보존 (v0.1.x 시한폭탄 해소 — 기존 단일 마커 환경에서도 자동 마이그레이션). config 없으면 기존 동작 100% 유지 (backward compat). stdlib-only 정책 유지 — 신규 의존성 0.
 - **0.1.2** — manifest schema 오류 수정 (`repository` 가 string URL 이어야 함), 단일 모듈 프로젝트 평가/스캐폴드 분기 추가 (패키지 = 논리 모듈 관점, `docs/PACKAGES.md` 카탈로그 + 표준 레이아웃 일관성 평가), thin-index 인식, sparkline / history archive, ANTIPATTERNS 클러스터링, `.ai-ready/README.md` 자동 생성, iOS 빌드 매니페스트 지원.
 

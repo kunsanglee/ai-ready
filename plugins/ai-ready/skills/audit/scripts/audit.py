@@ -20,6 +20,14 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# config_loader (v0.3.0+) — 같은 scripts/ 디렉토리. 절대경로 실행 대비 sys.path 보강.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from config_loader import (  # noqa: E402
+    load_config, decision_record_hints, api_contract_build_deps,
+)
+
 # --- Constants -------------------------------------------------------------
 
 BUILD_MANIFESTS = {
@@ -239,7 +247,7 @@ def standard_layout_coverage(domain_packages: list[Path]) -> tuple[int, int]:
 
 # --- Single-pass scanner (M-5) -------------------------------------------
 
-def scan_target(target: Path) -> dict:
+def scan_target(target: Path, cfg: dict | None = None) -> dict:
     """단일 walk로 모든 산출물을 한 번에 수집 (M-5).
 
     돌려주는 dict:
@@ -251,6 +259,9 @@ def scan_target(target: Path) -> dict:
       - adr_dirs: list[str]  실제 markdown이 있는 ADR 디렉토리
       - proto_files: list[Path]
       - outcome_paths: list[str]  metrics 등
+      - api_build_deps: list[str]  config 선언 API 계약 빌드 의존성 중 실제 감지된 것
+
+    cfg (v0.3.0+): .ai-ready/config.json 의 rubric 섹션. None 이면 기존 동작 (backward compat).
     """
     out = {
         "modules": [],
@@ -261,17 +272,22 @@ def scan_target(target: Path) -> dict:
         "adr_dirs": [],
         "proto_files": [],
         "outcome_paths": [],
+        "api_build_deps": [],
     }
     seen_modules = set()
+
+    # config 기반 채점 입력 (v0.3.0+) — cfg=None 이면 빈 리스트라 기존 동작 그대로.
+    adr_hints_strict = tuple(ADR_DIR_HINTS_STRICT) + tuple(decision_record_hints(cfg))
+    contract_deps = api_contract_build_deps(cfg)
 
     for dirpath, dirnames, filenames in os.walk(target, onerror=_walk_onerror):
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS)
         rel_dir = Path(dirpath).relative_to(target)
         rel_str = str(rel_dir).lower().replace("\\", "/")
 
-        # ADR 디렉토리 감지 (M-1)
+        # ADR 디렉토리 감지 (M-1) — config decision_records.dir_hints (예: docs/design) 포함
         is_adr = False
-        for hint in ADR_DIR_HINTS_STRICT:
+        for hint in adr_hints_strict:
             if rel_str == hint or rel_str.endswith("/" + hint):
                 if any(f.endswith(".md") for f in filenames):
                     out["adr_dirs"].append(str(rel_dir))
@@ -290,6 +306,14 @@ def scan_target(target: Path) -> dict:
             if rel_dir not in seen_modules:
                 seen_modules.add(rel_dir)
                 out["modules"].append(rel_dir)
+            # config 선언 API 계약 의존성 (예: springdoc) 을 매니페스트 텍스트에서 감지 (M-1, v0.3.0+)
+            if contract_deps:
+                for f in filenames:
+                    if f in BUILD_MANIFESTS:
+                        txt = read_text(Path(dirpath) / f).lower()
+                        for dep in contract_deps:
+                            if dep in txt and dep not in out["api_build_deps"]:
+                                out["api_build_deps"].append(dep)
 
         # 성과 지표 디렉토리 (M-3) — 정확 매칭
         for d in dirnames:
@@ -637,6 +661,10 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
             contract_signals.append(hint)
     if scan["proto_files"]:
         contract_signals.append(str(scan["proto_files"][0].relative_to(target)))
+    # config 선언 빌드 의존성 (springdoc 등 코드 기반 OpenAPI 생성) 도 계약 신호로 인정 (v0.3.0+)
+    if scan.get("api_build_deps"):
+        contract_signals.extend(f"{d} (빌드 의존성)" for d in scan["api_build_deps"])
+        r.note = "springdoc 등 코드 기반 OpenAPI 생성 의존성 인정 (config rubric.api_contracts.build_deps)"
     if contract_signals:
         r.award(5, contract_signals[:4])
     rules.append(r)
@@ -649,13 +677,53 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
     }
 
 
+def _ai_harness_verification_hooks(target: Path) -> list[str]:
+    """프로젝트 레벨 .claude/settings.json 의 hooks 중 *코드 검증을 강제* 하는 명령 탐지 (v0.3.0+).
+
+    AI 코딩 harness 에서는 검증 게이트가 pre-commit hook 이 아니라 에이전트 hook 으로
+    존재할 수 있다 — 편집 직후 ktlint/format(PostToolUse), 커밋 직전 test/check(PreToolUse).
+    repo 에 커밋되는 프로젝트 설정만 본다 — 글로벌(~/.claude)은 다른 개발자/AI 가 clone 해도
+    적용되지 않으므로 프로젝트의 ai-readiness 신호가 아니다 (target 내부만 스캔하므로 자동 제외).
+
+    문서 신선도(freshness) / ai-ready 자기 산출물 명령은 *코드 검증이 아니므로* 제외한다.
+    """
+    settings = target / ".claude" / "settings.json"
+    if not settings.is_file():
+        return []
+    try:
+        data = json.loads(read_text(settings))
+    except (ValueError, OSError):
+        return []
+    hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
+    if not isinstance(hooks, dict):
+        return []
+    verify_kw = ("ktlint", "detekt", "lint", "test", "format", "check",
+                 "gradlew", "prettier", "eslint", "mypy", "ruff", "tsc",
+                 "typecheck", "build")
+    exclude_kw = ("freshness", "ai-ready", ".ai-ready")
+    signals = []
+    for event in ("PreToolUse", "PostToolUse", "Stop"):
+        for matcher in hooks.get(event, []) or []:
+            for h in (matcher.get("hooks", []) or []):
+                cmd = (h.get("command", "") or "").lower()
+                if any(k in cmd for k in verify_kw) and not any(x in cmd for x in exclude_kw):
+                    signals.append(f".claude/settings.json:{event}")
+                    break
+    return signals
+
+
 def score_verification(target: Path, scan: dict, doc_text: dict) -> dict:
     rules = []
 
-    r = Rule("커밋 전 훅 (pre-commit) 존재", 3)
+    r = Rule("기계적 검증 훅 (pre-commit / AI 에이전트 hook)", 3)
     found = has_any_path(target, PRECOMMIT_FILES)
-    if found:
-        r.award(3, found)
+    harness = _ai_harness_verification_hooks(target)
+    evidence = found + harness
+    if evidence:
+        note = ""
+        if harness and not found:
+            note = "AI 에이전트 편집/커밋 시점 검증 hook 인정 (.claude/settings.json)"
+        r.award(3, evidence, note=note)
     rules.append(r)
 
     r = Rule("CI 설정 존재 + 테스트 참조", 3)
@@ -884,8 +952,10 @@ ACTION_HINTS = {
         "정렬하세요. 둘 다 만족하면 만점."),
     "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)": (90, 3,
         "OpenAPI 명세나 proto 스키마를 도입해 계약을 기계 판독 가능한 형태로 유지하세요."),
-    "커밋 전 훅 (pre-commit) 존재": (20, 4,
-        ".husky 또는 lefthook을 추가해 커밋 시점에 lint/format/test를 강제하세요. AI가 만든 PR이 가장 큰 수혜를 봅니다."),
+    "기계적 검증 훅 (pre-commit / AI 에이전트 hook)": (20, 4,
+        "AI 가 만든 코드를 기계가 잡는 검증 게이트를 강제하세요. AI 코딩 환경이면 .claude/settings.json "
+        "PostToolUse(편집 후 ktlint/format)·PreToolUse(커밋 전 test/check) hook 이 가장 앞단이고, "
+        "lefthook pre-commit·CI 가 안전망입니다. AI 가 만든 PR 이 가장 큰 수혜를 봅니다."),
     "CI 설정 존재 + 테스트 참조": (45, 4,
         "테스트 스위트를 CI에 연결하세요. 없으면 AI 환각이 main에 그대로 흘러들어갑니다."),
     "테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md)": (20, 3,
@@ -1140,8 +1210,10 @@ def _copy_freshness_hook(out_dir: Path) -> Path | None:
 def run(target: Path, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # config-aware 채점 (v0.3.0+) — 없으면 cfg=None 으로 기존 동작.
+    cfg = load_config(target)
     # M-5: 단일 walk
-    scan = scan_target(target)
+    scan = scan_target(target, cfg)
     # M-4: CLAUDE.md 텍스트 1회 읽기 캐시
     doc_text = {p: read_text(p) for p in scan["claude_docs"]}
 
