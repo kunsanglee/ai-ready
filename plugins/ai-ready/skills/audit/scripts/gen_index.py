@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -60,9 +61,38 @@ EXCLUDE_DIRS = {
 }
 
 
-def walk(target: Path):
+def gitignore_allowed_md(target: Path) -> "set[Path] | None":
+    """git repo 면 .gitignore 가 허용하는 .md 파일의 상대경로 집합, 아니면 None.
+
+    `git ls-files --cached --others --exclude-standard` 로 *추적된 파일* 과
+    *미추적이지만 ignore 되지 않은 파일* 을 합쳐 받는다. .gitignore 된 산출물
+    (예: 생성된 http API 문서, .claude/commands 같은 로컬 전용 파일) 이 INDEX 에
+    유입되는 것을 막는다. git-tracked 화이트리스트(.claude/skills 등)는 그대로 남는다.
+    비-git 디렉토리거나 git 미설치면 None 을 돌려 기존 walk fallback 을 쓴다.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(target), "ls-files", "--cached", "--others",
+             "--exclude-standard", "-z", "--", "*.md"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    allowed: set[Path] = set()
+    for raw in proc.stdout.split("\0"):
+        if raw.endswith(".md"):
+            allowed.add(Path(raw))
+    return allowed
+
+
+def walk(target: Path, allowed: "set[Path] | None" = None):
     for dirpath, dirnames, filenames in os.walk(target):
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS)
+        if allowed is not None:
+            rel_dir = Path(dirpath).relative_to(target)
+            filenames = [f for f in filenames if (rel_dir / f) in allowed]
         yield Path(dirpath), dirnames, filenames
 
 
@@ -109,7 +139,7 @@ def extract_summary(path: Path, max_chars: int = 120) -> str:
     return "(요약 없음)"
 
 
-def collect_docs(target: Path) -> dict[str, list[tuple[Path, str]]]:
+def collect_docs(target: Path, allowed: "set[Path] | None" = None) -> dict[str, list[tuple[Path, str]]]:
     """카테고리별로 문서를 수집해 dict 로 반환 (legacy — config 없을 때 사용).
 
     카테고리:
@@ -120,7 +150,7 @@ def collect_docs(target: Path) -> dict[str, list[tuple[Path, str]]]:
     claude_docs: list[tuple[Path, str]] = []
     guide_docs: list[tuple[Path, str]] = []
     docs_dir_docs: list[tuple[Path, str]] = []
-    for dirpath, _, filenames in walk(target):
+    for dirpath, _, filenames in walk(target, allowed):
         rel_dir = dirpath.relative_to(target)
         for f in filenames:
             full = dirpath / f
@@ -142,10 +172,10 @@ def collect_docs(target: Path) -> dict[str, list[tuple[Path, str]]]:
     }
 
 
-def collect_with_meta(target: Path) -> list[dict]:
+def collect_with_meta(target: Path, allowed: "set[Path] | None" = None) -> list[dict]:
     """모든 .md 파일을 frontmatter + summary + 경로와 함께 수집 (config-driven 동작용)."""
     docs: list[dict] = []
-    for dirpath, _, filenames in walk(target):
+    for dirpath, _, filenames in walk(target, allowed):
         for f in filenames:
             if not f.endswith(".md"):
                 continue
@@ -467,9 +497,17 @@ def main():
 
     cfg = load_config(target)
 
+    # gitignore 존중: git repo 면 .gitignore 된 .md (생성 산출물·로컬 전용 파일) 를
+    # 인덱싱에서 제외한다. 비-git 이면 None → 기존 walk 동작.
+    allowed = gitignore_allowed_md(target)
+    if allowed is not None:
+        print(f"gitignore 존중: ignore 되지 않은 .md {len(allowed)}개만 스캔 (생성 산출물 제외)")
+    else:
+        print("gitignore 미적용: 비-git 디렉토리 — 전체 .md walk")
+
     if cfg is None:
         # Legacy path — config 없으면 기존 동작 유지
-        collected = collect_docs(target)
+        collected = collect_docs(target, allowed)
         # 자기 자신은 인덱스에서 제외
         try:
             out_rel = out_path.relative_to(target)
@@ -487,7 +525,7 @@ def main():
             print("  .gitattributes: docs INDEX merge=union 룰 추가 (머지 충돌 방지)")
     else:
         # Config-driven path — frontmatter 기반 그룹화
-        all_docs = collect_with_meta(target)
+        all_docs = collect_with_meta(target, allowed)
         # 자기 자신은 인덱스에서 제외
         try:
             out_rel = out_path.relative_to(target)
