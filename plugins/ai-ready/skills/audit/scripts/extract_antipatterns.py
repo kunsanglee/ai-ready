@@ -23,6 +23,8 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache",
+    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
+    ".ai-ready",  # 자기 산출물 자기참조 차단
 }
 
 CODE_EXTS = {
@@ -111,7 +113,7 @@ def find_markers(target: Path, max_per_file: int = 3, max_total: int = 80) -> li
     found = []
     for dirpath, dirnames, filenames in os.walk(target):
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS)
-        for f in filenames:
+        for f in sorted(filenames):  # 정렬 순회로 max_total 컷이 안정적 — 재실행 시 동일 출력(멱등)
             ext = Path(f).suffix
             if ext not in CODE_EXTS:
                 continue

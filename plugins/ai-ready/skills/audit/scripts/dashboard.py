@@ -84,7 +84,7 @@ def render_sparkline(history: list[dict], color: str) -> str:
     """T-12: 점수 추이 sparkline (>=2 개 데이터 포인트 필요)."""
     if len(history) < 2:
         if len(history) == 1:
-            return ('<p class="hist-empty">_점수 추이는 다음 회차부터 표시됩니다 (현재 1회 기록)._</p>')
+            return ('<p class="hist-empty">점수 추이는 다음 회차부터 표시됩니다 (현재 1회 기록).</p>')
         return ""
     width, height = 280, 56
     pad = 6
@@ -131,21 +131,21 @@ def render_html(audit: dict, history: list[dict] | None = None) -> str:
     sparkline_html = render_sparkline(history or [], color)
 
     cat_cards = []
-    for cat in audit["categories"]:
-        cat_score = cat["score"]
-        cat_max = cat["max"]
+    for cat in audit.get("categories", []):
+        cat_score = cat.get("score", 0)
+        cat_max = cat.get("max", 0)
         cat_color = category_color(cat_score, cat_max)
         rules_html = []
-        for rule in cat["rules"]:
-            mark = "✅" if rule["passed"] else ("🟡" if rule["points"] > 0 else "❌")
-            evidence_str = ", ".join(html.escape(e) for e in rule["evidence"][:5])
+        for rule in cat.get("rules", []):
+            mark = "✅" if rule.get("passed") else ("🟡" if rule.get("points", 0) > 0 else "❌")
+            evidence_str = ", ".join(html.escape(e) for e in (rule.get("evidence") or [])[:5])
             note_str = html.escape(rule.get("note", ""))
             rules_html.append(f'''
               <li>
                 <div class="rule-head">
                   <span class="mark">{mark}</span>
-                  <span class="rule-name">{html.escape(rule["name"])}</span>
-                  <span class="rule-points">{rule["points"]} / {rule["max"]}</span>
+                  <span class="rule-name">{html.escape(rule.get("name", ""))}</span>
+                  <span class="rule-points">{rule.get("points", 0)} / {rule.get("max", 0)}</span>
                 </div>
                 {f'<div class="evidence">📁 {evidence_str}</div>' if evidence_str else ''}
                 {f'<div class="note">📝 {note_str}</div>' if note_str else ''}
@@ -153,7 +153,7 @@ def render_html(audit: dict, history: list[dict] | None = None) -> str:
         cat_cards.append(f'''
           <div class="cat-card">
             <div class="cat-head">
-              <h3>{cat["id"]}. {html.escape(cat["name"])}</h3>
+              <h3>{cat.get("id", "")}. {html.escape(cat.get("name", ""))}</h3>
               <span class="cat-score" style="color:{cat_color}">{cat_score} / {cat_max}</span>
             </div>
             {bar_svg(cat_score, cat_max, cat_color)}

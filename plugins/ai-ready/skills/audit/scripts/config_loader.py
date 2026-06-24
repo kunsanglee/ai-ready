@@ -111,43 +111,55 @@ def load_config(target: Path) -> dict[str, Any] | None:
 
 
 # ---- 편의 헬퍼: 섹션별 안전한 추출 ----
+#
+# 섹션 값이 잘못된 타입(예: dict 자리에 문자열, list 자리에 dict)으로 들어오면
+# `... or {}` 는 truthy 비-dict 를 막지 못해 .get 호출 시 크래시한다. 아래 두
+# 강제 헬퍼로 타입을 보장해 잘못된 값이 호출부로 새지 않고 빈 값 fallback 하도록 한다.
+
+def _as_dict(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
+def _as_list(v) -> list:
+    return v if isinstance(v, list) else []
+
 
 def frontmatter_section(cfg: dict | None) -> dict:
     if cfg is None:
         return {}
-    return cfg.get("frontmatter", {}) or {}
+    return _as_dict(cfg.get("frontmatter"))
 
 
 def index_section(cfg: dict | None) -> dict:
     if cfg is None:
         return {}
-    return cfg.get("index", {}) or {}
+    return _as_dict(cfg.get("index"))
 
 
 def lazy_load_triggers_section(cfg: dict | None) -> dict:
     if cfg is None:
         return {}
-    return cfg.get("lazy_load_triggers", {}) or {}
+    return _as_dict(cfg.get("lazy_load_triggers"))
 
 
 def index_groups(cfg: dict | None) -> list[dict]:
-    return index_section(cfg).get("groups", []) or []
+    return _as_list(index_section(cfg).get("groups"))
 
 
 def cross_reference_config(cfg: dict | None) -> dict:
-    return index_section(cfg).get("cross_reference", {}) or {}
+    return _as_dict(index_section(cfg).get("cross_reference"))
 
 
 def evolution_graph_config(cfg: dict | None) -> dict:
-    return index_section(cfg).get("evolution_graph", {}) or {}
+    return _as_dict(index_section(cfg).get("evolution_graph"))
 
 
 def lazy_load_detect_rules(cfg: dict | None) -> list[dict]:
-    return lazy_load_triggers_section(cfg).get("detect", []) or []
+    return _as_list(lazy_load_triggers_section(cfg).get("detect"))
 
 
 def lazy_load_override_hardcoded(cfg: dict | None) -> list[str]:
-    return lazy_load_triggers_section(cfg).get("override_hardcoded", []) or []
+    return _as_list(lazy_load_triggers_section(cfg).get("override_hardcoded"))
 
 
 # ---- rubric 채점 조정 (v0.3.0+) ----
@@ -155,19 +167,20 @@ def lazy_load_override_hardcoded(cfg: dict | None) -> list[str]:
 def rubric_section(cfg: dict | None) -> dict:
     if cfg is None:
         return {}
-    return cfg.get("rubric", {}) or {}
+    return _as_dict(cfg.get("rubric"))
 
 
 def decision_record_hints(cfg: dict | None) -> list[str]:
     """ADR rule(3.2) 에서 의사결정 기록으로 인정할 *추가* 디렉토리 (예: docs/design)."""
-    dr = rubric_section(cfg).get("decision_records", {}) or {}
-    return [h.strip("/").lower().replace("\\", "/") for h in (dr.get("dir_hints", []) or [])]
+    dr = _as_dict(rubric_section(cfg).get("decision_records"))
+    return [h.strip("/").lower().replace("\\", "/")
+            for h in _as_list(dr.get("dir_hints")) if isinstance(h, str)]
 
 
 def api_contract_build_deps(cfg: dict | None) -> list[str]:
     """API 계약 rule(4.3) 에서 인정할 빌드 의존성 문자열 (예: springdoc)."""
-    ac = rubric_section(cfg).get("api_contracts", {}) or {}
-    return [d.lower() for d in (ac.get("build_deps", []) or [])]
+    ac = _as_dict(rubric_section(cfg).get("api_contracts"))
+    return [d.lower() for d in _as_list(ac.get("build_deps")) if isinstance(d, str)]
 
 
 # CLI 진단 — config 가 정상 로드되는지 확인

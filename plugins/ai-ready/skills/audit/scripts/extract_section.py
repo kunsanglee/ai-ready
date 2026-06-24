@@ -30,6 +30,7 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache", ".ai-ready",
+    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
 }
 
 KEYWORD_SETS = {
@@ -52,10 +53,10 @@ def walk(target: Path):
 def find_docs(target: Path) -> list[Path]:
     out = []
     for dirpath, _, filenames in walk(target):
-        for f in filenames:
+        for f in sorted(filenames):
             if f in DOC_NAMES:
                 out.append(dirpath / f)
-    return out
+    return sorted(out, key=str)  # 출처 섹션 순서를 walk 순서에 의존하지 않게 — 멱등
 
 
 def extract_matching_sections(text: str, keywords: tuple[str, ...]) -> list[str]:

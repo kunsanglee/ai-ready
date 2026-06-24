@@ -32,6 +32,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
+from gen_index import ensure_gitattributes_union  # noqa: E402
 
 DOC_NAMES = ("CLAUDE.md", "AGENTS.md")
 BUILD_MANIFESTS = {
@@ -45,6 +46,7 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache", ".ai-ready",
+    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
 }
 
 SECTION_HEADER = "## 모듈 맵"
@@ -169,7 +171,9 @@ def build_root_stub(target: Path, modules: list[Path]) -> str:
         lines.append("")
         for m in sample:
             summary = get_module_summary(target, m)
-            lines.append(f"- [`{m}`]({m}/CLAUDE.md) — {summary}")
+            # CLAUDE.md / AGENTS.md 중 실재하는 파일로 링크 — AGENTS.md 만 있는 모듈의 깨진 링크 방지.
+            doc = next((n for n in DOC_NAMES if (target / m / n).exists()), "CLAUDE.md")
+            lines.append(f"- [`{m}`]({m}/{doc}) — {summary}")
         if documented_count > len(sample):
             lines.append(f"- … 외 {documented_count - len(sample)}개 (전체 목록은 위 카탈로그 링크 참조)")
     lines.append("")
@@ -185,10 +189,8 @@ def inject(text: str, new_section: str) -> str:
             before = before.rstrip()[: -len(SECTION_HEADER)].rstrip() + "\n"
         _, _, after = rest.partition(SECTION_END)
         return before.rstrip() + "\n\n" + new_section + after
-    sep = "\n\n" if not text.endswith("\n\n") else ""
-    if not text.endswith("\n"):
-        text += "\n"
-    return text + sep + new_section + "\n"
+    # replace 분기와 동일한 spacing 으로 통일 — 첫 실행(append)과 재실행(replace) 출력이 일치(멱등).
+    return text.rstrip() + "\n\n" + new_section + "\n"
 
 
 def main():
@@ -228,6 +230,7 @@ def main():
     if full_doc_text != original_full:
         if guard_overwrite(full_path, args.force):
             full_path.write_text(full_doc_text, encoding="utf-8")
+            ensure_gitattributes_union(target, full_path)  # 집계 산출물 — 브랜치 간 머지 충돌 방지(gen_index 와 동일)
             print(f"전체 모듈 맵 갱신: {full_path}")
         else:
             print(f"건너뜀(사람 인수 추정): {full_path} — 루트 stub 은 마커 기반이라 계속 진행")
