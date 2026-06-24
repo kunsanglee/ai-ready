@@ -34,6 +34,8 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache",
+    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
+    ".ai-ready",  # 자기 산출물 자기참조 차단
 }
 
 CODE_EXTS = {
@@ -583,7 +585,9 @@ def run(target: Path, out_dir: Path, top_n: int):
         print(f"  → 검토 후 docs/PACKAGES.md 로 복사하세요.")
         return
     selected = select_top_modules(target, modules, top_n)
-    today = datetime.now().strftime("%Y-%m-%d")
+    # datetime.now() 는 비멱등 — 같은 입력을 재생성할 때마다 '최종 검토일' 이 바뀌어 무의미한
+    # diff 가 난다. 스캐폴드는 '초안' 이라 검토일은 사람이 검토 후 채우는 placeholder 로 둔다.
+    today = "TODO: 검토일 기입"
     written = []
     for m in selected:
         module_dir = target / m

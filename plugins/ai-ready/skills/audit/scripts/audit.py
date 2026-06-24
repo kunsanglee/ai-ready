@@ -87,6 +87,7 @@ EXCLUDE_DIRS = {
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache",
     ".ai-ready",  # 자기 산출물 자기참조 차단 — scaffolds/CLAUDE.md 가 점수에 섞이지 않도록
+    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
 }
 
 # 명시적 DO-NOT 가이드를 나타내는 표현 (다국어)
@@ -1247,7 +1248,7 @@ def run(target: Path, out_dir: Path) -> dict:
         "categories": categories,
         "actions": build_action_list(categories),
     }
-    (out_dir / "audit.json").write_text(json.dumps(audit, indent=2, ensure_ascii=False))
+    (out_dir / "audit.json").write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
     (out_dir / "audit-report.md").write_text(render_report(audit), encoding="utf-8")
     (out_dir / "README.md").write_text(render_readme(audit), encoding="utf-8")
     _archive_history(out_dir, audit)
