@@ -154,6 +154,17 @@ def detect_present(target: Path, cfg: dict | None = None) -> list[tuple[str, str
     return found
 
 
+def _strip_marker_lines(s: str) -> str:
+    """문자열에서 lazy-load 마커 라인을 제거.
+
+    auto/user 마커가 한쪽만 손상돼 잔존하면, case C 가 그 잔존 마커를 user-section 으로
+    흡수한다. 그러면 다음 실행에서 case A 정규식이 그 마커부터 user 내용까지 통째로 날린다.
+    흡수 전에 마커 라인을 걷어내 그 사고를 막는다.
+    """
+    tokens = {AUTO_BEGIN, AUTO_END, USER_BEGIN, USER_END, LEGACY_BEGIN, LEGACY_END}
+    return "\n".join(ln for ln in s.splitlines() if ln.strip() not in tokens)
+
+
 def _render_auto_block(rows: list[tuple[str, str]]) -> str:
     """auto-section 블록 (마커 포함) 렌더링."""
     lines = []
@@ -168,7 +179,10 @@ def _render_auto_block(rows: list[tuple[str, str]]) -> str:
     lines.append("| 트리거 (대화·작업 맥락) | 문서 |")
     lines.append("|---|---|")
     for label, trigger in rows:
-        lines.append(f"| {trigger} | {label} |")
+        # 셀 안 '|' 는 테이블 컬럼 구분자로 오인돼 행이 깨진다 — 이스케이프하고 개행은 공백으로.
+        safe_trigger = trigger.replace("|", "\\|").replace("\n", " ")
+        safe_label = label.replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {safe_trigger} | {safe_label} |")
     lines.append("")
     lines.append(AUTO_END)
     return "\n".join(lines)
@@ -217,6 +231,7 @@ def _build_full_section(user_block: str, auto_block: str) -> str:
     lines.append("")
     lines.append(auto_block)
     lines.append("")
+    lines.append("")  # auto-block 뒤 빈 줄 1개(\n\n) 보장 — 다음 `## ` 헤더와 시각적 분리 (docstring 계약)
     return "\n".join(lines)
 
 
@@ -283,6 +298,8 @@ def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]
         else:
             body_end = len(text)
         existing_body = text[body_start:body_end]
+        # 손상돼 잔존한 마커가 섞여 있으면, 흡수 후 다음 실행에서 case A 가 user 를 파괴한다 — 제거.
+        existing_body = _strip_marker_lines(existing_body)
         # 사용자 수동 표를 user-section 으로 흡수
         user_block = _render_user_block_with_rows(existing_body)
         full = _build_full_section(user_block, auto_block)
@@ -295,7 +312,8 @@ def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]
     target_heading = "## 모듈 맵"
     idx = text.find(target_heading)
     if idx >= 0:
-        new_text = text[:idx] + full + "\n\n" + text[idx:]
+        # full 은 이미 끝에 빈 줄 1개를 포함하므로 추가 "\n\n" 을 넣지 않는다.
+        new_text = text[:idx] + full + text[idx:]
         return new_text, True, "inserted-new"
     # EOF append
     base = text if text.endswith("\n") else text + "\n"
@@ -329,13 +347,11 @@ def main():
     if args.dry_run:
         print("=== dry-run 결과 ===")
         print(f"_모드: {mode}_")
-        print()
-        # diff 가 아니라 전체 섹션만 표시 (간략하게 — auto+user 블록)
-        print(_render_user_block_with_rows("(기존 사용자 표 또는 빈 마커)"))
-        print()
-        print(_render_auto_block(rows))
-        print()
         print(f"_변경 여부: {'있음' if changed else '없음'}_")
+        print()
+        # 고정 placeholder 가 아니라 실제 갱신 결과(new_text)를 그대로 보여줘
+        # 마이그레이션 결과를 미리보기로 검증할 수 있게 한다.
+        print(new_text)
         return
 
     if not changed:

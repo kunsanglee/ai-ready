@@ -30,6 +30,7 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache", ".ai-ready",
+    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
 }
 
 GRADLE_FILES = ("build.gradle.kts", "build.gradle")

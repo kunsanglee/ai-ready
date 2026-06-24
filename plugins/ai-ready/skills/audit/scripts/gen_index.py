@@ -53,6 +53,10 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
     ".pytest_cache", ".mypy_cache", ".ai-ready",
+    # git worktree 체크아웃 — repo 전체 복사본이라 docs/모듈 문서가 통째로 중복 수집돼
+    # INDEX 를 폭발시킨다 (Claude Code 는 .claude/worktrees/ 에 워크트리를 만든다).
+    # basename 매칭이라 worktree 표준 위치를 안전하게 제외한다.
+    "worktrees",
 }
 
 
@@ -86,6 +90,11 @@ def extract_summary(path: Path, max_chars: int = 120) -> str:
             continue
         # blockquote 마커 제거
         cleaned = s.lstrip("> ").rstrip()
+        if not cleaned:
+            continue
+        # 마크다운 링크는 표시 텍스트만 남긴다 — 요약 줄에 들어간 `[NAMING.md](NAMING.md)`
+        # 같은 상대 링크가 INDEX 에 그대로 박히면 (INDEX 위치 기준으로 해석돼) 깨진 링크가 된다.
+        cleaned = _re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", cleaned).strip()
         if not cleaned:
             continue
         # _italic_ 만으로 구성된 메타 라인 (자동 생성·일자 등) 무시
@@ -275,6 +284,13 @@ def render_with_config(target: Path, cfg: dict, all_docs: list[dict]) -> str:
                     else:
                         for v in sub_value:
                             sub_groups.setdefault(str(v), []).append(d)
+                elif isinstance(sub_value, str) and "," in sub_value:
+                    # 콤마 구분 스칼라("feed, inspiration, member")도 YAML 리스트처럼 분리해
+                    # 각 값을 별도 sub-group 에 등장시킨다. 안 그러면 통째로 한 섹션명이 돼
+                    # `### feed, inspiration, member` 같은 깨진 그룹이 생긴다.
+                    for v in (x.strip() for x in sub_value.split(",")):
+                        if v:
+                            sub_groups.setdefault(v, []).append(d)
                 else:
                     sub_groups.setdefault(str(sub_value) if sub_value else "(미분류)", []).append(d)
             for sub_name in sorted(sub_groups.keys()):
@@ -336,6 +352,10 @@ def render_with_config(target: Path, cfg: dict, all_docs: list[dict]) -> str:
             fm = d["frontmatter"]
             for field in search_fields:
                 values = fm.get(field, [])
+                if isinstance(values, str):
+                    # 콤마 구분 스칼라("북마크, bookmark")도 다중 검색어로 분리 — frontmatter_parser
+                    # 가 리스트로 보지 않은 경우에도 한영 인덱스에서 통째 누락되지 않도록.
+                    values = [x.strip() for x in values.split(",") if x.strip()]
                 if not isinstance(values, list):
                     continue
                 for term in values:

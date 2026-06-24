@@ -23,8 +23,18 @@ HOOK_COMMAND = "$CLAUDE_PLUGIN_ROOT/skills/audit/hooks/freshness_check.sh"
 
 def is_freshness_hook(entry: dict) -> bool:
     """이 hook entry가 우리 freshness hook인지 확인."""
-    marker = "ai-ready/skills/audit/hooks/freshness_check"
-    for h in entry.get("hooks", []):
+    # marker 는 실제로 써넣는 HOOK_COMMAND 와 일치해야 한다. HOOK_COMMAND 는
+    # "$CLAUDE_PLUGIN_ROOT/skills/audit/hooks/freshness_check.sh" 라 'ai-ready/' 가 없어서
+    # 옛 marker("ai-ready/skills/...")는 자기가 쓴 entry 조차 못 알아봐 멱등성·제거가 깨졌다.
+    if not isinstance(entry, dict):
+        return False
+    marker = "skills/audit/hooks/freshness_check"
+    hooks = entry.get("hooks", [])
+    if not isinstance(hooks, list):
+        return False
+    for h in hooks:
+        if not isinstance(h, dict):
+            continue
         cmd = h.get("command", "") or ""
         if marker in cmd:
             return True
