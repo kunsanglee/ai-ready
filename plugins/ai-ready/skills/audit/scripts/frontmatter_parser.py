@@ -87,6 +87,7 @@ def _parse_inline_list(s: str) -> list:
 
 def parse_frontmatter(text: str) -> dict:
     """텍스트의 frontmatter 블록을 dict 로 파싱."""
+    text = text.lstrip("﻿")  # 선행 BOM 제거 — BOM 으로 시작하면 frontmatter 가 통째로 무시되던 것 방지
     if not text.startswith(_FM_DELIM):
         return {}
     # 첫 줄이 정확히 `---` 이어야 함 (혹시 trailing space 가 있으면 strip)
@@ -104,12 +105,14 @@ def parse_frontmatter(text: str) -> dict:
 
     data: dict = {}
     current_list_key: str | None = None
+    current_indent = 0  # current_list_key 선언 라인의 들여쓰기 깊이
 
     for raw_line in fm_block.splitlines():
         line = raw_line.rstrip()
         if not line.strip():
             # 빈 줄 — current_list_key 컨텍스트 유지
             continue
+        indent = len(raw_line) - len(raw_line.lstrip())
         # 주석
         stripped = line.lstrip()
         if stripped.startswith("#"):
@@ -121,6 +124,10 @@ def parse_frontmatter(text: str) -> dict:
             item_value = stripped[1:].strip()
             if item_value:
                 data[current_list_key].append(_parse_scalar(item_value))
+            continue
+        # nested object 의 자식 (`key:\n  sub: value`) — 부모보다 더 깊이 들여쓴 비-리스트 라인.
+        # nested 는 미지원이므로 자식 라인을 root 키로 끌어올리지 않고 통째 무시한다 (docstring 계약).
+        if current_list_key is not None and indent > current_indent:
             continue
         # key: value 또는 key: (block list 시작)
         # ":" 가 *처음 등장하는* 위치 기준 split (값에 ":" 포함 가능)
@@ -139,6 +146,7 @@ def parse_frontmatter(text: str) -> dict:
             # block list 시작 (또는 nested — nested 는 미지원이라 list 로 가정)
             data[key] = []
             current_list_key = key
+            current_indent = indent
         elif value.startswith("[") and value.endswith("]"):
             data[key] = _parse_inline_list(value)
             current_list_key = None
@@ -151,6 +159,7 @@ def parse_frontmatter(text: str) -> dict:
 
 def extract_frontmatter_and_body(text: str) -> tuple[dict, str]:
     """frontmatter dict 와 본문 (frontmatter 제거된 나머지) 을 분리해 반환."""
+    text = text.lstrip("﻿")  # 선행 BOM 제거 (parse_frontmatter 와 동일 규약)
     if not text.startswith(_FM_DELIM):
         return {}, text
     first_newline = text.find("\n")
