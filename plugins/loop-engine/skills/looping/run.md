@@ -4,21 +4,22 @@
 
 무인 검증 loop 의 **사람 핸드오프 입구(human-on-the-loop)** 다. 사람이 grill-me 로 작업 지시를 확정한 뒤 이 스킬에 넘기고 빠지면, **이 세션이 곧 maker** 가 되어 `maker(고침) → checker(독립 점검) → 채점 → 정체·brake 판정` 을 **루브릭 통과까지 자동 반복** 한다. 사람은 셋업하고 빠지고, 결과(수렴 diff)나 사람 호출(AWAIT_USER/brake)을 나중에 받는다.
 
-무인 드라이버가 돌리는 것과 **똑같은 판정부**(단일 `loop-checker` + 결정론 채점 셸 + `docs/loop/rubric.md`)를 쓴다. 다른 건 *방아쇠와 실행 호스트* 뿐이다 — 케이스2(Sentry 자동)는 agent 레포의 Node 드라이버가, 케이스3(이 스킬)은 Claude Code 백그라운드 세션이 같은 엔진을 돌린다.
+무인 드라이버가 돌리는 것과 **똑같은 판정부**(단일 `loop-checker` + 결정론 채점 셸 + BASE/LOCAL rubric)를 쓴다. 다른 건 *방아쇠와 실행 호스트* 뿐이다 — 케이스2(Sentry 자동)는 agent 레포의 Node 드라이버가, 케이스3(이 스킬)은 Claude Code 백그라운드 세션이 같은 엔진을 돌린다.
 
 > `/looping review` 와 혼동 금지. `/looping review` 는 **1회 점검 + 보고서, 코드 안 고침**(사람이 곧 루프). `/looping run` 은 **코드를 고치며 N회 도는 루프**(사람이 빠짐). 점검 1회만 원하면 `/looping review`, 수렴까지 맡기면 `/looping run`.
 
-## 🤝 팀 공유 버전 안내
+## 🔌 plugin / 프로젝트 어댑터 구조
 
-- 이 스킬은 `.claude/skills/` 의 팀 공유 자산(projectSettings, 최우선)이다.
-- 의존: `.claude/agents/loop-checker.md`(독립 점검), `.claude/skills/_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param`), `docs/loop/rubric.md`(루브릭·brake 단일 원천). 전부 같은 레포에 커밋돼 있어 별도 셋업 불필요.
-- 런타임 상태(`.claude/loop/{ticket}/` 의 stall·history·brake 메타)는 `.gitignore` 로 추적 제외 — 루프 한정 휘발성.
-- 환경변수·외부 인증 없음(전부 로컬 git + 셸). brake 런별 오버라이드는 `LOOP_*` env 로(아래).
+- 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다. **도구 본체는 유저 레벨**(plugin), **프로젝트별 차이는 어댑터**(`.loop/adapter.env`)가 주입한다.
+- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param`), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `loop-engine:` namespace).
+- 프로젝트 델타(`$CLAUDE_PROJECT_DIR` 하위, 레포에 커밋): `.loop/adapter.env`(빌드·테스트·린트 명령·티켓 패턴·컨벤션 docs 경로), `.loop/rubric.md`(LOCAL rubric — 그 스택 특유 kind. BASE 와 병합 채점). 어댑터가 없으면 스킬이 fail-loud 한다(게이트 명령을 모름).
+- 런타임 상태(`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 의 stall·history·started.epoch)는 루프 한정 휘발성 — `.gitignore` 로 `.loop/run/` 추적 제외. 설정(`adapter.env`·`rubric.md`)은 추적 대상.
+- 외부 인증 없음(전부 로컬 git + 셸). brake 런별 오버라이드는 `LOOP_*` env 로(아래).
 
 ## 입력
 
 1. **작업 지시(필수)**: grill-me 합의 요약 또는 spec 경로. "무엇을 만들/고칠지 + 완료 기준". 같은 세션 컨텍스트로 들어온다.
-2. **비교 베이스**: `origin/main`(고정). 점검 범위 = `origin/main...HEAD + uncommitted`.
+2. **비교 베이스**: `$LOOP_BASE_BRANCH`(어댑터, 기본 `origin/main`). 점검 범위 = `$LOOP_BASE_BRANCH...HEAD + uncommitted`.
 3. **작업 정의 문서 경로**(있으면): design/티켓 문서. checker 가 정합 층 점검에 쓴다. 없으면 "missing".
 4. **시도 횟수 상한(선택)**: 사용자가 `/looping run` 에 회차를 명시하면(예: "5회로", "--max-iter 5") 그 값을 쓴다. 없으면 rubric `max_iterations`(현재 10). 명시값도 하드 천장 10 으로 깎인다. 횟수를 늘려도 PASS·정체·시간·비가역 조기 종료는 그대로라 상한을 다 안 쓰고 일찍 끝날 수 있다 — 상한이지 목표가 아니다.
 
@@ -34,7 +35,7 @@
 
 ## brake (멈춤 장치) — 값은 rubric, 집행은 이 스킬
 
-brake **값** 은 `docs/loop/rubric.md` PARAMS 표가 단일 원천이다. 이 스킬이 `loop_param` 으로 읽어 **집행** 한다(집행은 회차를 가로지르는 주체의 몫 — 1회용 `/looping review` 는 못 한다).
+brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)의 PARAMS 표가 단일 원천이다(프로젝트 LOCAL rubric 이 override 할 수 있다). 이 스킬이 `loop_param` 으로 읽어 **집행** 한다(집행은 회차를 가로지르는 주체의 몫 — 1회용 `/looping review` 는 못 한다).
 
 | brake | 출처 | 이 스킬의 집행 |
 |---|---|---|
@@ -51,10 +52,21 @@ brake **값** 은 `docs/loop/rubric.md` PARAMS 표가 단일 원천이다. 이 �
 ### Step 0. 셋업 (1회)
 
 ```bash
-ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
-ENG=".claude/skills/_loop-engine"
-TICKET="$(git rev-parse --abbrev-ref HEAD | grep -oE 'CCE-[0-9]+' || echo loop)"
-LOOP_DIR=".claude/loop/$TICKET"; mkdir -p "$LOOP_DIR"
+# 대상 프로젝트 루트: plugin 은 $CLAUDE_PROJECT_DIR 를 제공. 없으면(직접 실행 등) git 루트로 fallback.
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"; cd "$PROJECT_ROOT"
+# 채점 엔진: plugin 번들. $CLAUDE_PLUGIN_ROOT 는 loop-engine plugin 설치 위치.
+ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+# 프로젝트 어댑터(빌드·테스트·린트 명령·티켓 패턴·LOCAL rubric·컨벤션 docs)를 주입. 없으면 fail-loud.
+ADAPTER="$PROJECT_ROOT/.loop/adapter.env"
+if [ -f "$ADAPTER" ]; then set -a; . "$ADAPTER"; set +a
+else echo "loop: $ADAPTER 없음 — 프로젝트 어댑터(.loop/adapter.env)가 필요합니다(빌드/테스트 명령·LOCAL rubric)." >&2; exit 66; fi
+# LOCAL rubric 절대경로 정규화(상대면 프로젝트 루트 기준). 셸이 BASE 와 병합 채점한다.
+if [ -n "${LOOP_RUBRIC_LOCAL:-}" ]; then
+  case "$LOOP_RUBRIC_LOCAL" in /*) : ;; *) LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/$LOOP_RUBRIC_LOCAL" ;; esac
+  export LOOP_RUBRIC_LOCAL
+fi
+TICKET="$(git rev-parse --abbrev-ref HEAD | grep -oE "${LOOP_TICKET_REGEX:-[A-Z][A-Z0-9]+-[0-9]+}" || echo loop)"
+LOOP_DIR="$PROJECT_ROOT/.loop/run/$TICKET"; mkdir -p "$LOOP_DIR"
 STATE="$LOOP_DIR/stall.json"; HIST="$LOOP_DIR/history.jsonl"
 # 같은 티켓 재실행이면 직전 상태가 남아 정체 감지를 오염시킨다 — 새 루프면 초기화.
 : > "$HIST"; rm -f "$STATE"
@@ -83,13 +95,17 @@ echo "사이클 진입: 완료 $ITER 회 / 경과 ${ELAPSED_MIN}분"
 # brake: 반복·시간·천장. 도달했으면 평가 없이 종료(Step 5 의 '사람 호출'로).
 #   if [ "$ITER" -ge "$MAX_ITER" ] || [ "$ITER" -ge "$ABS_CEIL" ] || [ "$ELAPSED_MIN" -ge "$BUDGET_MIN" ]; then → 종료
 # 게이트: 컴파일 먼저(빠름), 통과하면 변경 모듈 테스트(또는 전체).
-./gradlew assemble -x test    # 컴파일 게이트 (실패 → 즉시 maker 재진입, checker 안 부름)
-./gradlew test                # 테스트 게이트 (모듈 한정이면 :member:member-domain:test 처럼 좁힌다)
+# 컴파일 게이트(빠름). 명령은 프로젝트 어댑터가 준다. 빈 값이면 스킵하되 시끄럽게 알린다(silent skip 금지).
+if [ -n "${LOOP_BUILD_CMD:-}" ]; then eval "$LOOP_BUILD_CMD"   # 실패 → 즉시 maker 재진입, checker 안 부름
+else echo "loop: LOOP_BUILD_CMD 미정의 — 컴파일 게이트 스킵(어댑터에 정의 권장)" >&2; fi
+# 테스트 게이트. 어댑터 명령이 변경 모듈 한정이면 그게 게이트를 좁힌다.
+if [ -n "${LOOP_TEST_CMD:-}" ]; then eval "$LOOP_TEST_CMD"
+else echo "loop: LOOP_TEST_CMD 미정의 — 테스트 게이트 스킵(어댑터에 정의 권장)" >&2; fi
 ```
 
 - 컴파일·테스트 **실패** = 게이트 층 RETRY. checker 를 부르지 않고 **Step 6(maker 재진입)** 으로 가서 고친 뒤 이 사이클을 다시 연다. 단, 깨진 게 maker 가 못 고치는 운영 비가역(예: 마이그레이션 충돌)이면 사람 대기.
 - 게이트 통과면 Step 2 로.
-- ktlint 가 필요하면 게이트에 `./gradlew ktlintCheck` 추가(실패 시 `ktlintFormat` 후 재확인).
+- 린트 게이트가 필요하면 어댑터의 `$LOOP_LINT_CMD`(예: `./gradlew ktlintCheck`·`eslint .`·`ruff check`)를 게이트에 추가한다(빈 값이면 스킵).
 
 ### Step 2. checker 1회 호출 (독립·적대 시선)
 
@@ -97,7 +113,7 @@ echo "사이클 진입: 완료 $ITER 회 / 경과 ${ELAPSED_MIN}분"
 
 - 원래 작업 정의(입력 1 요약, 1~3문장).
 - 작업 정의 문서 경로(있으면, 없으면 "missing").
-- 비교 베이스: `origin/main`.
+- 비교 베이스: `$LOOP_BASE_BRANCH`(기본 `origin/main`).
 
 **maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 절대 넣지 마라**(핵심 불변 1). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff·컨벤션 문서·ANTIPATTERNS 를 직접 읽어 독립 판단한다. checker 는 마지막에 정확히 하나의 ```json 펜스 블록으로 `{base, findings:[...]}` 를 낸다. 그 블록만 추출한다.
 
@@ -141,21 +157,21 @@ echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDIC
 
 ### Step 5-1. 종료 정리 (런타임 상태 폐기)
 
-`.claude/loop/{ticket}/`(history·stall·started.epoch)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
+`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
 
 ```bash
-rm -rf "$LOOP_DIR"   # = .claude/loop/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
+rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
 ```
 
 - **PASS(수렴)**: 결과 보고 → (선택) `/looping lessons` → 그 다음 폐기. 깨끗이 비운다.
 - **사람 멈춤(AWAIT_USER/STALLED/brake)으로 재개 여지가 있으면 바로 폐기하지 않는다.** `stall.json`·`started.epoch` 가 남아 있어야 이어서 돌릴 수 있다(없으면 다음 시작이 INIT 로 리셋돼 정체 감지가 무력화). 사람이 그 작업을 닫기로 하면(고침 완료 또는 포기) 그때 lesson 종합 후 폐기.
-- 워크트리째 버리는 경우엔 `.claude/loop/` 도 같이 사라지니 별도 폐기가 불필요하지만, **메인 체크아웃이나 워크트리를 남겨 둔 경우엔 이 단계가 정리를 보장**한다. 워크트리 수명에 기대지 않는다.
+- 워크트리째 버리는 경우엔 `.loop/run/` 도 같이 사라지니 별도 폐기가 불필요하지만, **메인 체크아웃이나 워크트리를 남겨 둔 경우엔 이 단계가 정리를 보장**한다. 워크트리 수명에 기대지 않는다.
 
 ### Step 6. maker 재진입 (고침)
 
 이 세션이 maker 다. Step 3 의 `$SCORED` finding(등급 내림차순)을 보고 **CRITICAL → MAJOR 순으로 실제 코드를 고친다**. 고치고 나면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시). 매 회차 코드가 바뀌어야 루프가 의미 있다 — 같은 결과를 N번 내지 않는다.
 
-- **코드를 작성·수정하면 그 변경분에 대응하는 테스트(도메인/서비스 — `ServiceTestSupport` 통합 테스트·단위 테스트)도 함께 작성한다.** checker 가 `test-missing`(convention, CRITICAL) 으로 잡으므로 테스트를 안 쓰면 PASS 못 한다. 작성 직전에 `docs/TESTING.md`(픽스처·Factory·`ServiceTestSupport` 패턴)를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다 — CLAUDE.md 는 thin index 라 headless 든 인터랙티브든 본문 규칙은 직접 읽어야 한다(같은 식으로 `NAMING.md`·`ERROR_HANDLING.md` 등 변경 표면에 닿는 ai-ready 문서를 필요할 때 읽는다). 작성한 테스트는 Step 1 의 변경 모듈 테스트 게이트(`:member:member-domain:test` 처럼 좁힌 것)에 포함돼 실제로 실행·검증된다.
+- **코드를 작성·수정하면 그 변경분에 대응하는 테스트도 함께 작성한다.** 단 이 강제는 LOCAL rubric 의 KINDS 표가 그 프로젝트에 `test-missing`(convention, CRITICAL) 을 등록한 경우에만 작동한다 — 테스트 문화·도구는 프로젝트마다 다르니 스킬 본문이 아니라 rubric 이 결정한다. 작성 직전에 어댑터의 `$LOOP_CONVENTION_DOCS`(공백 구분 경로 목록 — 테스트 규약·네이밍·에러 처리 등) 중 변경 표면에 닿는 문서를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다. 목록이 비었거나 파일이 없으면 그 단계를 건너뛴다(CLAUDE.md 류 thin index 는 본문 규칙을 직접 읽어야 하므로 어댑터가 가리키는 실제 문서를 본다). 작성한 테스트는 Step 1 의 테스트 게이트(`$LOOP_TEST_CMD`)에 포함돼 실제로 실행·검증된다.
 - MINOR 만 남았으면 보통 PASS 라 여기 오지 않는다. RETRY_SOFT(MAJOR)는 고치되, 정체로 멈추면 사람 승인으로 통과 가능.
 - 고칠 수 없거나 고치면 안 되는 finding(force_await·비가역)은 maker 가 만지지 말고 AWAIT_USER 로 사람에게.
 
@@ -167,7 +183,8 @@ rm -rf "$LOOP_DIR"   # = .claude/loop/{ticket}. lesson 종합(또는 사람이 �
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| `loop: rubric 없음` | `docs/loop/rubric.md` 부재(워크트리 누락) | 레포 루트에서 호출, 또는 `LOOP_RUBRIC_MD` 로 pin |
+| `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
+| `loop: .loop/adapter.env 없음` | 프로젝트 어댑터 미생성 | 대상 프로젝트에 `.loop/adapter.env` 작성(빌드/테스트 명령·LOCAL rubric) |
 | `score.sh: 입력 형식 오류 — exit 65` | checker JSON 추출 실패(빈/null/형식오류) | 마지막 ```json 블록만 정확히 추출했는지 확인. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | 정체 감지가 매번 INIT | 사이클 간 `stall.json` 이 사라짐(셸 종료마다 리셋한 경우) | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history.jsonl` append 누락 | Step 3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
