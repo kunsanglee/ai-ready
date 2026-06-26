@@ -29,6 +29,28 @@
         "package-catalog"
       ],
       "category": "workflow"
+    },
+    {
+      "name": "loop-engine",
+      "source": "./plugins/loop-engine",
+      "description": "무인 검증 loop 엔진 — maker→checker→결정론 채점(rubric)→decide→정체 감지 루프를 루브릭 통과·brake(10회/60분/1M토큰/$100)까지 반복한다. severity 는 LLM 이 아니라 채점 셸이 매겨 judge 일관성을 보장하고, 두 방아쇠(사람 핸드오프 /looping, Sentry 자동 드라이버)가 한 엔진을 공유한다. rubric 은 BASE(엔진 번들 generic 골격) + 프로젝트 LOCAL override 2단 병합이라 임의 언어·빌드 프로젝트에 적용된다 — 빌드/테스트/린트 명령·컨벤션 docs·티켓 패턴은 프로젝트의 .loop/adapter.env 로 주입한다. /looping run|review|lessons 스킬 + loop-checker·loop-lesson-synthesizer 서브에이전트.",
+      "version": "0.1.0",
+      "author": {
+        "name": "kunsanglee"
+      },
+      "homepage": "https://github.com/kunsanglee/ai-ready",
+      "repository": "https://github.com/kunsanglee/ai-ready",
+      "keywords": [
+        "loop",
+        "autonomous-review",
+        "rubric",
+        "checker",
+        "maker-checker",
+        "무인 검증 루프",
+        "loop-engineering",
+        "claude-code"
+      ],
+      "category": "workflow"
     }
   ]
 }
