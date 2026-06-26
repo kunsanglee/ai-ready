@@ -1,9 +1,10 @@
-# 무인 검증 loop 루브릭 (데이터)
+# 무인 검증 loop 루브릭 — BASE (프로젝트 무관 골격)
 
-> 이 문서는 **루브릭 데이터의 단일 원본**입니다. 사람이 읽고 편집합니다.
-> 적용 로직(종류 lookup·가중 상향·집계·종료 판정·정체 floor 계산)은
-> [`.claude/skills/_loop-engine/`](../../.claude/skills/_loop-engine/) 셸이 가지고, 이 문서의 표를 파싱해 채점합니다.
-> 설계 배경 전체는 `specs/autonomous-review-loop-ai-ready-checker.md` (Obsidian) 를 따릅니다.
+> 이 문서는 **BASE 루브릭 — 프로젝트 무관 골격**입니다. 사람이 읽고 편집합니다.
+> 적용 로직(종류 lookup·가중 상향·집계·종료 판정·정체 floor 계산)은 같은 plugin 의 `_loop-engine/` 셸이
+> 가지고, 이 표를 파싱해 채점합니다. 스택·도메인 특유 종류(예: DDL 안전성·i18n 키 누락)는 여기 두지 않고
+> 대상 프로젝트가 LOCAL rubric(`$CLAUDE_PROJECT_DIR/.loop/rubric.md`)에 추가합니다. BASE 와 LOCAL 은
+> 병합돼 채점되며 같은 kind/dimension 은 LOCAL 이 BASE 를 덮습니다.
 
 ## 핵심 원칙
 
@@ -102,9 +103,7 @@ floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외�
 | intent-nongoal-violation | intent | agent | BLOCKER | no | 문서가 금지한 동작 수행. intent floor(MAJOR) 위로 |
 | intent-overreach | intent | agent | MINOR | no | scope 초과 구현. intent floor(MAJOR) 아래로 |
 | n-plus-1 | runtime | agent | MAJOR | no | runtime floor(CRITICAL) 아래. hotpath 가중 시 CRITICAL |
-| i18n-key-missing | convention | gate | MAJOR | no | 새 ErrorCode i18n 키 누락. convention floor(MINOR) 위로 |
-| ddl-safety | runtime | gate | BLOCKER | always | NOT NULL 추가·DROP·ALTER TYPE·비CONCURRENTLY 인덱스. runtime floor(CRITICAL) 위로 |
-| test-missing | convention | agent | CRITICAL | no | 작성·수정한 도메인/서비스 코드에 대응 테스트 누락. docs/TESTING.md 기준. convention floor(MINOR) 위로 — 코드 변경분 테스트 필수 |
+| test-missing | convention | agent | CRITICAL | no | 작성·수정한 코드에 대응 테스트 누락. 프로젝트 테스트 규약 기준. convention floor(MINOR) 위로 — 코드 변경분 테스트 필수 |
 
 <!-- LOOP_RUBRIC:KINDS:END -->
 
