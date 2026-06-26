@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# c8c-api 무인 검증 loop — 결정론 루브릭 적용 셸의 공용 부트스트랩.
+# 첫 줄에서 source 한다: source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+#
+# 책임:
+#   1. repo root / rubric.md 경로 해석.
+#   2. severity 사다리 헬퍼 (MINOR<MAJOR<CRITICAL<BLOCKER).
+#   3. rubric.md 의 마커로 감싼 마크다운 표를 TSV/JSON 으로 추출.
+#
+# 설계: severity 는 checker(LLM)가 아니라 이 셸이 매긴다 (judge 일관성).
+# 호환: macOS 기본 bash 3.2 를 깨지 않는다 — 연관 배열(declare -A)·${var^^}·mapfile 미사용.
+#       데이터 가공은 awk/jq 로 위임한다. jq, awk 는 필수.
+
+set -euo pipefail
+
+# shellcheck disable=SC2155
+LOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# rubric 은 2단이다: BASE(엔진에 번들된 프로젝트 무관 골격) + LOCAL(대상 프로젝트가 주입하는 override, 옵션).
+# BASE 는 이 셸 옆에 항상 있다 — plugin 설치 위치($CLAUDE_PLUGIN_ROOT/_loop-engine)든 레포 내장이든
+# 셸 위치 기준이라 cwd 와 무관하게 결정론적이다. 예전의 repo root 3단 역산은 제거했다: plugin 으로
+# 배포되면 엔진 설치 위치와 대상 프로젝트가 다른 트리라 깊이 역산이 무의미하기 때문이다.
+# LOCAL 은 looping 스킬이 $CLAUDE_PROJECT_DIR 기준으로 찾아 LOOP_RUBRIC_LOCAL 로 넘긴다.
+# 둘을 합쳐 채점하되 같은 kind/dimension 은 LOCAL 이 BASE 를 덮는다.
+LOOP_RUBRIC_BASE="${LOOP_RUBRIC_BASE:-$LOOP_LIB_DIR/rubric.base.md}"
+export LOOP_RUBRIC_BASE
+LOOP_RUBRIC_LOCAL="${LOOP_RUBRIC_LOCAL:-}"
+export LOOP_RUBRIC_LOCAL
+
+loop_require() {
+  command -v "$1" >/dev/null 2>&1 || { echo "loop: '$1' 필요 (PATH 확인)" >&2; exit 127; }
+}
+loop_require jq
+loop_require awk
+
+[ -f "$LOOP_RUBRIC_BASE" ] || { echo "loop: base rubric 없음: $LOOP_RUBRIC_BASE" >&2; exit 66; }
+if [ -n "$LOOP_RUBRIC_LOCAL" ] && [ ! -f "$LOOP_RUBRIC_LOCAL" ]; then
+  echo "loop: LOCAL rubric 지정됐으나 파일 없음: $LOOP_RUBRIC_LOCAL" >&2; exit 66
+fi
+
+# --- severity 사다리 (순수 bash, 버전 안전) ---
+
+loop_sev_rank() {
+  case "$1" in
+    MINOR) echo 1;; MAJOR) echo 2;; CRITICAL) echo 3;; BLOCKER) echo 4;; *) echo 0;;
+  esac
+}
+loop_sev_name() {
+  case "$1" in
+    1) echo MINOR;; 2) echo MAJOR;; 3) echo CRITICAL;; 4) echo BLOCKER;; *) echo UNKNOWN;;
+  esac
+}
+# 한 단계 상향 (BLOCKER 에서 멈춤).
+loop_sev_upgrade() {
+  local r; r="$(loop_sev_rank "$1")"
+  [ "$r" -ge 1 ] && [ "$r" -lt 4 ] && r=$((r + 1))
+  loop_sev_name "$r"
+}
+
+# --- 입력 검증 (fail-loud 게이트) ---
+# 채점 셸은 신뢰하는 변환기가 아니라 안전 게이트다. 입력 생산자가 LLM checker 라
+# 빈 출력·null·형식 오류가 흔하다. 그런 변질 입력을 조용히 통과(fail-open)시키면
+# 진짜 결함이 PASS 로 둔갑한다. 비었거나 jq 검증식($2)을 통과 못 하면 시끄럽게 거부한다.
+# exit 65 = 입력 데이터 오류(EX_DATAERR). 오케스트레이터는 이걸 사람 대기 신호로 본다.
+loop_validate_json() {
+  local input="$1" check="$2" msg="$3"
+  if [ -z "$input" ]; then
+    echo "loop: 빈 입력 — $msg" >&2; exit 65
+  fi
+  if ! printf '%s' "$input" | jq -e "$check" >/dev/null 2>&1; then
+    echo "loop: 입력 형식 오류 — $msg" >&2; exit 65
+  fi
+}
+
+# --- rubric 표 추출 ---
+# 마커 LOOP_RUBRIC:<NAME>:BEGIN ~ :END 사이의 마크다운 표를
+# 구분자 행을 빼고 TSV(헤더 포함)로 평탄화한다.
+# BASE 표 먼저, LOCAL 표(있으면) 를 이어 출력한다. 헤더 행은 호출부(loop_kinds_json 등)가
+# kind_id/dimension/param 으로 걸러내므로 BASE·LOCAL 양쪽 헤더가 섞여도 무해하다.
+loop_table() {
+  local name="$1"
+  _loop_table_one "$LOOP_RUBRIC_BASE" "$name"
+  [ -n "$LOOP_RUBRIC_LOCAL" ] && _loop_table_one "$LOOP_RUBRIC_LOCAL" "$name"
+  return 0
+}
+_loop_table_one() {
+  local file="$1" name="$2"
+  awk -v b="LOOP_RUBRIC:${name}:BEGIN" -v e="LOOP_RUBRIC:${name}:END" '
+    index($0, b) > 0 { inblk = 1; next }
+    index($0, e) > 0 { inblk = 0; next }
+    inblk && $0 ~ /^[[:space:]]*\|/ {
+      line = $0
+      # 구분자 행(|---|---|) 스킵
+      if (line ~ /^[[:space:]]*\|[[:space:]:|-]+\|[[:space:]:|-]*$/) next
+      sub(/^[[:space:]]*\|/, "", line)
+      sub(/\|[[:space:]]*$/, "", line)
+      n = split(line, a, "|")
+      out = ""
+      for (i = 1; i <= n; i++) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", a[i])
+        out = out a[i]
+        if (i < n) out = out "\t"
+      }
+      print out
+    }
+  ' "$file"
+}
+
+# KINDS 표 → {kind_id: {dimension,layer,base,force_await}} JSON.
+loop_kinds_json() {
+  loop_table KINDS | awk -F'\t' '
+    $1 == "kind_id" || NF < 5 { next }
+    { printf "{\"kind\":\"%s\",\"dimension\":\"%s\",\"layer\":\"%s\",\"base\":\"%s\",\"force_await\":\"%s\"}\n", $1, $2, $3, $4, $5 }
+  ' | jq -s 'map({key: .kind, value: .}) | from_entries'
+}
+
+# DIMFLOOR 표 → {dimension: floor_severity} JSON.
+loop_dimfloor_json() {
+  loop_table DIMFLOOR | awk -F'\t' '
+    $1 == "dimension" || NF < 2 { next }
+    { printf "{\"d\":\"%s\",\"f\":\"%s\"}\n", $1, $2 }
+  ' | jq -s 'map({key: .d, value: .f}) | from_entries'
+}
+
+# PARAMS 표에서 한 값 조회. 없으면 비0 exit.
+loop_param() {
+  loop_table PARAMS | awk -F'\t' -v k="$1" '
+    $1 == "param" { next }
+    $1 == k { val = $2; found = 1 }   # 마지막 매치 우선 — LOCAL 이 BASE 를 덮는다
+    END { if (found) { print val; exit 0 } else exit 3 }
+  '
+}
