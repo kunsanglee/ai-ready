@@ -1,0 +1,38 @@
+{
+  "ticket": "EXAMPLE-1",
+  "iteration": 1,
+  "findings": [
+    {
+      "id": "f1",
+      "kind": "n-plus-1",
+      "dimension": "runtime",
+      "location": "feed/feed-infrastructure/.../FeedQueryService.kt:88",
+      "evidence": "루프 안에서 memberRepository.findById 반복 호출",
+      "weights": ["hotpath"]
+    },
+    {
+      "id": "f2",
+      "kind": "convention-violation",
+      "dimension": "convention",
+      "location": "casting/casting-api/.../RegisterCastingController.kt:12",
+      "evidence": "@Service 와 @Transactional 이 같은 줄",
+      "weights": []
+    },
+    {
+      "id": "f3",
+      "kind": "idor-self-resource",
+      "dimension": "security",
+      "location": "project/project-api/.../UpdateProjectController.kt:40",
+      "evidence": "memberId == project.ownerId 검증 없음",
+      "weights": ["authz"]
+    },
+    {
+      "id": "f4",
+      "kind": "some-brand-new-runtime-smell",
+      "dimension": "runtime",
+      "location": "x/Y.kt:5",
+      "evidence": "예외표에 없는 새 패턴 — runtime floor(CRITICAL) 주 경로로 채점",
+      "weights": []
+    }
+  ]
+}
