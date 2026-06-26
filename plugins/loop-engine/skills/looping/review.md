@@ -4,10 +4,10 @@
 
 무인 검증 loop 의 **사람 입구**다. 무인 드라이버가 돌리는 것과 **똑같은 단일 checker(`loop-checker`) + 결정론 채점 셸**을 사람이 한 번 돌려, 등급순 보고서를 받는다. 루프가 아니다 — checker 1회 → 채점 → 보고서로 끝난다. 무엇을 고칠지는 사람이 정한다.
 
-## 🤝 팀 공유 버전 안내
+## 🔌 plugin / 프로젝트 어댑터 구조
 
-- 이 스킬은 `.claude/skills/` 의 팀 공유 자산(projectSettings, 최우선)이다.
-- 의존: `.claude/agents/loop-checker.md`(점검), `.claude/skills/_loop-engine/`(채점 셸 `score.sh`·`decide.sh`), `docs/loop/rubric.md`(루브릭 데이터). 셋 다 같은 레포에 커밋돼 있어 별도 셋업 불필요.
+- 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다. checker·채점 셸·BASE rubric 은 plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위), 프로젝트 특유 LOCAL rubric 은 `$CLAUDE_PROJECT_DIR/.loop/rubric.md`(있으면 병합).
+- 의존: `agents/loop-checker.md`(점검, `loop-engine:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh`), `_loop-engine/rubric.base.md`(BASE 루브릭). 전부 plugin 번들이라 별도 셋업 불필요. review 는 게이트를 안 돌려 프로젝트 어댑터(`.loop/adapter.env`)는 옵션 — 있으면 LOCAL rubric 을 병합해 점검 기준을 그 프로젝트에 맞춘다.
 - 환경변수·외부 인증 없음(전부 로컬 git + 셸).
 
 ## `/code-review` 와 차이
@@ -46,7 +46,7 @@ git diff --staged --stat             # uncommitted (staged)
 
 - 원래 작업 정의(Step 1 요약, 1~3문장).
 - 작업 정의 문서 경로(있으면 design/티켓 경로, 없으면 "missing").
-- 비교 베이스: `origin/main`.
+- 비교 베이스: `$LOOP_BASE_BRANCH`(어댑터, 기본 `origin/main`).
 
 **maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
 
@@ -57,10 +57,18 @@ checker 는 마지막에 정확히 하나의 ```json 펜스 블록으로 `{base,
 추출한 JSON 을 임시 파일에 저장하고 채점 셸에 흘린다. **severity 는 셸이 매긴다 — checker 가 낸 등급을 쓰지 않는다(애초에 checker 는 등급을 안 낸다).**
 
 ```bash
+ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+# 프로젝트 어댑터가 있으면 LOCAL rubric 을 주입(없으면 BASE 만으로 점검). review 는 게이트를 안 돌려 어댑터는 옵션.
+[ -f "$PROJECT_ROOT/.loop/adapter.env" ] && { set -a; . "$PROJECT_ROOT/.loop/adapter.env"; set +a; }
+if [ -n "${LOOP_RUBRIC_LOCAL:-}" ]; then
+  case "$LOOP_RUBRIC_LOCAL" in /*) : ;; *) LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/$LOOP_RUBRIC_LOCAL" ;; esac
+  export LOOP_RUBRIC_LOCAL
+fi
 F=$(mktemp)                                  # checker JSON 저장
 # (위에서 추출한 {base,findings:[...]} 를 $F 에 기록)
-SCORED=$(bash .claude/skills/_loop-engine/score.sh "$F")    # finding 마다 severity·await·base·kind_known 추가
-VERDICT=$(printf '%s' "$SCORED" | bash .claude/skills/_loop-engine/decide.sh)   # verdict·counts·await 집계
+SCORED=$(bash "$ENG/score.sh" "$F")          # finding 마다 severity·await·base·kind_known 추가
+VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")   # verdict·counts·await 집계
 rm -f "$F"
 ```
 
@@ -105,7 +113,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| `loop: rubric 없음` | `docs/loop/rubric.md` 부재(워크트리 누락) | 레포 루트에서 호출, 또는 `LOOP_RUBRIC_MD` 로 pin |
+| `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
 | `score.sh: 입력 형식 오류 — ... exit 65` | checker JSON 추출 실패(빈/null/형식오류) | checker 출력의 마지막 ```json 블록만 정확히 추출했는지 확인. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | `loop: 'jq' 필요` | jq 미설치 | `brew install jq` |
 | 모든 finding 이 CRITICAL 로 뜸 | checker 가 dimension 을 5값 밖으로 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker 출력의 dimension 값 점검 |

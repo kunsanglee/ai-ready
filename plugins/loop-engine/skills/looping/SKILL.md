@@ -1,6 +1,6 @@
 ---
 name: looping
-description: 무인 검증 loop 우산 스킬. 첫 인자로 세 서브커맨드를 분기한다 — `run`(사람 핸드오프 자동 루프: maker→checker→결정론 채점→정체·brake 를 루브릭 통과·예산 소진·사람 대기까지 반복, 코드를 고치며 돈다), `review`(현재 브랜치 변경을 1회 적대적 점검해 등급 내림차순 보고서, 코드 수정 없음), `lessons`(루프 종료 후 잡힌 실수를 사람 승인 게이트로 docs/ANTIPATTERNS.md 에 승격). 셋 다 같은 판정부(loop-checker 에이전트 + .claude/skills/_loop-engine 채점 셸 + docs/loop/rubric.md)를 써서 같은 코드엔 항상 같은 severity. Use when the user says "/looping", "/looping run|review|lessons", "루프 돌려", "핸드오프 루프", "loop 리뷰", "검수 한 번", "lesson 종합", "교훈 반영", "이 작업 루프로 수렴시켜", or runs / reviews / harvests-lessons-from the verification loop. run 은 점검·수정 반복 → 종료 → 사람 검토 → lessons 로 이어지는 주 흐름이고, review·lessons 는 단독으로도 부를 수 있다.
+description: 무인 검증 loop 우산 스킬. 첫 인자로 세 서브커맨드를 분기한다 — `run`(사람 핸드오프 자동 루프: maker→checker→결정론 채점→정체·brake 를 루브릭 통과·예산 소진·사람 대기까지 반복, 코드를 고치며 돈다), `review`(현재 브랜치 변경을 1회 적대적 점검해 등급 내림차순 보고서, 코드 수정 없음), `lessons`(루프 종료 후 잡힌 실수를 사람 승인 게이트로 프로젝트 영구 지식층에 승격). 셋 다 같은 판정부(loop-checker 에이전트 + 결정론 채점 셸 + BASE/LOCAL rubric)를 써서 같은 코드엔 항상 같은 severity. Use when the user says "/looping", "/looping run|review|lessons", "루프 돌려", "핸드오프 루프", "loop 리뷰", "검수 한 번", "lesson 종합", "교훈 반영", "이 작업 루프로 수렴시켜", or runs / reviews / harvests-lessons-from the verification loop. run 은 점검·수정 반복 → 종료 → 사람 검토 → lessons 로 이어지는 주 흐름이고, review·lessons 는 단독으로도 부를 수 있다.
 disable-model-invocation: true
 ---
 
@@ -11,7 +11,7 @@ disable-model-invocation: true
 ## 공통 코어 (세 동작이 공유)
 
 - **`loop-checker`** 에이전트: 변경 코드를 5차원(compatibility·security·runtime·intent·convention)으로 적대적 점검해 finding 을 `(종류·차원·가중플래그·위치·근거·force_await)` 로 태깅만 한다. severity 는 안 매긴다.
-- **`.claude/skills/_loop-engine/`** 채점 셸: `docs/loop/rubric.md` 표를 보고 결정론으로 severity·종료 verdict·정체를 판정한다. score → decide → stall.
+- **`$CLAUDE_PLUGIN_ROOT/_loop-engine/`** 채점 셸: BASE rubric(번들) + 프로젝트 LOCAL rubric 표를 보고 결정론으로 severity·종료 verdict·정체를 판정한다. score → decide → stall.
 - 그래서 **같은 코드엔 항상 같은 등급**(judge 일관성). 셋 다 이 코어를 호출 — 점검 로직 복제 없음.
 
 ## 서브커맨드 분기
@@ -36,7 +36,7 @@ esac
 ```
 
 분기 규칙:
-- `run` → `.claude/skills/looping/run.md` 를 Read 하고 그 Step 0~ 절차를 수행한다. 사용자가 회차를 같이 주면(`/looping run 5`) 둘째 토큰을 run.md 셋업의 `MAX_ITER` 로 넣는다(천장 10 클램프는 run.md 가 한다).
+- `run` → 같은 폴더 `run.md` 를 Read 하고 그 Step 0~ 절차를 수행한다. 사용자가 회차를 같이 주면(`/looping run 5`) 둘째 토큰을 run.md 셋업의 `MAX_ITER` 로 넣는다(천장 10 클램프는 run.md 가 한다).
 - `review` → `review.md` 를 Read 하고 그 절차를 수행한다. `--html` 이면 HTML 보고서 모드.
 - `lessons` → `lessons.md` 를 Read 하고 그 절차를 수행한다. `--history <경로>` 로 history 명시 가능.
 - 그 외/빈 인자 → 아래 사용법을 출력하고 멈춘다.
@@ -62,8 +62,8 @@ looping — 무인 검증 loop 우산. 서브커맨드를 주세요.
 review·lessons 는 단독으로도 부를 수 있습니다.
 ```
 
-## 팀 공유 / 의존
+## plugin / 의존
 
-- `.claude/skills/` 의 팀 공유 자산(projectSettings, 최우선). 자동 트리거 없음(`disable-model-invocation`) — 사용자가 명시 호출.
-- 의존: `.claude/agents/loop-checker.md`, `.claude/agents/loop-lesson-synthesizer.md`(lessons), `.claude/skills/_loop-engine/`(채점 셸), `docs/loop/rubric.md`(루브릭·brake 단일 원천). 전부 같은 레포에 커밋돼 별도 셋업 불필요.
-- 런타임 상태(`.claude/loop/{ticket}/`)는 `.gitignore` 로 추적 제외 — 루프 한정 휘발성, run 종료 시 폐기(lessons 종합 후).
+- `loop-engine` plugin(ai-ready marketplace)의 일부. 자동 트리거 없음(`disable-model-invocation`) — 사용자가 명시 호출.
+- 의존(plugin 번들, `$CLAUDE_PLUGIN_ROOT` 하위): `agents/loop-checker.md`, `agents/loop-lesson-synthesizer.md`(lessons), `_loop-engine/`(채점 셸), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천). 프로젝트 델타는 `$CLAUDE_PROJECT_DIR/.loop/`(adapter.env·rubric.md) — run 은 어댑터 필수, review 는 옵션.
+- 런타임 상태(`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`)는 `.gitignore` 로 추적 제외 — 루프 한정 휘발성, run 종료 시 폐기(lessons 종합 후).

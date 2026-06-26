@@ -4,25 +4,26 @@
 
 무인 검증 loop 의 **선순환을 닫는 사람 승인 게이트**다. loop 가 잡은 실수(+ 사람·PR 이 더한 지적)를 `loop-lesson-synthesizer` 가 ANTIPATTERNS 후보 초안으로 만들면, 이 스킬이 **한 번에 하나씩** 추가/수정/버림을 사람에게 묻고 승인분만 영구 지식층에 반영한다.
 
-선순환: loop 가 잡은 실수 → 사람 검증(여기) → `docs/ANTIPATTERNS.md` → 다음 loop·세션이 그 자산을 읽고 같은 실수를 안 함.
+선순환: loop 가 잡은 실수 → 사람 검증(여기) → 프로젝트 영구 지식층(`$LOOP_KNOWLEDGE_LAYER`, 예: `docs/ANTIPATTERNS.md`) → 다음 loop·세션이 그 자산을 읽고 같은 실수를 안 함.
 
-## 🤝 팀 공유 버전 안내
+## 🔌 plugin / 프로젝트 어댑터 구조
 
-- `.claude/skills/` 의 팀 공유 자산(projectSettings, 최우선).
-- 의존: `.claude/agents/loop-lesson-synthesizer.md`(후보 초안 작성), `.claude/skills/_loop-engine/lessons.sh`(출처1 추출), `docs/ANTIPATTERNS.md`·`docs/loop/rubric.md`(반영 대상).
-- 환경변수 없음. 반영은 사람이 승인한 것만 로컬 파일에 기록.
+- 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다.
+- 의존(plugin 번들): `agents/loop-lesson-synthesizer.md`(후보 초안 작성, `loop-engine:` namespace), `_loop-engine/lessons.sh`(출처1 추출), `_loop-engine/test.sh`(rubric 변경 시 채점 회귀).
+- 반영 대상(프로젝트 델타, 어댑터가 경로를 줌): `$LOOP_KNOWLEDGE_LAYER`(영구 지식층 — 예: `docs/ANTIPATTERNS.md`), `$LOOP_RUBRIC_LOCAL`(LOCAL rubric — 새 kind 예외표). 둘 다 `.loop/adapter.env` 가 가리킨다.
+- 환경변수 없음(어댑터 env 외). 반영은 사람이 승인한 것만 그 프로젝트 파일에 기록.
 
 ## 절대 원칙
 
 1. **사람 승인 없이는 반영 금지.** synthesizer 도 이 스킬도 초안·제시까지다. 추가/수정/버림은 사람이 정한다. 무인 loop 여도 이 한 단계는 반드시 사람.
-2. **수록 문턱을 지킨다.** `docs/ANTIPATTERNS.md` 헤더 기준이 권위: 동일 위치 fix 3회+ 또는 revert. 못 넘으면 모듈 `CLAUDE.md` "절대 금지" 로만, 또는 보류. 한 loop 1회 발생은 대개 문턱 미달 — 과거 git fix 핫스팟과 합산해야 넘는다.
+2. **수록 문턱을 지킨다.** 영구 지식층(`$LOOP_KNOWLEDGE_LAYER`) 헤더 기준이 권위: 동일 위치 fix 3회+ 또는 revert. 못 넘으면 모듈 `CLAUDE.md` "절대 금지" 로만, 또는 보류. 한 loop 1회 발생은 대개 문턱 미달 — 과거 git fix 핫스팟과 합산해야 넘는다.
 3. **rubric 예외표는 ANTIPATTERNS 승인 때만 자란다.** 승인된 후보가 반복되는 새 종류이고 그 severity 가 자기 dimension floor 와 **다를 때만** KINDS 표에 한 줄 추가. floor 와 같으면 안 늘린다.
 
 ## 호출 예시
 
 ```
 /looping lessons                                   # 직전 loop 의 history 에서 출처1 자동 추출 → 후보 검토
-/looping lessons --history .claude/loop/CCE-1234/history.jsonl    # history 경로 명시
+/looping lessons --history .loop/run/{ticket}/history.jsonl    # history 경로 명시
 ```
 
 ## 작업 흐름
@@ -31,10 +32,13 @@
 
 - **출처1 (loop 가 잡고 maker 가 고친 실수)**: `loop-lesson-synthesizer` 가 받을 JSON. 없으면 history 경로로 직접 만든다.
   ```bash
-  bash .claude/skills/_loop-engine/lessons.sh --history <history.jsonl>
+  ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+  PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+  [ -f "$PROJECT_ROOT/.loop/adapter.env" ] && { set -a; . "$PROJECT_ROOT/.loop/adapter.env"; set +a; }  # $LOOP_KNOWLEDGE_LAYER·$LOOP_RUBRIC_LOCAL 주입
+  bash "$ENG/lessons.sh" --history <history.jsonl>
   ```
   (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다.
-- **출처2 (checker 가 놓친 것, 선택)**: 사람이 결과 검토 중 "checker 가 여기 놓쳤다/과하게 잡았다" 한 지적(c8c-api 단독·세션 안이면 대화에서), 또는 무인 agent 프로젝트면 PR 코멘트 추출 결과. 텍스트로 모은다.
+- **출처2 (checker 가 놓친 것, 선택)**: 사람이 결과 검토 중 "checker 가 여기 놓쳤다/과하게 잡았다" 한 지적(세션 안이면 대화에서), 또는 무인 드라이버면 PR 코멘트 추출 결과. 텍스트로 모은다.
 - 티켓/작업 요약 1~3문장(없으면 "작업 정의 없음").
 
 ### Step 2. synthesizer 호출 (후보 초안 작성)
@@ -73,9 +77,9 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 
 사용자가 **추가**(또는 수정 후 승인)한 후보만 반영한다. 버림·보류는 아무 데도 안 쓴다.
 
-- **ANTIPATTERNS 추가**: `docs/ANTIPATTERNS.md` 끝의 다음 번호로 `## {N}. {제목}` 섹션을 추가한다. 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다.
+- **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(예: `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 추가한다. 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다.
 - **모듈 CLAUDE.md 추가**(문턱 미달·모듈 고유): 해당 `{module}/CLAUDE.md` "절대 금지" 섹션에 짧게.
-- **rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 `docs/loop/rubric.md` 의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가. floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash .claude/skills/_loop-engine/test.sh` 로 채점 회귀 0 확인.
+- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL`, 예: `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "$CLAUDE_PLUGIN_ROOT/_loop-engine/test.sh"` 로 BASE 채점 회귀 0 확인.
 - 반영 후 변경 파일·추가 항목을 사용자에게 1줄로 보고한다. 커밋은 사용자/별도 절차가 한다(이 스킬은 파일 기록까지).
 
 ## 트러블슈팅
