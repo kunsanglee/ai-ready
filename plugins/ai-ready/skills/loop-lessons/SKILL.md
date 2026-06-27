@@ -14,8 +14,8 @@ disable-model-invocation: true
 
 ## 🔌 plugin / 프로젝트 구조
 
-- 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다.
-- 의존(plugin 번들): `agents/loop-lesson-synthesizer.md`(후보 초안 작성, `loop-engine:` namespace), `_loop-engine/lessons.sh`(출처1 추출), `_loop-engine/detect_build.py`(지식층·문서 경로 감지), `_loop-engine/test.sh`(rubric 변경 시 채점 회귀).
+- 이 스킬은 `ai-ready` plugin 의 일부다(과거 별도 loop-engine plugin 이었으나 v0.6.0 에서 통합).
+- 의존(plugin 번들): `agents/loop-lesson-synthesizer.md`(후보 초안 작성, `ai-ready:` namespace), `_loop-engine/lessons.sh`(출처1 추출), `_loop-engine/detect_build.py`(지식층·문서 경로 감지), `_loop-engine/test.sh`(rubric 변경 시 채점 회귀).
 - 반영 대상(프로젝트 델타, Step 1 감지가 경로를 줌): `$LOOP_KNOWLEDGE_LAYER`(영구 지식층 — ai-ready 가 만든 `docs/ANTIPATTERNS.md`), `$LOOP_RUBRIC_LOCAL`(LOCAL rubric `.loop/rubric.md` — 새 kind 예외표, 없으면 새로 만들 대상). 어댑터 파일은 없다 — 경로는 런타임 감지가 준다.
 - 환경변수 없음. 반영은 사람이 승인한 것만 그 프로젝트 파일에 기록. 지식층은 ai-ready 와 공동 저작하는 append-only 문서라 통째로 덮어쓰지 않고 항목을 덧붙인다.
 

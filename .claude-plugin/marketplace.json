@@ -4,15 +4,15 @@
     "name": "kunsanglee"
   },
   "metadata": {
-    "description": "Standalone Claude Code marketplace hosting two plugins — ai-ready (audit codebases for AI-readiness and apply ROI-prioritized improvements) and loop-engine (autonomous maker→checker→deterministic-rubric verification loop). Supports both multi-module and single-module (package-as-module) layouts. v0.2.0+: config-driven frontmatter-aware INDEX + lazy-load user/auto split. v0.3.0+: config rubric section makes scoring respect project reality (docs/design as ADR, springdoc as API contract, .claude hooks as verification gate). v0.4.0+: apply guards human-adopted docs (generators refuse to overwrite files lacking the auto-gen signature; per-doc diff-confirm loop). v0.4.2+: INDEX generation respects .gitignore — only tracked or unignored .md is indexed, so generated artifacts and .claude/commands no longer pollute INDEX; non-git dirs fall back to a full walk. v0.5.0+: apply maintains docs surgically — the doc-touching scripts gather facts only (--json, read-only) and the AI adds/updates just what changed while preserving human curation, instead of wholesale overwriting.",
-    "version": "0.5.0"
+    "description": "Standalone Claude Code marketplace hosting the ai-ready plugin — audit codebases for AI-readiness, apply ROI-prioritized improvements, and run an autonomous maker→checker→deterministic-rubric verification loop, all in one plugin. Supports both multi-module and single-module (package-as-module) layouts. v0.2.0+: config-driven frontmatter-aware INDEX + lazy-load user/auto split. v0.3.0+: config rubric section makes scoring respect project reality (docs/design as ADR, springdoc as API contract, .claude hooks as verification gate). v0.4.0+: apply guards human-adopted docs (generators refuse to overwrite files lacking the auto-gen signature; per-doc diff-confirm loop). v0.4.2+: INDEX generation respects .gitignore — only tracked or unignored .md is indexed, so generated artifacts and .claude/commands no longer pollute INDEX; non-git dirs fall back to a full walk. v0.5.0+: apply maintains docs surgically — the doc-touching scripts gather facts only (--json, read-only) and the AI adds/updates just what changed while preserving human curation, instead of wholesale overwriting. v0.6.0+: the former loop-engine plugin is folded into ai-ready — /loop-run, /loop-review, /loop-lessons + loop-checker/loop-lesson-synthesizer agents + the _loop-engine scoring shell ship in the same plugin, so one install covers the whole audit→apply→verify cycle and the loop reads/appends the docs/ANTIPATTERNS.md that ai-ready writes.",
+    "version": "0.6.0"
   },
   "plugins": [
     {
       "name": "ai-ready",
       "source": "./plugins/ai-ready",
-      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics. v0.2.0+: optional .ai-ready/config.json drives frontmatter-aware INDEX grouping and preserves user-edited lazy-load triggers. v0.3.0+: the config rubric section makes scoring respect project reality — docs/design counts as ADR, springdoc as API contract, project-level .claude/settings.json lint/test hooks as a verification gate. v0.4.0+: apply guards human-adopted docs — generators refuse to overwrite files lacking the auto-generated signature (--force to override) and apply runs a per-doc diff-confirm loop. v0.4.2+: INDEX generation respects .gitignore — only tracked or unignored .md is indexed, so generated artifacts and .claude/commands no longer pollute INDEX; non-git dirs fall back to a full walk. v0.5.0+: apply maintains docs surgically — the doc-touching scripts (gen_index, gen_arch_diagram, extract_section, inject_module_map, inject_lazy_load_index) gain a --json facts-only mode and the AI adds/updates only what changed while preserving human curation, instead of mechanically overwriting whole docs.",
-      "version": "0.5.0",
+      "description": "Audit codebases for AI-readiness using a 7-category 100-point rubric, then apply ROI-prioritized improvements (CLAUDE.md scaffolds, ANTIPATTERNS.md seeds, INDEX.md, ARCHITECTURE.md Mermaid diagrams, freshness Stop hook, trend sparkline). Multi-module and single-module (package-as-module) layouts are scored on parallel rubrics. v0.2.0+: optional .ai-ready/config.json drives frontmatter-aware INDEX grouping and preserves user-edited lazy-load triggers. v0.3.0+: the config rubric section makes scoring respect project reality — docs/design counts as ADR, springdoc as API contract, project-level .claude/settings.json lint/test hooks as a verification gate. v0.4.0+: apply guards human-adopted docs — generators refuse to overwrite files lacking the auto-generated signature (--force to override) and apply runs a per-doc diff-confirm loop. v0.4.2+: INDEX generation respects .gitignore — only tracked or unignored .md is indexed, so generated artifacts and .claude/commands no longer pollute INDEX; non-git dirs fall back to a full walk. v0.5.0+: apply maintains docs surgically — the doc-touching scripts (gen_index, gen_arch_diagram, extract_section, inject_module_map, inject_lazy_load_index) gain a --json facts-only mode and the AI adds/updates only what changed while preserving human curation, instead of mechanically overwriting whole docs. v0.6.0+: the autonomous verification loop (formerly the separate loop-engine plugin) is folded in — /loop-run (maker→checker→deterministic-rubric→decide→stall loop until pass or brake), /loop-review (one-shot adversarial check), /loop-lessons (human-approved harvest of caught mistakes into the knowledge layer), the loop-checker and loop-lesson-synthesizer subagents, and the _loop-engine scoring shell (severity assigned by the shell, not the LLM; BASE rubric + optional project-local .loop/rubric.md). Build/test/lint commands, ticket pattern and base branch are runtime-detected (detect_build.py) so no adapter file is persisted; the loop's knowledge layer is the docs/ANTIPATTERNS.md that ai-ready writes, which the loop reads and appends to.",
+      "version": "0.6.0",
       "author": {
         "name": "kunsanglee"
       },
@@ -26,29 +26,12 @@
         "codebase-quality",
         "CLAUDE.md",
         "single-module",
-        "package-catalog"
-      ],
-      "category": "workflow"
-    },
-    {
-      "name": "loop-engine",
-      "source": "./plugins/loop-engine",
-      "description": "무인 검증 loop 엔진 — maker→checker→결정론 채점(rubric)→decide→정체 감지 루프를 루브릭 통과·brake(10회/60분/1M토큰/$100)까지 반복한다. severity 는 LLM 이 아니라 채점 셸이 매겨 judge 일관성을 보장하고, 두 방아쇠(사람 핸드오프 /loop-run, Sentry 자동 드라이버)가 한 엔진을 공유한다. rubric 은 BASE(엔진 번들 generic 골격) + 프로젝트 LOCAL override 2단 병합이라 임의 언어·빌드 프로젝트에 적용된다 — 빌드/테스트/린트 명령·컨벤션 docs·티켓 패턴·베이스 브랜치는 loop-run 이 런타임에 감지한다(어댑터 파일 없음). 프로젝트 특유 심각도 규칙만 선택적 .loop/rubric.md(BASE 와 병합)로 두고, 지식층은 ai-ready 가 만든 docs/ANTIPATTERNS.md 를 읽고 거기에 덧붙인다. /loop-run·/loop-review·/loop-lessons 스킬 + loop-checker·loop-lesson-synthesizer 서브에이전트.",
-      "version": "0.1.0",
-      "author": {
-        "name": "kunsanglee"
-      },
-      "homepage": "https://github.com/kunsanglee/ai-ready",
-      "repository": "https://github.com/kunsanglee/ai-ready",
-      "keywords": [
-        "loop",
+        "package-catalog",
+        "loop-engine",
         "autonomous-review",
         "rubric",
-        "checker",
         "maker-checker",
-        "무인 검증 루프",
-        "loop-engineering",
-        "claude-code"
+        "무인 검증 루프"
       ],
       "category": "workflow"
     }
