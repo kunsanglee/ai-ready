@@ -82,6 +82,8 @@ To raise the score by executing ROI actions directly, use the scripts below. The
 
 Scripts that modify existing files (`inject_module_map.py`, `install_hook.py`) are idempotent and expose a `--dry-run` option so changes can be previewed first.
 
+**`--json` facts mode (v0.5.0+)**: the doc-touching scripts (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `inject_lazy_load_index`) accept `--json` to emit the gathered facts (doc list + summaries, dependency edges, matched sections, module summaries, present triggers) as JSON **without writing any document**. This is how `ai-ready:apply` maintains docs surgically — the script supplies read-only facts and the AI adds/updates only what changed while preserving human curation, instead of wholesale-overwriting. The `--out` write mode remains for bootstrapping a doc that does not exist yet.
+
 ## Project Config (`.ai-ready/config.json`) — v0.2.0+
 
 Optional file at `<target>/.ai-ready/config.json` enables frontmatter-aware behavior. Without it, the v0.1.x defaults apply (backward compatible — no changes for existing users).
