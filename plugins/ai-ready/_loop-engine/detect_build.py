@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""빌드 시스템·스택·컨벤션 문서 감지기 (loop-engine 어댑터 생성용, v0.5.0+).
+"""빌드 시스템·스택·컨벤션 문서 런타임 감지기 (ai-ready plugin 의 loop 엔진용, v0.5.0+).
 
-대상 코드베이스를 훑어 무인 검증 loop(`loop-engine` plugin)이 그 프로젝트에서 돌려면
-필요한 어댑터 입력을 추론한다:
+대상 코드베이스를 훑어 무인 검증 loop(`/loop-run`·`/loop-review`·`/loop-lessons`)이
+그 프로젝트에서 돌 때 필요한 사실을 추론한다:
 
   1. 빌드 시스템 (gradle / maven / npm / cargo / go / python) → 빌드·테스트·린트 명령
   2. 스택 (Spring / JPA / PostgreSQL) → LOCAL rubric 에 심을 종류(kind) 후보
   3. 컨벤션 문서 (ANTIPATTERNS / CONVENTIONS / NAMING …) → 점검 기준 문서 목록 + 영구 지식층
   4. 티켓 패턴 (브랜치·커밋에서 JIRA 키 추론) + 베이스 브랜치
 
-이 모듈은 *감지만* 한다 — 파일을 쓰지 않는다. 어댑터 파일 생성은 `gen_loop_adapter.py` 가
-이 감지 결과를 받아 한다. 감지/생성을 나눠 감지 로직을 audit 채점이나 진단에서도 재사용한다.
+이 모듈은 *감지만* 한다 — 파일을 쓰지 않는다. loop 스킬이 Step 0 에서 이걸 호출해 JSON 을
+받아 `$LOOP_*` 환경변수를 채운다(어댑터 파일을 만들지 않는다 — 파생 가능한 값을 굳히지
+않는 단일 원본 원칙). 같은 감지 로직을 audit 채점이나 진단에서도 재사용한다.
 
 stdlib-only — json / subprocess / pathlib / re 만 사용.
 """
