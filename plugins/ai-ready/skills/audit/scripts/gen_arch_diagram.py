@@ -198,17 +198,38 @@ def render(target: Path, edges: list[tuple[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def collect_facts(target: Path) -> dict:
+    """문서를 쓰지 않고 의존성 사실(엣지·노드)만 모아 반환.
+
+    AI 가 이 정확한 엣지로 Mermaid 를 직접 써서 ARCHITECTURE.md 를 외과적으로 유지보수한다
+    — 의존성 파싱은 스크립트가, 문서 유지보수는 AI 가. 헛짚을 여지를 없앤다.
+    """
+    edges = parse_gradle_deps(target) + parse_npm_deps(target) + parse_swift_deps(target)
+    unique = sorted(set(edges))
+    nodes = sorted({n for e in unique for n in e})
+    return {"target": str(target), "nodes": nodes,
+            "edges": [list(e) for e in unique]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True)
-    ap.add_argument("--out", required=True, help="ARCHITECTURE.md 출력 경로")
+    ap.add_argument("--out", help="ARCHITECTURE.md 출력 경로 (--json 일 땐 불필요)")
+    ap.add_argument("--json", action="store_true", dest="json_mode",
+                    help="문서를 쓰지 않고 의존성 엣지 사실만 JSON 으로 출력(읽기 전용). apply 의 AI 외과 유지보수용")
     add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
-    out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if args.json_mode:
+        print(json.dumps(collect_facts(target), ensure_ascii=False, indent=2))
+        return
+    if not args.out:
+        print("오류: --out 이 필요합니다 (--json 모드가 아니면).", file=sys.stderr)
+        sys.exit(2)
+    out_path = Path(args.out).resolve()
     if not guard_overwrite(out_path, args.force):
         sys.exit(3)
     edges = parse_gradle_deps(target) + parse_npm_deps(target) + parse_swift_deps(target)

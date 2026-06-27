@@ -33,6 +33,7 @@ auto-section 을 별도 생성. 사용자가 한 번 더 audit:apply 만 실행�
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -320,16 +321,32 @@ def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]
     return base + "\n" + full + "\n", True, "inserted-new"
 
 
+def collect_facts(target: Path, cfg: dict | None = None) -> dict:
+    """문서를 쓰지 않고 lazy-load 트리거 사실(존재하는 detail 문서·트리거 라벨)만 반환.
+
+    AI 가 이 사실 + 현재 루트 CLAUDE.md 의 lazy-load 표를 읽고, 새 트리거만 더하고
+    사용자가 손본 행은 보존한다.
+    """
+    rows = detect_present(target, cfg)
+    return {"target": str(target),
+            "triggers": [{"label": label, "trigger": trigger} for label, trigger in rows]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
     ap.add_argument("--dry-run", action="store_true",
                     help="실제 파일은 수정하지 않고 결과만 출력")
+    ap.add_argument("--json", action="store_true", dest="json_mode",
+                    help="문서를 쓰지 않고 트리거 사실만 JSON 으로 출력(읽기 전용). apply 의 AI 외과 유지보수용")
     args = ap.parse_args()
     target = Path(args.target).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if args.json_mode:
+        print(json.dumps(collect_facts(target, load_config(target)), ensure_ascii=False, indent=2))
+        return
     root = find_root_doc(target)
     if not root:
         print("루트 CLAUDE.md / AGENTS.md 가 없어서 주입할 위치가 없습니다.", file=sys.stderr)
