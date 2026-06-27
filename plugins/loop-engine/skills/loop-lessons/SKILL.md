@@ -1,6 +1,12 @@
-# looping lessons — lesson 승인 게이트 (서브커맨드)
+---
+name: loop-lessons
+description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 잡은 실수(history.jsonl diff)와 사람·PR 지적을 loop-lesson-synthesizer 가 영구 지식층 후보 초안으로 만들면, 한 번에 하나씩 추가/수정/버림을 사람에게 묻고 승인분만 반영한다. 호출 /loop-lessons [--history <경로>]. Use this skill when the user says "/loop-lessons", "lesson 종합", "교훈 반영", "안티패턴 후보", or wants to harvest a finished loop's mistakes into the knowledge layer. 자동 반영 없음 — 사람 승인이 의무.
+disable-model-invocation: true
+---
 
-> 우산 스킬 `looping` 의 `lessons` 동작. 호출: `/looping lessons`. 디스패처는 같은 폴더 [`SKILL.md`](SKILL.md).
+# loop-lessons — lesson 승인 게이트
+
+> 무인 검증 loop 의 선순환을 닫는 사람 승인 게이트. 호출: `/loop-lessons [--history <경로>]`. 보통 `/loop-run` 종료 후 그 history 로 부른다.
 
 무인 검증 loop 의 **선순환을 닫는 사람 승인 게이트**다. loop 가 잡은 실수(+ 사람·PR 이 더한 지적)를 `loop-lesson-synthesizer` 가 ANTIPATTERNS 후보 초안으로 만들면, 이 스킬이 **한 번에 하나씩** 추가/수정/버림을 사람에게 묻고 승인분만 영구 지식층에 반영한다.
 
@@ -22,8 +28,8 @@
 ## 호출 예시
 
 ```
-/looping lessons                                   # 직전 loop 의 history 에서 출처1 자동 추출 → 후보 검토
-/looping lessons --history .loop/run/{ticket}/history.jsonl    # history 경로 명시
+/loop-lessons                                   # 직전 loop 의 history 에서 출처1 자동 추출 → 후보 검토
+/loop-lessons --history .loop/run/{ticket}/history.jsonl    # history 경로 명시
 ```
 
 ## 작업 흐름

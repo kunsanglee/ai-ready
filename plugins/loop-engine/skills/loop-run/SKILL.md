@@ -1,12 +1,18 @@
-# looping run — 사람 핸드오프 자동 루프 (서브커맨드)
+---
+name: loop-run
+description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이 작업을 맡기고 빠지면 maker(고침)→checker(독립 점검)→결정론 채점(rubric)→정체·brake 판정을 루브릭 통과·예산 소진·사람 대기까지 반복한다. 코드를 고치며 N회 돈다. severity 는 LLM 이 아니라 채점 셸이 매겨 judge 일관성을 보장. 호출 /loop-run [회차]. Use this skill when the user says "/loop-run", "루프 돌려", "핸드오프 루프", "이 작업 루프로 수렴시켜", or wants the verification loop to autonomously fix and converge. 1회 점검만은 /loop-review, 종료 후 교훈 수확은 /loop-lessons.
+disable-model-invocation: true
+---
 
-> 우산 스킬 `looping` 의 `run` 동작. 호출: `/looping run [회차]`. 디스패처는 같은 폴더 [`SKILL.md`](SKILL.md).
+# loop-run — 사람 핸드오프 자동 루프
+
+> 무인 검증 loop 의 사람 핸드오프 입구(human-on-the-loop). 호출: `/loop-run [회차]`. 1회 점검만은 `/loop-review`, 종료 후 교훈 수확은 `/loop-lessons`. 셋은 같은 판정부(loop-checker + 채점 셸 + BASE/LOCAL rubric)를 공유한다.
 
 무인 검증 loop 의 **사람 핸드오프 입구(human-on-the-loop)** 다. 사람이 grill-me 로 작업 지시를 확정한 뒤 이 스킬에 넘기고 빠지면, **이 세션이 곧 maker** 가 되어 `maker(고침) → checker(독립 점검) → 채점 → 정체·brake 판정` 을 **루브릭 통과까지 자동 반복** 한다. 사람은 셋업하고 빠지고, 결과(수렴 diff)나 사람 호출(AWAIT_USER/brake)을 나중에 받는다.
 
 무인 드라이버가 돌리는 것과 **똑같은 판정부**(단일 `loop-checker` + 결정론 채점 셸 + BASE/LOCAL rubric)를 쓴다. 다른 건 *방아쇠와 실행 호스트* 뿐이다 — 케이스2(Sentry 자동)는 agent 레포의 Node 드라이버가, 케이스3(이 스킬)은 Claude Code 백그라운드 세션이 같은 엔진을 돌린다.
 
-> `/looping review` 와 혼동 금지. `/looping review` 는 **1회 점검 + 보고서, 코드 안 고침**(사람이 곧 루프). `/looping run` 은 **코드를 고치며 N회 도는 루프**(사람이 빠짐). 점검 1회만 원하면 `/looping review`, 수렴까지 맡기면 `/looping run`.
+> `/loop-review` 와 혼동 금지. `/loop-review` 는 **1회 점검 + 보고서, 코드 안 고침**(사람이 곧 루프). `/loop-run` 은 **코드를 고치며 N회 도는 루프**(사람이 빠짐). 점검 1회만 원하면 `/loop-review`, 수렴까지 맡기면 `/loop-run`.
 
 ## 🔌 plugin / 프로젝트 어댑터 구조
 
@@ -21,7 +27,7 @@
 1. **작업 지시(필수)**: grill-me 합의 요약 또는 spec 경로. "무엇을 만들/고칠지 + 완료 기준". 같은 세션 컨텍스트로 들어온다.
 2. **비교 베이스**: `$LOOP_BASE_BRANCH`(어댑터, 기본 `origin/main`). 점검 범위 = `$LOOP_BASE_BRANCH...HEAD + uncommitted`.
 3. **작업 정의 문서 경로**(있으면): design/티켓 문서. checker 가 정합 층 점검에 쓴다. 없으면 "missing".
-4. **시도 횟수 상한(선택)**: 사용자가 `/looping run` 에 회차를 명시하면(예: "5회로", "--max-iter 5") 그 값을 쓴다. 없으면 rubric `max_iterations`(현재 10). 명시값도 하드 천장 10 으로 깎인다. 횟수를 늘려도 PASS·정체·시간·비가역 조기 종료는 그대로라 상한을 다 안 쓰고 일찍 끝날 수 있다 — 상한이지 목표가 아니다.
+4. **시도 횟수 상한(선택)**: 사용자가 `/loop-run` 에 회차를 명시하면(예: "5회로", "--max-iter 5") 그 값을 쓴다. 없으면 rubric `max_iterations`(현재 10). 명시값도 하드 천장 10 으로 깎인다. 횟수를 늘려도 PASS·정체·시간·비가역 조기 종료는 그대로라 상한을 다 안 쓰고 일찍 끝날 수 있다 — 상한이지 목표가 아니다.
 
 작업 지시가 모호하면 루프를 **시작하지 않는다** — checker 의 정합 층이 기준을 못 잡아 헛돈다. 사람이 빠지기 전에 grill-me 로 완료 기준부터 확정하게 한다.
 
@@ -35,7 +41,7 @@
 
 ## brake (멈춤 장치) — 값은 rubric, 집행은 이 스킬
 
-brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)의 PARAMS 표가 단일 원천이다(프로젝트 LOCAL rubric 이 override 할 수 있다). 이 스킬이 `loop_param` 으로 읽어 **집행** 한다(집행은 회차를 가로지르는 주체의 몫 — 1회용 `/looping review` 는 못 한다).
+brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)의 PARAMS 표가 단일 원천이다(프로젝트 LOCAL rubric 이 override 할 수 있다). 이 스킬이 `loop_param` 으로 읽어 **집행** 한다(집행은 회차를 가로지르는 주체의 몫 — 1회용 `/loop-review` 는 못 한다).
 
 | brake | 출처 | 이 스킬의 집행 |
 |---|---|---|
@@ -79,7 +85,7 @@ DEFAULT_ITER="$(source "$ENG/lib.sh" && loop_param max_iterations)"
 MAX_ITER="${MAX_ITER:-$DEFAULT_ITER}"
 if [ "$MAX_ITER" -gt "$ABS_CEIL" ]; then echo "명시 회차 $MAX_ITER → 천장 $ABS_CEIL 로 제한"; MAX_ITER=$ABS_CEIL; fi
 BUDGET_MIN="${BUDGET_MIN:-$(source "$ENG/lib.sh" && loop_param budget_minutes)}"
-echo "looping run 시작: ticket=$TICKET max_iter=$MAX_ITER (디폴트 $DEFAULT_ITER) budget_min=$BUDGET_MIN 천장 $ABS_CEIL"
+echo "loop-run 시작: ticket=$TICKET max_iter=$MAX_ITER (디폴트 $DEFAULT_ITER) budget_min=$BUDGET_MIN 천장 $ABS_CEIL"
 ```
 
 > Bash 도구 호출은 호출마다 새 셸이라 env 가 안 남는다. 그래서 회차·시작시각을 **파일로 영속** 한다(`started.epoch`, `history.jsonl` 줄 수). 변수에 의존하지 말고 매 사이클 파일에서 다시 읽는다.
@@ -153,7 +159,7 @@ echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDIC
 
 - **PASS(수렴)**: 사람에게 결과 보고 — 통과 verdict, 사이클 수, 남은 MINOR(기록만), 변경 요약. PR 인계는 **보류 합의 사항**이라 자동으로 올리지 않는다(spec). feature-wrapup 또는 `/pr` 로 사람이 마감하도록 제안하고, 원하면 그때 진행.
 - **AWAIT_USER / STALLED / REGRESS / brake**: 멈춘 이유 + 현재 남은 finding(등급 내림차순) + 다음 행동 후보(고쳐서 재개 / 이 등급 안고 통과 승인 / 작업 정의 재정렬)를 사람에게 핑. 이 경우 코드는 마지막 maker 시도 상태로 워크트리에 남는다.
-- 종료 후(특히 PASS·사람 멈춤 모두) `/looping lessons` 로 이 루프의 `history.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 사람에게 제안한다(선순환 닫기). 강제 아님.
+- 종료 후(특히 PASS·사람 멈춤 모두) `/loop-lessons` 로 이 루프의 `history.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 사람에게 제안한다(선순환 닫기). 강제 아님.
 
 ### Step 5-1. 종료 정리 (런타임 상태 폐기)
 
@@ -163,7 +169,7 @@ echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDIC
 rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
 ```
 
-- **PASS(수렴)**: 결과 보고 → (선택) `/looping lessons` → 그 다음 폐기. 깨끗이 비운다.
+- **PASS(수렴)**: 결과 보고 → (선택) `/loop-lessons` → 그 다음 폐기. 깨끗이 비운다.
 - **사람 멈춤(AWAIT_USER/STALLED/brake)으로 재개 여지가 있으면 바로 폐기하지 않는다.** `stall.json`·`started.epoch` 가 남아 있어야 이어서 돌릴 수 있다(없으면 다음 시작이 INIT 로 리셋돼 정체 감지가 무력화). 사람이 그 작업을 닫기로 하면(고침 완료 또는 포기) 그때 lesson 종합 후 폐기.
 - 워크트리째 버리는 경우엔 `.loop/run/` 도 같이 사라지니 별도 폐기가 불필요하지만, **메인 체크아웃이나 워크트리를 남겨 둔 경우엔 이 단계가 정리를 보장**한다. 워크트리 수명에 기대지 않는다.
 
@@ -177,7 +183,7 @@ rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(�
 
 ## 백그라운드 세션 실행
 
-사람이 빠져도 루프가 계속 돌게 하려면 이 세션을 **백그라운드 잡**으로 띄운다. grill-me 로 spec 을 확정한 *그 세션에서* `/looping run` 을 걸고 사용자는 자리를 비운다. 루프가 PASS·brake·AWAIT_USER 에 닿으면 결과/호출을 남긴다. 케이스3 의 매력은 "이미 Claude 와 대화 중이니 그대로 맡긴다" 는 매끄러움이다 — grill-me → looping run 이 한 세션에서 이어진다.
+사람이 빠져도 루프가 계속 돌게 하려면 이 세션을 **백그라운드 잡**으로 띄운다. grill-me 로 spec 을 확정한 *그 세션에서* `/loop-run` 을 걸고 사용자는 자리를 비운다. 루프가 PASS·brake·AWAIT_USER 에 닿으면 결과/호출을 남긴다. 케이스3 의 매력은 "이미 Claude 와 대화 중이니 그대로 맡긴다" 는 매끄러움이다 — grill-me → loop-run 이 한 세션에서 이어진다.
 
 ## 트러블슈팅
 
@@ -193,8 +199,8 @@ rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(�
 
 ## Non-Goals
 
-- **1회 점검·보고** — 그건 `/looping review`(사람이 곧 루프). 이 스킬은 코드를 고치며 수렴까지 돈다.
-- **lesson → ANTIPATTERNS 반영** — 종료 후 별 스킬 `/looping lessons`(사람 승인 게이트)가 처리. 이 스킬은 history 만 남긴다.
+- **1회 점검·보고** — 그건 `/loop-review`(사람이 곧 루프). 이 스킬은 코드를 고치며 수렴까지 돈다.
+- **lesson → ANTIPATTERNS 반영** — 종료 후 별 스킬 `/loop-lessons`(사람 승인 게이트)가 처리. 이 스킬은 history 만 남긴다.
 - **회차별 토큰·달러 정밀 차단** — 케이스2 의 agent 헤드리스 드라이버 몫(세션 밖에서 회차마다 비용 확인). 케이스3 은 회차·시간·정체 + 종료 후 비용 백스톱.
 - **Sentry 자동 트리거** — 그건 케이스2. 이 스킬은 사람이 명시적으로 거는 핸드오프 입구(`disable-model-invocation`).
 - **severity 를 LLM 이 매기는 것** — 결정론 셸이 매긴다(같은 코드 = 같은 등급).
