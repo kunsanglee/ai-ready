@@ -95,6 +95,21 @@ assert_eq "final_verdict 노출"   "$(jq -r .final_verdict <<<"$les2")"   "PASS"
 assert_eq "baseline_passed 노출" "$(jq -r .baseline_passed <<<"$les2")" "true"
 rm -rf "$tmpd"
 
+# ── 7. BASE+LOCAL rubric 병합 override (plugin 핵심: 프로젝트가 자기 kind 를 LOCAL 로 더함) ──
+loctmp="$(mktemp -d)"; locrub="$loctmp/local.md"
+cat > "$locrub" <<'LOCALEOF'
+<!-- LOOP_RUBRIC:KINDS:BEGIN -->
+| kind_id | dimension | layer | base_severity | force_await | note |
+|---|---|---|---|---|---|
+| ddl-safety | runtime | gate | BLOCKER | always | LOCAL 전용 — BASE 엔 없음 |
+LOCALEOF
+printf '<!-- LOOP_RUBRIC:KINDS:END -->\n' >> "$locrub"
+ddl_in='{"findings":[{"id":"d","kind":"ddl-safety","dimension":"runtime"}]}'
+assert_eq "BASE 만: ddl-safety 모름 → runtime floor CRITICAL" "$(sev "$(printf '%s' "$ddl_in" | bash "$DIR/score.sh")" d)" "CRITICAL"
+assert_eq "BASE+LOCAL: ddl-safety override → BLOCKER"          "$(sev "$(printf '%s' "$ddl_in" | LOOP_RUBRIC_LOCAL="$locrub" bash "$DIR/score.sh")" d)" "BLOCKER"
+assert_eq "BASE+LOCAL: ddl-safety force_await → AWAIT_USER"    "$(printf '%s' "$ddl_in" | LOOP_RUBRIC_LOCAL="$locrub" bash "$DIR/score.sh" | bash "$DIR/decide.sh" | jq -r .verdict)" "AWAIT_USER"
+rm -rf "$loctmp"
+
 # ── 결과 ─────────────────────────────────────────────────────────
 echo "────────────────────────"
 echo "통과 $pass / 실패 $fail"
