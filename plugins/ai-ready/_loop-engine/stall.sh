@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 정체 감지: 등급 개수 벡터 사전식 비교 + best-ever floor. 사이클 간 상태 파일 유지.
 # Usage:
-#   decide.sh < scored.json | stall.sh --state .claude/loop/{ticket}/stall.json
+#   decide.sh < scored.json | stall.sh --state .loop/run/{ticket}/stall.json
 #   stall.sh --state <file> decide.json
 #
 # 입력(JSON): decide.sh 출력 (.counts.{CRITICAL,MAJOR,MINOR} 사용).

@@ -6,8 +6,8 @@
 # 마지막 사이클에 남은 finding 은 "받아들여진 것"이라 실수로 안 친다(통과 시점 MINOR 등).
 #
 # Usage:
-#   lessons.sh --history .claude/loop/{ticket}/history.jsonl
-#   lessons.sh .claude/loop/{ticket}/history.jsonl
+#   lessons.sh --history .loop/run/{ticket}/history.jsonl
+#   lessons.sh .loop/run/{ticket}/history.jsonl
 #
 # 입력(JSONL): 한 줄 = 한 사이클. 오케스트레이터가 사이클마다 append.
 #   { "iteration": N, "verdict": "...", "findings": [ <score.sh 출력 원소>, ... ] }
@@ -23,7 +23,7 @@
 #                     first_seen_iteration, last_seen_iteration, persisted_cycles,
 #                     evidence_sample } ] }
 #
-# 이 출력은 .claude/loop/{ticket}/ 휘발성. loop-lesson-synthesizer 에이전트가
+# 이 출력은 .loop/run/{ticket}/ 휘발성. loop-lesson-synthesizer 에이전트가
 # 출처2(전자=사람 대화 / 후자=PR 코멘트)와 묶어 ANTIPATTERNS 후보 초안을 만든다(사람 승인 필수).
 # 영구 중간 레지스트리(옛 docs/loop/lessons/)는 없다 — 영구 지식층은 ANTIPATTERNS 하나.
 
