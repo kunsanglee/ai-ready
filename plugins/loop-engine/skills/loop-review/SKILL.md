@@ -1,6 +1,12 @@
-# looping review — 1회 점검 보고서 (서브커맨드)
+---
+name: loop-review
+description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(기본 origin/main..HEAD)을 단일 loop-checker 로 한 번 적대적 점검해 등급 내림차순 보고서를 낸다. 코드를 고치지 않는다(사람이 곧 루프). 채점은 결정론 셸(BASE/LOCAL rubric) — 무인 루프와 같은 판정 기준을 사람이 미리 본다. 호출 /loop-review [--html]. Use this skill when the user says "/loop-review", "loop 리뷰", "검수 한 번", "이 변경 점검", or wants a one-shot adversarial review with the loop's rubric. 수렴까지 맡기면 /loop-run.
+disable-model-invocation: true
+---
 
-> 우산 스킬 `looping` 의 `review` 동작. 호출: `/looping review [--html]`. 디스패처는 같은 폴더 [`SKILL.md`](SKILL.md).
+# loop-review — 1회 점검 보고서
+
+> 무인 검증 loop 의 사람 입구(human-in-the-loop). 호출: `/loop-review [--html]`. 코드를 고치며 수렴까지 맡기면 `/loop-run`, 종료 후 교훈 수확은 `/loop-lessons`.
 
 무인 검증 loop 의 **사람 입구**다. 무인 드라이버가 돌리는 것과 **똑같은 단일 checker(`loop-checker`) + 결정론 채점 셸**을 사람이 한 번 돌려, 등급순 보고서를 받는다. 루프가 아니다 — checker 1회 → 채점 → 보고서로 끝난다. 무엇을 고칠지는 사람이 정한다.
 
@@ -12,19 +18,19 @@
 
 ## `/code-review` 와 차이
 
-| | `/looping review` | `/code-review` |
+| | `/loop-review` | `/code-review` |
 |---|---|---|
 | 점검자 | 단일 `loop-checker` 1회 | 5개 전문 에이전트 병렬 |
 | severity | 결정론 셸(rubric) — 같은 코드 = 같은 등급 | 각 에이전트가 매김 |
 | 쓰임 | 무인 loop 와 동일 판정을 사람이 미리 봄 | 폭넓은 다관점 진단 |
 
-둘은 보완재다. 무인 loop 에 올릴 코드를 그 loop 의 판정 기준으로 미리 보고 싶으면 `/looping review`, 다관점 깊이 진단이면 `/code-review`.
+둘은 보완재다. 무인 loop 에 올릴 코드를 그 loop 의 판정 기준으로 미리 보고 싶으면 `/loop-review`, 다관점 깊이 진단이면 `/code-review`.
 
 ## 호출 예시
 
 ```
-/looping review              # 현재 브랜치 origin/main..HEAD + uncommitted 점검 → markdown 보고서
-/looping review --html       # 같은 보고서를 자체완결 HTML 파일로
+/loop-review              # 현재 브랜치 origin/main..HEAD + uncommitted 점검 → markdown 보고서
+/loop-review --html       # 같은 보고서를 자체완결 HTML 파일로
 ```
 
 ## 작업 흐름
@@ -83,7 +89,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 `$SCORED` 의 findings 를 severity 내림차순(BLOCKER>CRITICAL>MAJOR>MINOR)으로 정렬해 보고서를 만든다. 기본은 markdown.
 
 ```
-## looping review 결과
+## loop-review 결과
 
 ### Verdict: {verdict}   (BLOCKER {n} / CRITICAL {n} / MAJOR {n} / MINOR {n})
 
@@ -107,7 +113,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 
 ### Step 4-Alt. HTML 출력 (`--html` 일 때만)
 
-`/code-review` 의 HTML 모드 규약을 그대로 따른다: 외부 의존성 없는 자체완결 단일 HTML 1개(CDN✗, inline `<style>`+`<script>`만), 경로 `/tmp/looping-review-{branch-slug}-{HHMMSS}.html`, 상단 verdict·counts 요약 카드, finding 카드(severity 색상 바 BLOCKER=red·CRITICAL=red·MAJOR=orange·MINOR=yellow, 파일경로 monospace, 복사 버튼), 인용 라인 외 코드 본문 복사 금지(라인+경로만). 산출 후 절대경로 + `file://` 안내.
+`/code-review` 의 HTML 모드 규약을 그대로 따른다: 외부 의존성 없는 자체완결 단일 HTML 1개(CDN✗, inline `<style>`+`<script>`만), 경로 `/tmp/loop-review-{branch-slug}-{HHMMSS}.html`, 상단 verdict·counts 요약 카드, finding 카드(severity 색상 바 BLOCKER=red·CRITICAL=red·MAJOR=orange·MINOR=yellow, 파일경로 monospace, 복사 버튼), 인용 라인 외 코드 본문 복사 금지(라인+경로만). 산출 후 절대경로 + `file://` 안내.
 
 ## 트러블슈팅
 
@@ -121,5 +127,5 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 ## Non-Goals
 
 - 루프·재시도·코드 수정 — 이 입구는 1회 점검+보고. 무인 자동 반복은 agent 프로젝트의 드라이버(human-on-the-loop).
-- lesson → ANTIPATTERNS 반영 — 별 스킬(`/looping lessons`)이 사람 승인 게이트로 처리.
+- lesson → ANTIPATTERNS 반영 — 별 스킬(`/loop-lessons`)이 사람 승인 게이트로 처리.
 - severity 를 LLM 이 매기는 것 — 결정론 셸이 매긴다(같은 코드 = 같은 등급).
