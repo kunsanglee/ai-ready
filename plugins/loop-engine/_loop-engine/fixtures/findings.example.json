@@ -1,0 +1,38 @@
+{
+  "ticket": "EXAMPLE-1",
+  "iteration": 1,
+  "findings": [
+    {
+      "id": "f1",
+      "kind": "n-plus-1",
+      "dimension": "runtime",
+      "location": "src/query/ListQueryService.kt:88",
+      "evidence": "루프 안에서 단건 조회를 반복 호출",
+      "weights": ["hotpath"]
+    },
+    {
+      "id": "f2",
+      "kind": "convention-violation",
+      "dimension": "convention",
+      "location": "src/api/RegisterController.kt:12",
+      "evidence": "컨벤션 위반 — 예외표에 없어 convention floor(MINOR) 로 채점",
+      "weights": []
+    },
+    {
+      "id": "f3",
+      "kind": "idor-self-resource",
+      "dimension": "security",
+      "location": "src/api/UpdateController.kt:40",
+      "evidence": "소유권 검증 없음(인증됐으나 자기 자원만 접근하는지 미확인)",
+      "weights": ["authz"]
+    },
+    {
+      "id": "f4",
+      "kind": "some-brand-new-runtime-smell",
+      "dimension": "runtime",
+      "location": "x/Y.kt:5",
+      "evidence": "예외표에 없는 새 패턴 — runtime floor(CRITICAL) 주 경로로 채점",
+      "weights": []
+    }
+  ]
+}

@@ -25,12 +25,15 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
 ## 적용 흐름
 
+> **핵심 원칙 — 문서는 AI 가 외과적으로 유지보수한다 (v0.5.0+).** 기계적 스크립트가 문서를 통째 재생성·덮어쓰지 않는다. 스크립트는 `--json` 으로 *사실만* 모으고(읽기 전용, 문서 안 씀), AI 가 그 사실과 *현재 문서*를 대조해 **새 항목만 더하고 바뀐 것만 고치며 사람이 정리한 그룹·순서·메모·산문은 그대로 둔다.** 변경은 사람 승인 후 `Edit`. 문서가 아예 없을 때만 사실로 초안을 통째 생성한다(보존할 게 없으므로). 의존 그래프처럼 AI 가 직접 쓰기 까다로운 것도, 스크립트가 *정확한 사실*(엣지 목록)을 주면 AI 가 그걸로 안전하게 쓴다.
+
 1. **목록화**: `audit.json` 의 `actions` 배열을 ROI 내림차순으로 읽고, 각 항목을 아래 매핑 테이블로 분류한다.
-2. **사용자에게 계획 제시**: top-N (기본 5) 액션의 적용 방법 (mechanical / judgment / skip) 을 표로 보여주고 진행 여부 확인.
+2. **사용자에게 계획 제시**: top-N (기본 5) 액션의 적용 방법 (maintain / judgment / mechanical / skip) 을 표로 보여주고 진행 여부 확인.
 3. **순서대로 실행**:
-   - mechanical → `Bash` 로 스크립트 호출, 결과 stdout 캡처, evidence 보고
-   - judgment → Claude 가 대상 파일을 읽고 초안을 작성, 사용자에게 보여주고 승인받은 뒤 적용
-   - skip → 이유와 함께 건너뛰기
+   - **maintain** (문서 외과 유지보수) → 스크립트 `--json` 으로 사실 수집(문서 안 씀) → AI 가 현재 문서 `Read` → 새 항목 추가/변경분 수정(나머지 보존) 제안 → 사용자 승인 → `Edit`. 문서 부재면 사실로 초안 생성.
+   - **judgment** → AI 가 대상을 읽고 초안 작성(스크립트 없음), 사용자에게 보여주고 승인받은 뒤 적용.
+   - **mechanical** (부수효과 없는 멱등 작업, 예: `install_hook.py`) → announce 후 실행, evidence 보고.
+   - **skip** → 이유와 함께 건너뛰기.
 4. **재평가**: 모두 끝나면 `ai-ready:audit` 의 `scripts/audit.py` 를 다시 돌려 점수 변화를 보고.
 
 ## 규칙 → 스크립트 매핑 테이블
@@ -40,26 +43,26 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | Rule name (audit.json 기준) | 처리 방법 | 명령 |
 |----------------------------|----------|------|
 | 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 50~150줄 짜리 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장 |
-| 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_module_map.py --target <T>` |
+| 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **maintain** | `inject_module_map.py --target <T> --json` 로 모듈 사실(경로·요약·가이드 존재) 수집 → AI 가 루트 CLAUDE.md '모듈 맵'·MODULE_MAP.md 에 새 모듈만 추가·바뀐 요약만 수정. 마커(`<!-- module-map -->`) 안 자동 영역만, 사용자 영역 보존 |
 | 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
 | 루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조 *(단일 모듈)* | **judgment** | Claude 가 루트 `CLAUDE.md` 의 '모듈 맵' 섹션에서 `docs/PACKAGES.md` lazy-load 진입 안내를 박는다 |
 | 패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션 *(단일 모듈)* | **mechanical+judgment** | `scaffold.py` 가 `scaffolds/PACKAGES.md` 초안 생성 → Claude 가 패키지별 TODO 라인을 패키지 코드 훑어 채움 → `docs/PACKAGES.md` 로 이동 |
 | 패키지 카탈로그 문서 적정 길이 (50~300줄) *(단일 모듈)* | **judgment** | Claude 가 카탈로그를 50~300줄 범위로 다이어트하거나 패키지별 항목을 보강 |
 | 논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈) | **judgment** | (1) 카탈로그 섹션이 부족하면 위 룰 흐름. (2) 도메인 패키지 표준 레이아웃 부족 시 Claude 가 누락 디렉토리 (controller/service/domain/repository) 정렬 제안 — *코드 이동 동반* 이라 사용자 명시 승인 필수 |
-| 인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_index.py --target <T> --out <T>/docs/INDEX.md` — **v0.2.0+**: 대상에 `.ai-ready/config.json` 이 있으면 frontmatter 기반 그룹화 + 한영 cross-reference + ADR 진화 그래프 자동 활성. **머지 충돌 방지**: 헤더에 생성일자·대상명·문서 개수 같은 휘발성 메타를 넣지 않아(내용 동일 → 재생성 결과 동일) 브랜치 간 충돌을 없애고, `<T>/.gitattributes` 에 `<index> merge=union` 룰을 idempotent 하게 추가해 동시 추가분을 git 이 자동 union 한다 |
-| 루트 CLAUDE.md 200줄 이하 | **mechanical+judgment** | thin index 패턴 권장: `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 lazy-load 트리거 표를 주입한 뒤, Claude 가 인라인된 detail 을 `docs/CONVENTIONS.md` / `docs/API_COMPATIBILITY.md` / `docs/ERROR_HANDLING.md` / `docs/GIT_WORKFLOW.md` / `docs/DDL_DML.md` 등으로 분리 (사용자 승인 후). **v0.2.0+**: `lazy-load:user-begin/user-end` 마커 안 사용자 수동 행은 절대 덮어쓰지 않음 (기존 마커 없는 표는 첫 실행 시 안전 마이그레이션) |
+| 인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md) | **maintain** | `gen_index.py --target <T> --json` 로 문서 목록·요약 사실 수집 → AI 가 docs/INDEX.md 에 새 문서만 추가·바뀐 요약만 수정(사람이 정리한 그룹·순서·메모 보존). **v0.2.0+**: `.ai-ready/config.json` 있으면 사실에 frontmatter 포함돼 그룹화 판단에 쓴다. 문서 부재 시에만 사실로 초안 통째 생성 |
+| 루트 CLAUDE.md 200줄 이하 | **maintain+judgment** | thin index 패턴: `inject_lazy_load_index.py --target <T> --json` 로 존재하는 detail 문서·트리거 사실 수집 → AI 가 루트 CLAUDE.md 의 lazy-load 표(자동 마커 안)에 새 트리거만 추가, `lazy-load:user-begin/user-end` 사용자 행은 절대 안 건드림. 그 뒤 Claude 가 인라인 detail 을 `docs/CONVENTIONS.md` 등으로 분리(사용자 승인 후) |
 | 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트. **보존 가드**: "도메인 설계 문서" 포인터 줄 (`docs/design/domain_{name}.md` 참조) 은 다이어트 대상에서 제외 — design 문서가 있는 도메인의 모듈엔 반드시 포인터가 남아야 한다 (불변식) |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
-| '사용 시점' 가이드 존재 | **mechanical+judgment** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/inject_lazy_load_index.py --target <T>` 로 루트 CLAUDE.md 에 lazy-load 트리거 표 주입 (감지된 docs/ 자동 매핑). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
+| '사용 시점' 가이드 존재 | **maintain+judgment** | `inject_lazy_load_index.py --target <T> --json` 로 트리거 사실 수집 → AI 가 루트 CLAUDE.md lazy-load 표(자동 마커 안)에 새 트리거 추가(사용자 행 보존). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
 | ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |
 | 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 (`<T>/docs/decisions/00NN-*.md`). *이미 design 통합 문서 등으로 결정을 기록 중이면* `.ai-ready/config.json` 의 `rubric.decision_records.dir_hints` 에 그 디렉토리를 선언해 인정시키는 게 우선 |
-| 네이밍 컨벤션 문서화 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/docs/NAMING.md --kind naming` |
-| 모듈 의존성 맵 / 다이어그램 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/gen_arch_diagram.py --target <T> --out <T>/docs/ARCHITECTURE.md` |
+| 네이밍 컨벤션 문서화 | **maintain** | `extract_section.py --target <T> --kind naming --json` 로 흩어진 네이밍 섹션 사실 수집 → AI 가 docs/NAMING.md 에 새 섹션만 추가·바뀐 것만 수정(사람이 다듬은 산문 보존). 부재 시에만 통째 생성 |
+| 모듈 의존성 맵 / 다이어그램 존재 | **maintain** | `gen_arch_diagram.py --target <T> --json` 로 정확한 의존 엣지·노드 사실 수집 → AI 가 그 엣지로 docs/ARCHITECTURE.md 의 Mermaid 를 갱신(엣지를 지어내지 않음, 스크립트가 준 것만). 사람이 더한 설명 산문 보존 |
 | 빌드 매니페스트로 의존 그래프 추출 가능 | **skip** | 빌드 시스템이 이미 커버 |
 | 모듈 간 API 계약 문서화 (OpenAPI/proto/contracts) | **judgment (대) ** | 큰 작업 — 추천만 하고 본격 도입은 별도 세션. *springdoc/springfox 처럼 코드에서 OpenAPI 를 런타임 생성 중이면* `.ai-ready/config.json` 의 `rubric.api_contracts.build_deps` 에 선언해 인정시키는 게 우선 |
 | 기계적 검증 훅 (pre-commit / AI 에이전트 hook) | **judgment** | AI 코딩 환경이면 `.claude/settings.json` PostToolUse(편집 후 ktlint/format)·PreToolUse(커밋 전 test/check) hook 을 먼저 제안. 추가 안전망으로 lefthook pre-commit / CI. 글로벌(~/.claude) 말고 *프로젝트* 설정에 둘 것 |
 | CI 설정 존재 + 테스트 참조 | **judgment** | CI provider 에 따라 다름 — Claude 가 추천 |
-| 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_section.py --target <T> --out <T>/docs/TESTING.md --kind testing` |
+| 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **maintain** | `extract_section.py --target <T> --kind testing --json` 로 흩어진 테스트 섹션 사실 수집 → AI 가 docs/TESTING.md 에 새 섹션만 추가·바뀐 것만 수정(사람이 다듬은 산문 보존). 부재 시에만 통째 생성 |
 | CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/install_hook.py --target <T>` |
 | CLAUDE.md 갱신 프로토콜 문서화 | **judgment** | Claude 가 루트 CLAUDE.md 에 "## 유지보수" 섹션 추가 제안 |
 | 매트릭스 문서 / 대시보드 존재 | **judgment (대)** | 측정 인프라 도입 — 별도 작업 |
@@ -75,18 +78,18 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
    ```
    다음 액션을 적용합니다 (ROI 순):
-   1. [mechanical] 인덱스 / MOC 파일 — gen_index.py 실행
-   2. [mechanical] 모듈 의존성 맵 — gen_arch_diagram.py 실행
-   3. [judgment]   '사용 시점' 가이드 — Claude 가 초안 작성
-   4. [skip]       빌드 매니페스트 — 이미 커버됨
+   1. [maintain]  인덱스 / MOC 파일 — gen_index.py --json → AI 외과 갱신
+   2. [maintain]  모듈 의존성 맵 — gen_arch_diagram.py --json → AI 가 Mermaid 갱신
+   3. [judgment]  '사용 시점' 가이드 — Claude 가 초안 작성
+   4. [skip]      빌드 매니페스트 — 이미 커버됨
    5. [mechanical] freshness Stop hook — install_hook.py 실행
    ```
-4. mechanical 중 **문서를 전체 생성/덮어쓰는** 액션(`gen_index.py` / `gen_arch_diagram.py` / `extract_section.py` / `inject_module_map.py`)은 일괄 실행하지 말고 **문서별 confirm 루프**로 — grill-me 식으로 한 번에 하나씩:
-   - 기존 파일이 있으면 `Read` 로 현재 내용 확보
-   - 스크립트를 `--dry-run`(지원 시) 또는 `--out` 을 `<T>/.ai-ready/proposed/` 임시 경로로 돌려 *새 제안* 생성 (실제 대상 직접 덮어쓰기 금지)
-   - 기존 vs 제안 **diff** 를 사용자에게 보여주고 추가/수정 항목을 확인 → 승인분만 실제 파일에 반영
-   - 스크립트가 `중단(사람 인수 추정)` 으로 거부(exit 3)하면, 그 문서는 사람이 관리 중이라는 신호다. `--force` 를 무심코 붙이지 말고, 사용자에게 알리고 어떻게 할지 물을 것
-   - 부수효과 없는 멱등 작업(`install_hook.py` 등)은 announce 후 바로 실행 가능
+4. **maintain** 액션(`gen_index` / `gen_arch_diagram` / `extract_section` / `inject_module_map` / `inject_lazy_load_index`)은 일괄 실행하지 말고 **문서별로 한 번에 하나씩** 외과적으로 유지보수한다 — grill-me 결:
+   - 스크립트를 `--json` 으로 돌려 *사실*(문서 목록·요약·의존 엣지·섹션·트리거)만 받는다. **문서를 직접 쓰지 않는다.**
+   - 대상 문서가 있으면 `Read` 로 현재 내용 확보. 없으면 사실로 초안을 만든다(보존할 게 없음).
+   - 사실과 현재 문서를 대조해 **무엇을 더하고 무엇을 고칠지** 결정한다: 새 항목만 추가, 바뀐 요약·엣지만 수정, **사람이 정리한 그룹·순서·메모·산문은 건드리지 않는다.** 마커(`<!-- ... -->`)로 감싼 자동 영역이 있으면 그 안만, 사용자 영역은 보존.
+   - 제안(추가/수정할 항목 목록)을 사용자에게 보여주고 승인받는다 → 승인분만 `Edit` 으로 반영. 통째 `Write` 는 문서 부재 시에만.
+   - 의존 그래프는 `--json` 의 정확한 엣지로 AI 가 Mermaid 를 쓴다(엣지를 지어내지 않는다 — 스크립트가 준 것만).
 5. judgment 항목들은 한 번에 하나씩:
    - 관련 파일 읽기 (`Read`)
    - 초안 작성 (메시지로 보여주기)
@@ -99,9 +102,10 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
 ## 안전 원칙
 
-- **사람 인수 문서 보호 (v0.4.0+)**: `gen_index` / `gen_arch_diagram` / `extract_section` / `inject_module_map` 은 출력 대상에 ai-ready 자동 생성 시그니처가 없으면(= 사람이 직접 손봤다는 신호) `중단` + exit 3 으로 *덮어쓰기를 거부* 한다 (`managed_doc` 가드). 이 거부는 **정상 동작**이다. `--force` 로 우회하기 전에 반드시 diff 를 확인하고 사용자 승인을 받을 것. 특히 NAMING.md / TESTING.md / ARCHITECTURE.md 처럼 사람이 산문으로 다듬은 문서가 대상이 되기 쉽다.
-- **모든 생성은 diff confirm 후 반영**: 문서 전체를 덮어쓰는 액션은 임시 출력 → diff → 사용자 승인분만 반영 (위 실행 가이드 4번). 무조건 덮어쓰지 않는다 — 어떤 ai-ready 문서든 사람이 손댔을 수 있다는 전제.
-- **항상 dry-run 우선**: `inject_module_map.py` 와 같이 기존 파일을 수정하는 스크립트는 가능한 경우 `--dry-run` 으로 미리 보여준 뒤 사용자 승인 → 실제 실행.
+- **문서 유지보수는 AI 외과적 (v0.5.0+)**: maintain 액션은 스크립트 `--json` 으로 사실만 받아 AI 가 현재 문서를 *부분 수정*한다. 스크립트가 문서를 통째 덮어쓰지 않는다. 사람이 정리한 그룹·순서·메모·산문은 보존이 기본이다 — 새 항목 추가와 바뀐 값 수정만 한다.
+- **통째 생성은 문서 부재 시에만**: 대상 문서가 없을 때만 사실로 초안을 `Write`. 이미 있으면 항상 `Edit` 으로 외과 수정. 기존 문서를 통째로 갈아엎지 않는다(사람 편집 손실 방지).
+- **사실은 스크립트, 판단은 AI**: 의존 엣지·문서 요약·섹션 추출 같은 *기계적 사실*은 스크립트가 정확히 모은다(`--json`). 그 사실을 문서에 어떻게 반영할지(추가/수정/보존)는 AI 가 사람 승인받아 정한다. AI 가 엣지·요약을 지어내지 않는다.
+- **레거시 쓰기 모드 가드 (v0.4.0)**: 스크립트의 `--out` 직접 쓰기 모드는 부재 문서 부트스트랩용으로 남아 있고, 여전히 `managed_doc` 가드로 사람 인수 문서(서명 없는)는 거부(exit 3)한다. apply 의 maintain 흐름은 이 쓰기 모드를 쓰지 않으니 보통 마주칠 일이 없다 — 마주치면 `--force` 우회 전에 사용자 확인.
 - **judgment 항목은 항상 사용자 승인**: AI 가 임의로 컨벤션을 결정하지 않도록.
 - **백업 권장**: 사용자가 git commit 하지 않은 변경이 있으면 적용 전에 안내.
 - **상위 N 만 적용**: 기본 5개. 사용자가 더 많이 원하면 명시적으로 요청.
@@ -113,5 +117,5 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 - 한 번에 여러 judgment 항목을 묶어서 처리 (사용자가 검토 못 함)
 - 사용자 동의 없이 git commit / push / 외부 시스템 호출
 - 적용 결과를 보지 않고 다음 액션으로 넘어가기 (실패해도 계속 가다가 누적 오류)
-- 가드의 `중단(사람 인수 추정)` (exit 3) 을 사용자 승인 없이 `--force` 로 우회
-- 기존 문서를 diff 확인 없이 통째로 덮어쓰기 (사람 편집 손실 위험)
+- 기존 문서를 통째로 덮어쓰기 — maintain 은 항상 `--json` 사실 + AI 외과 `Edit` (사람 큐레이션 보존)
+- 스크립트가 준 것 이상으로 의존 엣지·모듈 요약을 지어내기
