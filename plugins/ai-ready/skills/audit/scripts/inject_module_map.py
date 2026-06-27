@@ -23,6 +23,7 @@ ROI 액션 매핑: "루트 CLAUDE.md에 모듈 맵 섹션 추가" + "루트 CLAU
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re as _re
 import sys
@@ -193,16 +194,33 @@ def inject(text: str, new_section: str) -> str:
     return text.rstrip() + "\n\n" + new_section + "\n"
 
 
+def collect_facts(target: Path) -> dict:
+    """문서를 쓰지 않고 모듈 사실(경로·요약·가이드 존재)만 모아 반환.
+
+    AI 가 이 사실 + 현재 루트 CLAUDE.md '모듈 맵'·MODULE_MAP.md 를 읽고 새 모듈만 더하고
+    바뀐 요약만 고치며 사람 큐레이션을 보존한다.
+    """
+    modules = find_modules(target)
+    return {"target": str(target), "modules": [
+        {"module": str(m), "summary": get_module_summary(target, m),
+         "has_doc": has_module_doc(target, m)} for m in modules]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
     ap.add_argument("--dry-run", action="store_true", help="실제 파일은 수정하지 않고 결과만 출력")
+    ap.add_argument("--json", action="store_true", dest="json_mode",
+                    help="문서를 쓰지 않고 모듈 사실만 JSON 으로 출력(읽기 전용). apply 의 AI 외과 유지보수용")
     add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if args.json_mode:
+        print(json.dumps(collect_facts(target), ensure_ascii=False, indent=2))
+        return
     root_doc = find_root_doc(target)
     if root_doc is None:
         print(f"오류: 루트 CLAUDE.md / AGENTS.md를 찾을 수 없음. 먼저 생성하세요.", file=sys.stderr)

@@ -24,6 +24,7 @@ ROI 액션 매핑: "docs/INDEX.md (권장) 또는 wiki/index.md 생성" (Rule 1.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -481,25 +482,57 @@ def ensure_gitattributes_union(target: Path, out_path: Path) -> bool:
     return True
 
 
+def collect_facts(target: Path, cfg, allowed) -> dict:
+    """문서를 쓰지 않고 인덱스 사실(문서 경로·요약·frontmatter)만 모아 반환.
+
+    apply 의 AI 외과적 유지보수용 — AI 가 이 사실 + 현재 INDEX.md 를 읽고 새 항목만
+    더하고 바뀐 것만 고치며 사람 큐레이션을 보존한다. 렌더링·덮어쓰기는 하지 않는다.
+    """
+    if cfg is None:
+        collected = collect_docs(target, allowed)
+        docs = []
+        for category, items in collected.items():
+            for rel, summary in items:
+                docs.append({"path": str(rel), "summary": summary, "category": category})
+        docs.sort(key=lambda d: d["path"])
+        return {"target": str(target), "mode": "legacy", "docs": docs}
+    all_docs = collect_with_meta(target, allowed)
+    docs = [{"path": str(d["path"]), "summary": d["summary"],
+             "frontmatter": d.get("frontmatter") or {}} for d in all_docs]
+    return {"target": str(target), "mode": "config", "docs": docs}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, help="대상 코드베이스 경로")
-    ap.add_argument("--out", required=True, help="INDEX.md 출력 경로")
+    ap.add_argument("--out", help="INDEX.md 출력 경로 (--json 일 땐 불필요)")
+    ap.add_argument("--json", action="store_true", dest="json_mode",
+                    help="문서를 쓰지 않고 수집한 사실만 JSON 으로 출력(읽기 전용). apply 의 AI 외과 유지보수용")
     add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
-    out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
-    if not guard_overwrite(out_path, args.force):
-        sys.exit(3)
 
     cfg = load_config(target)
 
     # gitignore 존중: git repo 면 .gitignore 된 .md (생성 산출물·로컬 전용 파일) 를
     # 인덱싱에서 제외한다. 비-git 이면 None → 기존 walk 동작.
     allowed = gitignore_allowed_md(target)
+
+    # 읽기 전용 사실 모드 — 문서를 쓰지 않고 사실만 stdout 으로.
+    if args.json_mode:
+        print(json.dumps(collect_facts(target, cfg, allowed), ensure_ascii=False, indent=2))
+        return
+
+    if not args.out:
+        print("오류: --out 이 필요합니다 (--json 모드가 아니면). AI 외과 유지보수면 --json 으로 사실만 받으세요.",
+              file=sys.stderr)
+        sys.exit(2)
+    out_path = Path(args.out).resolve()
+    if not guard_overwrite(out_path, args.force):
+        sys.exit(3)
     if allowed is not None:
         print(f"gitignore 존중: ignore 되지 않은 .md {len(allowed)}개만 스캔 (생성 산출물 제외)")
     else:

@@ -1,0 +1,30 @@
+{
+  "name": "loop-engine",
+  "description": "무인 검증 loop 엔진 — maker→checker→결정론 채점(rubric)→decide→정체 감지 루프. 두 방아쇠(사람 핸드오프 /loop-run, Sentry 자동 드라이버)가 한 엔진을 공유한다. severity 는 LLM 이 아니라 채점 셸이 매겨 judge 일관성을 보장하고, brake(횟수·시간·토큰·비용 상한)로 무한 루프를 막는다. rubric 은 BASE(엔진 번들 generic 골격) + 프로젝트 LOCAL override 2단 병합이라 임의 언어·빌드 프로젝트에 적용된다. 스킬 /loop-run(자동 루프)·/loop-review(1회 점검)·/loop-lessons(교훈 승인) + loop-checker·loop-lesson-synthesizer 서브에이전트. 빌드/테스트/린트 명령·컨벤션 문서·티켓 패턴·베이스 브랜치는 loop-run 이 런타임에 감지한다(어댑터 파일 없음). 프로젝트 특유 심각도 규칙만 선택적 .loop/rubric.md(BASE 와 병합)로 두고, 지식층은 ai-ready 가 만든 docs/ANTIPATTERNS.md 를 읽고 거기에 덧붙인다.",
+  "version": "0.1.0",
+  "author": {
+    "name": "kunsanglee"
+  },
+  "homepage": "https://github.com/kunsanglee/ai-ready",
+  "repository": "https://github.com/kunsanglee/ai-ready",
+  "license": "MIT",
+  "keywords": [
+    "loop",
+    "autonomous-review",
+    "rubric",
+    "checker",
+    "maker-checker",
+    "무인 검증 루프",
+    "loop-engineering",
+    "claude-code"
+  ],
+  "skills": [
+    "./skills/loop-run",
+    "./skills/loop-review",
+    "./skills/loop-lessons"
+  ],
+  "agents": [
+    "./agents/loop-checker.md",
+    "./agents/loop-lesson-synthesizer.md"
+  ]
+}

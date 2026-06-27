@@ -16,6 +16,7 @@ ROI 액션 매핑:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -118,18 +119,51 @@ def render(kind: str, source_target: Path, results: list[tuple[Path, list[str]]]
     return "\n".join(lines).rstrip() + "\n"
 
 
+def collect_facts(target: Path, kind: str) -> dict:
+    """문서를 쓰지 않고 매칭 섹션 사실(소스 문서·헤딩·본문)만 모아 반환.
+
+    AI 가 이 섹션들을 보고 NAMING.md/TESTING.md 를 외과적으로 유지보수한다.
+    """
+    keywords = KEYWORD_SETS[kind]
+    docs = find_docs(target)
+    sections_out = []
+    for d in docs:
+        try:
+            text = d.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        try:
+            source = str(d.relative_to(target))
+        except ValueError:
+            source = str(d)
+        for section in extract_matching_sections(text, keywords):
+            sec_lines = section.splitlines()
+            heading = sec_lines[0] if sec_lines else ""
+            body = "\n".join(sec_lines[1:]).strip()
+            sections_out.append({"source": source, "heading": heading, "body": body})
+    return {"target": str(target), "kind": kind, "sections": sections_out}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True)
-    ap.add_argument("--out", required=True, help="출력 파일 경로")
+    ap.add_argument("--out", help="출력 파일 경로 (--json 일 땐 불필요)")
     ap.add_argument("--kind", required=True, choices=sorted(KEYWORD_SETS.keys()))
+    ap.add_argument("--json", action="store_true", dest="json_mode",
+                    help="문서를 쓰지 않고 매칭 섹션 사실만 JSON 으로 출력(읽기 전용). apply 의 AI 외과 유지보수용")
     add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
-    out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    if args.json_mode:
+        print(json.dumps(collect_facts(target, args.kind), ensure_ascii=False, indent=2))
+        return
+    if not args.out:
+        print("오류: --out 이 필요합니다 (--json 모드가 아니면).", file=sys.stderr)
+        sys.exit(2)
+    out_path = Path(args.out).resolve()
     if not guard_overwrite(out_path, args.force):
         sys.exit(3)
     keywords = KEYWORD_SETS[args.kind]
