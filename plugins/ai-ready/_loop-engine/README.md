@@ -1,7 +1,7 @@
-# `.claude/skills/_loop-engine/` — 무인 검증 loop 결정론 루브릭 적용 셸
+# `_loop-engine/` — 무인 검증 loop 결정론 루브릭 적용 셸 (ai-ready 플러그인 번들)
 
 checker(LLM)가 발견한 finding 에 **결정론으로 severity 를 매기고, 종료 verdict 와 정체 여부를 판정**한다.
-severity 는 checker 가 매기지 않는다 — 이 셸이 [`docs/loop/rubric.md`](../../../docs/loop/rubric.md) 의 표를 보고 매긴다.
+severity 는 checker 가 매기지 않는다 — 이 셸이 [`rubric.base.md`](./rubric.base.md)(BASE, 엔진 번들) + 프로젝트 LOCAL `.loop/rubric.md`(있으면 병합)의 표를 보고 매긴다.
 같은 코드엔 항상 같은 severity (judge 일관성).
 
 ## 데이터 흐름
@@ -24,12 +24,12 @@ history.jsonl  (오케스트레이터가 사이클마다 append: { iteration, ve
    ▼
 lessons.sh     마지막 사이클 대비 diff → "출처1" 실수(떴다가 고쳐진 finding) 추출
    ▼
-loop-lesson-synthesizer (.claude/agents)  출처1 + 출처2(전자=대화 / 후자=PR 코멘트) → ANTIPATTERNS 후보 초안
+loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자=대화 / 후자=PR 코멘트) → ANTIPATTERNS 후보 초안
    ▼
 사람 게이트     추가/수정/버림 → 승인분만 docs/ANTIPATTERNS.md(+ 필요 시 rubric 예외표 한 줄) 반영
 ```
 
-`rubric.md`(데이터, 사람 편집) 와 이 셸(로직)의 분리가 핵심. 표 한 줄 추가로 검증이 두꺼워진다.
+`rubric.base.md`(데이터, 사람 편집) 와 이 셸(로직)의 분리가 핵심. 표 한 줄 추가로 검증이 두꺼워진다.
 영구 지식층은 ANTIPATTERNS 하나 — 옛 `docs/loop/lessons/` 중간 레지스트리는 폐기됐다.
 
 ## 스크립트
@@ -50,7 +50,7 @@ loop-lesson-synthesizer (.claude/agents)  출처1 + 출처2(전자=대화 / 후�
 ./score.sh checker-output.json \
   | ./decide.sh \
   | tee verdict.json \
-  | ./stall.sh --state .claude/loop/CCE-1234/stall.json
+  | ./stall.sh --state .loop/run/CCE-1234/stall.json
 
 # 픽스처로 스모크 테스트
 ./score.sh fixtures/findings.example.json | ./decide.sh
@@ -76,7 +76,7 @@ loop-lesson-synthesizer (.claude/agents)  출처1 + 출처2(전자=대화 / 후�
 
 ## history.jsonl 계약 (lesson 흐름 입력)
 
-오케스트레이터가 사이클마다 한 줄(JSON)을 `.claude/loop/{ticket}/history.jsonl` 에 append 한다.
+오케스트레이터가 사이클마다 한 줄(JSON)을 `.loop/run/{ticket}/history.jsonl` 에 append 한다.
 한 줄 = 한 사이클. `findings` 는 그 사이클 `score.sh` 출력(severity 부여됨), `verdict` 는 `decide.sh` 결과.
 
 ```
@@ -88,13 +88,13 @@ loop-lesson-synthesizer (.claude/agents)  출처1 + 출처2(전자=대화 / 후�
 
 ```bash
 # 루프 종료 후 출처1 실수 추출 → 휘발성 수집 파일
-./lessons.sh --history .claude/loop/CCE-1234/history.jsonl > .claude/loop/CCE-1234/lessons-source1.json
+./lessons.sh --history .loop/run/CCE-1234/history.jsonl > .loop/run/CCE-1234/lessons-source1.json
 
 # 픽스처로 스모크 테스트
 ./lessons.sh fixtures/history.example.jsonl
 ```
 
-`.claude/loop/{ticket}/` 는 그 루프 한정 휘발성(gitignore). 종합 후 폐기 — 영구 보존은 사람이 승인한 ANTIPATTERNS 만.
+`.loop/run/{ticket}/` 는 그 루프 한정 휘발성(gitignore). 종합 후 폐기 — 영구 보존은 사람이 승인한 ANTIPATTERNS 만.
 
 ## 설계 제약
 
@@ -110,12 +110,13 @@ loop-lesson-synthesizer (.claude/agents)  출처1 + 출처2(전자=대화 / 후�
 - 정체 점수는 **가중 합 버리고** 등급 개수 벡터 사전식 + best-ever floor("직전 대비" 아님)라
   MINOR 희석·토글 왕복 게이밍을 코어만으로 차단.
 
-## 아직 없는 것 (다음 단계)
+## 오케스트레이션 (ai-ready 0.6.0+ 구현 완료)
 
-채점 엔진(score/decide/stall)·lesson 추출기(lessons)·에이전트(`.claude/agents/loop-checker`, `loop-lesson-synthesizer`)까지 있다.
-남은 건 이들을 묶는 오케스트레이션(별 단계, spec Next Steps 참조):
+위 부품(채점 셸 score/decide/stall·lesson 추출기 lessons·에이전트 loop-checker/loop-lesson-synthesizer)을 묶는 오케스트레이션은 ai-ready 플러그인의 **스킬**이 한다. 별도 `/loop` 스킬·`profile.env`·외부 게이트 스크립트(enum-converter-guard 등)는 두지 않는다 — 부품을 묶는 정책이 곧 스킬 본문이고, 게이트는 런타임 감지한 빌드·테스트 명령으로 스킬이 직접 돌린다.
 
-- 결정론 게이트(`enum-converter-guard.sh`, `timeout-guard.sh`) — checker 호출 전 컴파일·grep 게이트.
-- state 영속(`state.md` 직전 변경·미해결 지적·실패한 접근) + brake(반복·예산) + `profile.env`.
-- `history.jsonl` **producer** — 오케스트레이터가 사이클마다 `score.sh`+`decide.sh` 결과를 한 줄로 append(위 계약).
-- `/loop` 오케스트레이션 스킬 — 부품(게이트→checker→score→decide→stall→lessons→synthesizer→사람 게이트)을 묶는 정책.
+- **`/loop-run`** — 무인 자동 루프(사람 핸드오프, 케이스3). Step 0 에서 `detect_build.py` 로 빌드·테스트·린트 명령·티켓·베이스를 런타임 감지(어댑터 파일 없음), 매 사이클 brake(반복·시간) 선확인 → 컴파일·테스트 게이트 → loop-checker 1회 → `score|decide|stall` → verdict 분기 → maker 재진입. brake 값은 `rubric.base.md` PARAMS(`max_iterations` 10·`budget_minutes` 60 등) 단일 원천.
+- **`/loop-review`** — 1회 점검(사람이 곧 루프). checker 1회 + 채점 → 보고서. 코드 안 고침.
+- **`/loop-lessons`** — 종료 후 lesson 수확. `lessons.sh` 출력 + 사람·PR 지적을 loop-lesson-synthesizer 가 ANTIPATTERNS 후보 초안으로 만들고, 사람 승인분만 반영.
+- **케이스2(Sentry 무인)** — agent 봇이 `runLoopFix` 로 수정 worktree 에서 헤드리스로 `/loop-run` 을 띄워 같은 엔진을 돈다(케이스2 = 케이스3, 헤드리스 위임). brake 집행도 그 스킬이 한다.
+
+런타임 상태(`history.jsonl` producer·`stall.json` state·`started.epoch`)는 `/loop-run` 스킬이 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 에 사이클마다 append·갱신하고, 종료 시(lesson 종합 후) 폐기한다. `.loop/run/` 은 gitignore.
