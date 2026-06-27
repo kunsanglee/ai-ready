@@ -12,8 +12,8 @@ disable-model-invocation: true
 
 ## 🔌 plugin / 프로젝트 구조
 
-- 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다. checker·채점 셸·BASE rubric 은 plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위), 프로젝트 특유 LOCAL rubric 은 `$CLAUDE_PROJECT_DIR/.loop/rubric.md`(있으면 병합).
-- 의존: `agents/loop-checker.md`(점검, `loop-engine:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh` + `detect_build.py` 감지기), `_loop-engine/rubric.base.md`(BASE 루브릭). 전부 plugin 번들이라 별도 셋업 불필요. review 는 게이트를 안 돌려 빌드 명령이 불필요하고, 베이스 브랜치만 런타임 감지한다. 프로젝트에 `.loop/rubric.md` 가 있으면 LOCAL 로 병합해 점검 기준을 그 스택에 맞춘다(없으면 BASE 만).
+- 이 스킬은 `ai-ready` plugin 의 일부다(과거 별도 loop-engine plugin 이었으나 v0.6.0 에서 통합). checker·채점 셸·BASE rubric 은 plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위), 프로젝트 특유 LOCAL rubric 은 `$CLAUDE_PROJECT_DIR/.loop/rubric.md`(있으면 병합).
+- 의존: `agents/loop-checker.md`(점검, `ai-ready:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh` + `detect_build.py` 감지기), `_loop-engine/rubric.base.md`(BASE 루브릭). 전부 plugin 번들이라 별도 셋업 불필요. review 는 게이트를 안 돌려 빌드 명령이 불필요하고, 베이스 브랜치만 런타임 감지한다. 프로젝트에 `.loop/rubric.md` 가 있으면 LOCAL 로 병합해 점검 기준을 그 스택에 맞춘다(없으면 BASE 만).
 - 환경변수·외부 인증 없음(전부 로컬 git + 셸).
 
 ## `/code-review` 와 차이
