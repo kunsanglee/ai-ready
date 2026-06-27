@@ -10,10 +10,10 @@ disable-model-invocation: true
 
 무인 검증 loop 의 **사람 입구**다. 무인 드라이버가 돌리는 것과 **똑같은 단일 checker(`loop-checker`) + 결정론 채점 셸**을 사람이 한 번 돌려, 등급순 보고서를 받는다. 루프가 아니다 — checker 1회 → 채점 → 보고서로 끝난다. 무엇을 고칠지는 사람이 정한다.
 
-## 🔌 plugin / 프로젝트 어댑터 구조
+## 🔌 plugin / 프로젝트 구조
 
 - 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다. checker·채점 셸·BASE rubric 은 plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위), 프로젝트 특유 LOCAL rubric 은 `$CLAUDE_PROJECT_DIR/.loop/rubric.md`(있으면 병합).
-- 의존: `agents/loop-checker.md`(점검, `loop-engine:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh`), `_loop-engine/rubric.base.md`(BASE 루브릭). 전부 plugin 번들이라 별도 셋업 불필요. review 는 게이트를 안 돌려 프로젝트 어댑터(`.loop/adapter.env`)는 옵션 — 있으면 LOCAL rubric 을 병합해 점검 기준을 그 프로젝트에 맞춘다.
+- 의존: `agents/loop-checker.md`(점검, `loop-engine:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh` + `detect_build.py` 감지기), `_loop-engine/rubric.base.md`(BASE 루브릭). 전부 plugin 번들이라 별도 셋업 불필요. review 는 게이트를 안 돌려 빌드 명령이 불필요하고, 베이스 브랜치만 런타임 감지한다. 프로젝트에 `.loop/rubric.md` 가 있으면 LOCAL 로 병합해 점검 기준을 그 스택에 맞춘다(없으면 BASE 만).
 - 환경변수·외부 인증 없음(전부 로컬 git + 셸).
 
 ## `/code-review` 와 차이
@@ -52,7 +52,7 @@ git diff --staged --stat             # uncommitted (staged)
 
 - 원래 작업 정의(Step 1 요약, 1~3문장).
 - 작업 정의 문서 경로(있으면 design/티켓 경로, 없으면 "missing").
-- 비교 베이스: `$LOOP_BASE_BRANCH`(어댑터, 기본 `origin/main`).
+- 비교 베이스: `$LOOP_BASE_BRANCH`(Step 3 감지, 기본 `origin/main`).
 
 **maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
 
@@ -65,12 +65,10 @@ checker 는 마지막에 정확히 하나의 ```json 펜스 블록으로 `{base,
 ```bash
 ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
-# 프로젝트 어댑터가 있으면 LOCAL rubric 을 주입(없으면 BASE 만으로 점검). review 는 게이트를 안 돌려 어댑터는 옵션.
-[ -f "$PROJECT_ROOT/.loop/adapter.env" ] && { set -a; . "$PROJECT_ROOT/.loop/adapter.env"; set +a; }
-if [ -n "${LOOP_RUBRIC_LOCAL:-}" ]; then
-  case "$LOOP_RUBRIC_LOCAL" in /*) : ;; *) LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/$LOOP_RUBRIC_LOCAL" ;; esac
-  export LOOP_RUBRIC_LOCAL
-fi
+# 베이스 브랜치만 런타임 감지(review 는 게이트를 안 돌려 빌드 명령 불필요).
+LOOP_BASE_BRANCH="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT" | jq -r '.base_branch // "origin/main"')"
+# 프로젝트에 LOCAL rubric 이 있으면 BASE 와 병합(없으면 BASE 만으로 점검).
+[ -f "$PROJECT_ROOT/.loop/rubric.md" ] && export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"
 F=$(mktemp)                                  # checker JSON 저장
 # (위에서 추출한 {base,findings:[...]} 를 $F 에 기록)
 SCORED=$(bash "$ENG/score.sh" "$F")          # finding 마다 severity·await·base·kind_known 추가

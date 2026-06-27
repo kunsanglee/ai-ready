@@ -110,6 +110,18 @@ assert_eq "BASE+LOCAL: ddl-safety override → BLOCKER"          "$(sev "$(print
 assert_eq "BASE+LOCAL: ddl-safety force_await → AWAIT_USER"    "$(printf '%s' "$ddl_in" | LOOP_RUBRIC_LOCAL="$locrub" bash "$DIR/score.sh" | bash "$DIR/decide.sh" | jq -r .verdict)" "AWAIT_USER"
 rm -rf "$loctmp"
 
+# ── 8. detect_build.py 감지기 (런타임 어댑터 대체 — 빌드/스택/문서/티켓 감지) ──
+# 셸 채점과 별개의 Python unittest. 통과면 1 assert 가산, 실패면 출력 그대로 노출.
+if command -v python3 >/dev/null 2>&1; then
+  if det_out="$(python3 "$DIR/test_detect_build.py" 2>&1)"; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); printf 'FAIL  detect_build 감지기 테스트\n%s\n' "$det_out"
+  fi
+else
+  echo "SKIP  detect_build 테스트 — python3 미설치"
+fi
+
 # ── 결과 ─────────────────────────────────────────────────────────
 echo "────────────────────────"
 echo "통과 $pass / 실패 $fail"

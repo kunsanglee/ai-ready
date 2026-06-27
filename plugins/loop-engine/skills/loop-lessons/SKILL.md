@@ -12,12 +12,12 @@ disable-model-invocation: true
 
 선순환: loop 가 잡은 실수 → 사람 검증(여기) → 프로젝트 영구 지식층(`$LOOP_KNOWLEDGE_LAYER`, 예: `docs/ANTIPATTERNS.md`) → 다음 loop·세션이 그 자산을 읽고 같은 실수를 안 함.
 
-## 🔌 plugin / 프로젝트 어댑터 구조
+## 🔌 plugin / 프로젝트 구조
 
 - 이 스킬은 `loop-engine` plugin(ai-ready marketplace)의 일부다.
-- 의존(plugin 번들): `agents/loop-lesson-synthesizer.md`(후보 초안 작성, `loop-engine:` namespace), `_loop-engine/lessons.sh`(출처1 추출), `_loop-engine/test.sh`(rubric 변경 시 채점 회귀).
-- 반영 대상(프로젝트 델타, 어댑터가 경로를 줌): `$LOOP_KNOWLEDGE_LAYER`(영구 지식층 — 예: `docs/ANTIPATTERNS.md`), `$LOOP_RUBRIC_LOCAL`(LOCAL rubric — 새 kind 예외표). 둘 다 `.loop/adapter.env` 가 가리킨다.
-- 환경변수 없음(어댑터 env 외). 반영은 사람이 승인한 것만 그 프로젝트 파일에 기록.
+- 의존(plugin 번들): `agents/loop-lesson-synthesizer.md`(후보 초안 작성, `loop-engine:` namespace), `_loop-engine/lessons.sh`(출처1 추출), `_loop-engine/detect_build.py`(지식층·문서 경로 감지), `_loop-engine/test.sh`(rubric 변경 시 채점 회귀).
+- 반영 대상(프로젝트 델타, Step 1 감지가 경로를 줌): `$LOOP_KNOWLEDGE_LAYER`(영구 지식층 — ai-ready 가 만든 `docs/ANTIPATTERNS.md`), `$LOOP_RUBRIC_LOCAL`(LOCAL rubric `.loop/rubric.md` — 새 kind 예외표, 없으면 새로 만들 대상). 어댑터 파일은 없다 — 경로는 런타임 감지가 준다.
+- 환경변수 없음. 반영은 사람이 승인한 것만 그 프로젝트 파일에 기록. 지식층은 ai-ready 와 공동 저작하는 append-only 문서라 통째로 덮어쓰지 않고 항목을 덧붙인다.
 
 ## 절대 원칙
 
@@ -40,7 +40,10 @@ disable-model-invocation: true
   ```bash
   ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
   PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
-  [ -f "$PROJECT_ROOT/.loop/adapter.env" ] && { set -a; . "$PROJECT_ROOT/.loop/adapter.env"; set +a; }  # $LOOP_KNOWLEDGE_LAYER·$LOOP_RUBRIC_LOCAL 주입
+  # 반영 대상 경로를 런타임 감지(읽기 전용, 어댑터 파일 없음).
+  DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
+  LOOP_KNOWLEDGE_LAYER="$(printf '%s' "$DET" | jq -r '.knowledge_layer // ""')"   # ai-ready 가 만든 docs/ANTIPATTERNS.md
+  LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"                                # 있으면 병합 대상, 없으면 새 kind 추가 시 생성
   bash "$ENG/lessons.sh" --history <history.jsonl>
   ```
   (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다.
@@ -83,9 +86,9 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 
 사용자가 **추가**(또는 수정 후 승인)한 후보만 반영한다. 버림·보류는 아무 데도 안 쓴다.
 
-- **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(예: `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 추가한다. 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다.
+- **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(ai-ready 가 만든 `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 *덧붙인다*(append, 통째 덮어쓰기 금지 — ai-ready 와 공동 저작하는 문서). 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다. 감지된 지식층 경로가 비어 있으면(프로젝트에 `docs/ANTIPATTERNS.md` 부재) 사용자에게 어디에 둘지 묻는다 — 임의 생성 금지.
 - **모듈 CLAUDE.md 추가**(문턱 미달·모듈 고유): 해당 `{module}/CLAUDE.md` "절대 금지" 섹션에 짧게.
-- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL`, 예: `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "$CLAUDE_PLUGIN_ROOT/_loop-engine/test.sh"` 로 BASE 채점 회귀 0 확인.
+- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다(이것이 스택 특유 종류가 자라는 유일한 경로 — 별도 생성기 없음). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "$CLAUDE_PLUGIN_ROOT/_loop-engine/test.sh"` 로 BASE 채점 회귀 0 확인.
 - 반영 후 변경 파일·추가 항목을 사용자에게 1줄로 보고한다. 커밋은 사용자/별도 절차가 한다(이 스킬은 파일 기록까지).
 
 ## 트러블슈팅
