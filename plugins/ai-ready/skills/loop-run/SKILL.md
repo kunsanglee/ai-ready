@@ -1,7 +1,6 @@
 ---
 name: loop-run
 description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이 작업을 맡기고 빠지면 maker(고침)→checker(독립 점검)→결정론 채점(rubric)→정체·brake 판정을 루브릭 통과·예산 소진·사람 대기까지 반복한다. 코드를 고치며 N회 돈다. severity 는 LLM 이 아니라 채점 셸이 매겨 judge 일관성을 보장. 호출 /loop-run [회차]. Use this skill when the user says "/loop-run", "루프 돌려", "핸드오프 루프", "이 작업 루프로 수렴시켜", or wants the verification loop to autonomously fix and converge. 1회 점검만은 /loop-review, 종료 후 교훈 수확은 /loop-lessons.
-disable-model-invocation: true
 ---
 
 # loop-run — 사람 핸드오프 자동 루프
@@ -210,5 +209,5 @@ rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(�
 - **1회 점검·보고** — 그건 `/loop-review`(사람이 곧 루프). 이 스킬은 코드를 고치며 수렴까지 돈다.
 - **lesson → ANTIPATTERNS 반영** — 종료 후 별 스킬 `/loop-lessons`(사람 승인 게이트)가 처리. 이 스킬은 history 만 남긴다.
 - **회차별 토큰·달러 정밀 차단** — 케이스2 의 agent 헤드리스 드라이버 몫(세션 밖에서 회차마다 비용 확인). 케이스3 은 회차·시간·정체 + 종료 후 비용 백스톱.
-- **Sentry 자동 트리거** — 그건 케이스2. 이 스킬은 사람이 명시적으로 거는 핸드오프 입구(`disable-model-invocation`).
+- **Sentry 자동 트리거** — 그건 케이스2. 이 스킬은 사람이 명시적으로 거는 핸드오프 입구(케이스3)다.
 - **severity 를 LLM 이 매기는 것** — 결정론 셸이 매긴다(같은 코드 = 같은 등급).
