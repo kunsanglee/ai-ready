@@ -1,7 +1,6 @@
 ---
 name: loop-lessons
 description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 잡은 실수(history.jsonl diff)와 사람·PR 지적을 loop-lesson-synthesizer 가 영구 지식층 후보 초안으로 만들면, 한 번에 하나씩 추가/수정/버림을 사람에게 묻고 승인분만 반영한다. 호출 /loop-lessons [--history <경로>]. Use this skill when the user says "/loop-lessons", "lesson 종합", "교훈 반영", "안티패턴 후보", or wants to harvest a finished loop's mistakes into the knowledge layer. 자동 반영 없음 — 사람 승인이 의무.
-disable-model-invocation: true
 ---
 
 # loop-lessons — lesson 승인 게이트

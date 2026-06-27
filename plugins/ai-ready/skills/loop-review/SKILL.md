@@ -1,7 +1,6 @@
 ---
 name: loop-review
 description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(기본 origin/main..HEAD)을 단일 loop-checker 로 한 번 적대적 점검해 등급 내림차순 보고서를 낸다. 코드를 고치지 않는다(사람이 곧 루프). 채점은 결정론 셸(BASE/LOCAL rubric) — 무인 루프와 같은 판정 기준을 사람이 미리 본다. 호출 /loop-review [--html]. Use this skill when the user says "/loop-review", "loop 리뷰", "검수 한 번", "이 변경 점검", or wants a one-shot adversarial review with the loop's rubric. 수렴까지 맡기면 /loop-run.
-disable-model-invocation: true
 ---
 
 # loop-review — 1회 점검 보고서
