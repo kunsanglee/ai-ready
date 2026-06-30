@@ -269,7 +269,7 @@ def local_kinds_for_stack(target: Path, stack: list[str]) -> list[dict[str, str]
 
     각 종류는 BASE 와 병합돼 채점된다(같은 kind/dimension 은 LOCAL override). 전부 *후보* 다 —
     rubric.md 는 사람이 검토하는 문서이고, 맞지 않으면 지우면 된다.
-    1차 범위는 c8c 스택(Spring/JPA/PostgreSQL)만. 점진 확장.
+    1차 범위는 Spring/JPA/PostgreSQL 스택만. 점진 확장.
     """
     kinds: list[dict[str, str]] = []
     if "spring" in stack and _has_i18n_error_code(target):

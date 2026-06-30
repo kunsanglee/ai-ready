@@ -81,7 +81,9 @@ def git_changed_paths(target: Path, days: int = 90) -> list[str]:
             ["git", "-C", str(target), "log", f"--since={days}.days.ago", "--name-only", "--pretty=format:"],
             capture_output=True, text=True, timeout=30,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.SubprocessError):
+        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
+        # extract_antipatterns / gen_index 의 git 래퍼와 동일 폭(PermissionError 미처리 크래시 차단).
         return []
     if result.returncode != 0:
         return []
@@ -280,7 +282,9 @@ def git_hot_files(target: Path, module_path: str, days: int = 90, top: int = 5) 
              "--name-only", "--pretty=format:", "--", module_path],
             capture_output=True, text=True, timeout=30,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.SubprocessError):
+        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
+        # extract_antipatterns / gen_index 의 git 래퍼와 동일 폭(PermissionError 미처리 크래시 차단).
         return []
     if result.returncode != 0:
         return []
@@ -304,7 +308,9 @@ def git_fix_subjects(target: Path, module_path: str, days: int = 180, top: int =
              "--pretty=format:%s", "--", module_path],
             capture_output=True, text=True, timeout=30,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.SubprocessError):
+        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
+        # extract_antipatterns / gen_index 의 git 래퍼와 동일 폭(PermissionError 미처리 크래시 차단).
         return []
     if result.returncode != 0:
         return []

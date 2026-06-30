@@ -186,6 +186,8 @@ The audit script looks at:
 - Anti-pattern extraction depends on commit message hygiene. Repos with vague messages produce thin output.
 - The skill is language-agnostic but the module detection prefers conventional layouts (Gradle multi-module, npm monorepo, Python `src/` layout, Go modules, Cargo workspaces).
 - HTML dashboard is intentionally dependency-free (vanilla CSS + inline SVG) — pretty enough but not interactive.
+- **Scores the cartography (map) layer only — not code health (sanitize)**: this audit measures whether the docs/map exist and self-maintain, not whether the code underneath is healthy (test coverage, dead code, code smells). A repo can score high on the map while the terrain is still a maze — a high score on unhealthy code is a *false signal*. Treat sanitize (tests / dead-code removal / consistent conventions) as a prerequisite you ensure separately; the map only helps once the terrain is sound.
+- **Does not measure token/cost**: the audit's "Outcome Metrics" category checks whether usage is *tracked*, not the cost itself. There is no session-log parser or cache-hit dashboard here — use `ccusage` / RTK `gain` for that.
 
 ## Re-running
 

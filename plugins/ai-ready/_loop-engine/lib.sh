@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# c8c-api 무인 검증 loop — 결정론 루브릭 적용 셸의 공용 부트스트랩.
+# ai-ready 무인 검증 loop — 결정론 루브릭 적용 셸의 공용 부트스트랩.
 # 첫 줄에서 source 한다: source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 #
 # 책임:
@@ -119,6 +119,15 @@ loop_dimfloor_json() {
     $1 == "dimension" || NF < 2 { next }
     { printf "{\"d\":\"%s\",\"f\":\"%s\"}\n", $1, $2 }
   ' | jq -s 'map({key: .d, value: .f}) | from_entries'
+}
+
+# WEIGHTS 표 → 허용 가중 키 JSON 배열 ["hotpath", ...]. 표가 없으면 빈 배열(score 가 레거시로 폴백).
+# 단일 열(weight_key)이라 첫 컬럼만 본다. 헤더 행과 빈 행은 건너뛴다.
+loop_weights_json() {
+  loop_table WEIGHTS | awk -F'\t' '
+    $1 == "weight_key" || $1 == "" { next }
+    { printf "{\"w\":\"%s\"}\n", $1 }
+  ' | jq -s 'map(.w)'
 }
 
 # PARAMS 표에서 한 값 조회. 없으면 비0 exit.

@@ -21,7 +21,9 @@
 #     "count": n,
 #     "mistakes": [ { kind, dimension, location, max_severity,
 #                     first_seen_iteration, last_seen_iteration, persisted_cycles,
-#                     evidence_sample } ] }
+#                     evidence_sample,
+#                     disappearance } ] }   # "resolved"(마지막이 PASS — 기준선 깨끗, 사라짐=고쳐짐 신뢰) |
+#                                           # "disappeared-unverified"(비통과 종료라 고침 미확정 — 약하게 취급)
 #
 # 이 출력은 .loop/run/{ticket}/ 휘발성. loop-lesson-synthesizer 에이전트가
 # 출처2(전자=사람 대화 / 후자=PR 코멘트)와 묶어 ANTIPATTERNS 후보 초안을 만든다(사람 승인 필수).
@@ -71,7 +73,8 @@ jq -s '
           first_seen_iteration: ([ .[].iteration ] | min),
           last_seen_iteration:  ([ .[].iteration ] | max),
           persisted_cycles:     ([ .[].iteration ] | unique | length),
-          evidence_sample:      ([ .[].evidence ] | last)
+          evidence_sample:      ([ .[].evidence ] | last),
+          disappearance:        (if $final_verdict == "PASS" then "resolved" else "disappeared-unverified" end)
         }
     )
   | sort_by(rank(.max_severity)) | reverse

@@ -93,7 +93,11 @@ EXCLUDE_DIRS = {
 # 명시적 DO-NOT 가이드를 나타내는 표현 (다국어)
 # 한국어는 word boundary 가 잘 동작 안 하므로 명령형 종결을 명시해 false positive 줄임
 DONOT_PATTERNS = [
-    r"\bDO NOT\b", r"\bDON'?T\b", r"\bMUST NOT\b", r"\bNEVER\b",
+    r"\bDO NOT\b", r"\bMUST NOT\b",
+    # NEVER / DON'T 는 흔한 단어라 산문 한가운데(예: "would never recommend")서 오탐난다.
+    # 줄 시작(텍스트 시작 또는 개행 뒤)·헤더/리스트 마커 뒤의 *가이드 위치* 에서만 인정한다.
+    # (regex_any 는 IGNORECASE 만 쓰고 MULTILINE 은 안 써서 ^ 가 텍스트 시작만 잡으므로 \n 을 함께 둔다.)
+    r"(?:^|\n)\s*(?:[#*\->]+\s*)?(?:NEVER|DON'?T)\b",
     r"절대\s*(?:하지|금지|하면)", r"(?:^|\s|[#*\-])금지(?:\b|[\s.…!,;:])",
     r"하지\s*마(?:라|세요|십시오|요)", r"하면\s*안\s*(?:됩|돼)",
     r"❌", r"⛔",
@@ -123,6 +127,23 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _has_min_content(path: Path, min_lines: int = 3) -> bool:
+    """파일이 실질 내용을 가졌는지(0바이트·스텁 문서 구분). 비-공백 줄 수가 min_lines 이상이면 True.
+
+    존재만으로 만점을 주던 규칙(ANTIPATTERNS/NAMING/ARCHITECTURE/TESTING)이 빈 껍데기 문서에
+    점수를 주지 않게 하는 최소 품질 게이트. BOM 은 utf-8-sig 로 투명 제거.
+    """
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as f:
+            return sum(1 for ln in f if ln.strip()) >= min_lines
+    except OSError:
+        return False
+
+
+# 도메인 용어집(glossary) 후보 — 네이밍/용어 컨벤션 자산으로 인정(rule 3.3).
+GLOSSARY_CANDIDATES = ["docs/glossary.md", "docs/GLOSSARY.md", "GLOSSARY.md", "wiki/glossary.md"]
 
 
 def has_any_path(target: Path, candidates) -> list[str]:
@@ -357,6 +378,11 @@ class Rule:
             self.evidence.extend(evidence)
         if note:
             self.note = note
+        # RUBRIC 불변식: 부여 점수는 재검증 가능한 근거(파일 경로/측정)를 가져야 한다.
+        # 근거도 노트도 없이 점수를 주면 다음 실행에서 재검증 불가 → stderr 경고(점수는 유지).
+        if points > 0 and not self.evidence and not self.note:
+            print(f"경고: 규칙 '{self.name}' 에 근거 없이 {points}점 부여 — 재검증 불가(RUBRIC 불변식 위반)",
+                  file=sys.stderr)
         return self
 
     def to_dict(self):
@@ -571,7 +597,11 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
 
     r = Rule("ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재", 5)
     if scan["antipattern_docs"]:
-        r.award(5, [str(p.relative_to(target)) for p in scan["antipattern_docs"]])
+        ev = [str(p.relative_to(target)) for p in scan["antipattern_docs"]]
+        if any(_has_min_content(p) for p in scan["antipattern_docs"]):
+            r.award(5, ev)
+        else:
+            r.award(2, ev, note="존재하나 비어/스텁 — DO-NOT 항목을 채우면 만점")
     else:
         wiki_ap = target / "wiki" / "anti-patterns"
         if wiki_ap.is_dir() and any(wiki_ap.iterdir()):
@@ -586,14 +616,25 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
     rules.append(r)
 
     r = Rule("네이밍 컨벤션 문서화", 5)
-    if scan["naming_docs"]:
-        r.award(5, [str(p.relative_to(target)) for p in scan["naming_docs"]])
+    naming_doc = scan["naming_docs"][0] if scan["naming_docs"] else None
+    glossary_doc = next((target / c for c in GLOSSARY_CANDIDATES if (target / c).is_file()), None)
+    if naming_doc and _has_min_content(naming_doc):
+        ev = [str(p.relative_to(target)) for p in scan["naming_docs"]]
+        if glossary_doc:
+            ev.append(str(glossary_doc.relative_to(target)))
+        r.award(5, ev)
+    elif glossary_doc and _has_min_content(glossary_doc):
+        # 도메인 용어집(glossary)도 네이밍·도메인 용어를 코드와 매핑한 컨벤션 자산으로 인정.
+        r.award(5, [str(glossary_doc.relative_to(target))],
+                note="도메인 용어집(glossary) 인정 — 용어·한영 동의어·코드 위치 매핑")
+    elif naming_doc:
+        r.award(3, [str(naming_doc.relative_to(target))], note="네이밍 문서가 비어/스텁 — 채우면 만점")
     else:
         for d in scan["claude_docs"]:
             text = doc_text.get(d, "").lower()
             if "naming" in text or "네이밍" in text or "convention" in text or "컨벤션" in text:
                 r.award(3, [str(d.relative_to(target))],
-                        note="CLAUDE.md에 네이밍 언급 있음 (NAMING.md로 분리 권장)")
+                        note="CLAUDE.md에 네이밍 언급 있음 (NAMING.md / docs/glossary.md 로 분리 권장)")
                 break
     rules.append(r)
 
@@ -611,7 +652,11 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
 
     r = Rule("모듈 의존성 맵 / 다이어그램 존재", 5)
     if scan["arch_docs"]:
-        r.award(5, [str(p.relative_to(target)) for p in scan["arch_docs"]])
+        ev = [str(p.relative_to(target)) for p in scan["arch_docs"]]
+        if any(_has_min_content(p) for p in scan["arch_docs"]):
+            r.award(5, ev)
+        else:
+            r.award(2, ev, note="존재하나 비어/스텁 — 의존 그래프/다이어그램을 채우면 만점")
     rules.append(r)
 
     if is_single_module(modules):
@@ -763,8 +808,10 @@ def score_verification(target: Path, scan: dict, doc_text: dict) -> dict:
     ]
     test_doc = next((p for p, _ in test_candidates if p.exists()), None)
     test_label = next((label for p, label in test_candidates if p.exists()), None)
-    if test_doc:
+    if test_doc and _has_min_content(test_doc):
         r.award(4, [test_label])
+    elif test_doc:
+        r.award(2, [test_label], note="TESTING.md 존재하나 비어/스텁 — 위치·네이밍·단언 스타일을 채우면 만점")
     else:
         for d in scan["claude_docs"]:
             t = doc_text.get(d, "").lower()
@@ -942,7 +989,8 @@ ACTION_HINTS = {
     "아키텍처 의사결정 기록 (ADR / wiki/decisions)": (60, 3,
         "ADR/ 디렉토리를 시작하세요. 짧은 ADR 3~5개만 있어도 AI가 코드의 'why'를 이해하는 데 큰 도움이 됩니다."),
     "네이밍 컨벤션 문서화": (20, 3,
-        "NAMING.md를 만들거나 CLAUDE.md에 네이밍 컨벤션 섹션을 추가하세요."),
+        "NAMING.md(또는 도메인 용어집 docs/glossary.md)를 만들거나 CLAUDE.md에 네이밍·용어 섹션을 추가하세요. "
+        "용어집은 도메인 용어와 한영 동의어·코드 위치 매핑을 담아 AI 의 자연어 query 적중을 돕습니다."),
     "모듈 의존성 맵 / 다이어그램 존재": (45, 4,
         "ARCHITECTURE.md 또는 DEPENDENCIES.md를 만들고 Mermaid 다이어그램으로 모듈 의존성을 표현하세요."),
     "빌드 매니페스트로 의존 그래프 추출 가능": (0, 0,
@@ -1079,6 +1127,10 @@ def render_report(audit: dict) -> str:
     lines.append("## 다음 실행")
     lines.append("")
     lines.append("월 1회 재실행하세요. 절대 점수가 아닌 **점수 추이**에 주목합니다.")
+    lines.append("")
+    lines.append("`/ai-ready:apply` 로 액션을 반영한 변경은 `/loop-run`(수렴까지) 또는 1회 점검 `/loop-review` 로 "
+                 "검증하고, 거기서 잡힌 실수는 `/loop-lessons` 로 `docs/ANTIPATTERNS.md` 에 반영해 다음 audit 의 "
+                 "입력으로 되돌립니다 — audit→apply→verify→lessons→audit 순환.")
     return "\n".join(lines)
 
 
@@ -1155,7 +1207,9 @@ def render_readme(audit: dict) -> str:
     lines.append("1. `audit-report.md` 의 **ROI 우선순위 액션** 표를 위에서부터 본다.")
     lines.append("2. `/ai-ready:apply` 로 mechanical 액션을 일괄 실행한다 (모듈 가이드 scaffold, ARCHITECTURE.md 생성, ANTIPATTERNS 시드 등).")
     lines.append("3. judgment 액션은 Claude Code 세션에서 사용자 검수 후 적용한다.")
-    lines.append("4. 월 1회 재실행해 점수 추이를 `audit.json` 기반으로 비교한다.")
+    lines.append("4. apply 로 반영한 변경은 `/loop-run`(수렴까지) 또는 `/loop-review`(1회 점검)로 검증하고, "
+                 "잡힌 실수는 `/loop-lessons` 로 `docs/ANTIPATTERNS.md` 에 반영한다 (다음 audit 입력으로 환류).")
+    lines.append("5. 월 1회 재실행해 점수 추이를 `audit.json` 기반으로 비교한다.")
     lines.append("")
     lines.append("## 주의")
     lines.append("")

@@ -34,7 +34,7 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 
 ## 핵심 불변 (절대 어기지 않는다)
 
-1. **maker / checker 분리.** maker = 이 세션(오케스트레이터). checker = **매 사이클 새로 띄우는 `loop-checker` 서브에이전트**. checker 프롬프트에 **maker 의 구현 변명·합리화를 절대 넣지 않는다** — checker 는 diff·문서·ANTIPATTERNS 만 독립적으로 본다. 자기 코드를 자기가 후하게 보는 걸 구조로 막는 게 이 루프의 신뢰 근거다.
+1. **maker / checker 분리.** maker = 이 세션(오케스트레이터). checker = **매 사이클 새로 띄우는 `loop-checker` 서브에이전트**. checker 프롬프트에 **maker 의 구현 변명·합리화를 절대 넣지 않는다** — checker 는 diff·문서·ANTIPATTERNS 만 독립적으로 본다. 자기 코드를 자기가 후하게 보는 걸 막는 게 이 루프의 신뢰 근거다. 이 독립성은 별 컨텍스트 서브에이전트 + checker 의 Edit/Write 부재 + checker 본문의 "쓰기 계열 Bash 금지" 지시로 강제한다 — 도구 목록만으로 완벽히 보장되진 않으니(Bash 로 우회 가능) checker 에 쓰기 금지를 명시로 못박았다.
 2. **severity 는 셸이 매긴다.** checker 는 `(종류·차원·가중플래그·위치·근거·force_await)` 만 태깅. 등급·verdict 는 결정론 셸이 낸다. checker 가 "괜찮아 보임" 해도 셸 판정을 따른다.
 3. **게이트가 checker 보다 먼저, brake 가 평가보다 먼저.** 컴파일·테스트가 깨지면 checker 를 부르지 않고 즉시 maker 재진입. 매 사이클 시작에 brake(반복·시간) 부터 확인.
 4. **종료는 점수 합산이 아니라 severity 게이트.** `BLOCKER 0 AND CRITICAL 0` 이라야 PASS. 가중 합("총점 높으니 통과") 금지.
@@ -43,6 +43,8 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 ## brake (멈춤 장치) — 값은 rubric, 집행은 이 스킬
 
 brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)의 PARAMS 표가 단일 원천이다(프로젝트 LOCAL rubric 이 override 할 수 있다). 이 스킬이 `loop_param` 으로 읽어 **집행** 한다(집행은 회차를 가로지르는 주체의 몫 — 1회용 `/loop-review` 는 못 한다).
+
+> **집행 주체 주의(과장 금지)**: 아래 brake 중 *코드로 자가 집행* 되는 것은 `stall.sh`(정체) 한 곳뿐이다. 회차·시간·천장 brake 는 이 스킬을 모는 LLM 오케스트레이터가 **매 사이클 Step 1 의 brake 블록을 실제로 실행** 해야 강제된다 — 지시문이 아니라 실행에 달려 있다. 그래서 Step 1 의 brake 는 주석 의사코드가 아니라 실행 블록으로 둔다.
 
 | brake | 출처 | 이 스킬의 집행 |
 |---|---|---|
@@ -70,12 +72,24 @@ LOOP_TEST_CMD="$(printf '%s' "$DET" | jq -r '.test_cmd // ""')"
 LOOP_LINT_CMD="$(printf '%s' "$DET" | jq -r '.lint_cmd // ""')"
 LOOP_TICKET_REGEX="$(printf '%s' "$DET" | jq -r '.ticket_regex // "[A-Z]+-[0-9]+"')"
 LOOP_BASE_BRANCH="$(printf '%s' "$DET" | jq -r '.base_branch // "origin/main"')"
+# 베이스 ref 가 실제 존재하는지 확인 — 오감지하면 빈 diff 가 거짓 PASS 로 둔갑한다(채점이 빈 입력을 PASS 로 처리).
+if ! git rev-parse --verify --quiet "$LOOP_BASE_BRANCH^{commit}" >/dev/null 2>&1; then
+  echo "loop: 베이스 ref '$LOOP_BASE_BRANCH' 확인 불가 — git fetch 후 재확인" >&2
+  git fetch --quiet origin 2>/dev/null || true
+  if ! git rev-parse --verify --quiet "$LOOP_BASE_BRANCH^{commit}" >/dev/null 2>&1; then
+    echo "loop: 베이스 브랜치 미확인 — 멈추고 사람 호출(LOOP_BASE_BRANCH=... 로 지정 필요). PASS 로 넘기지 말 것" >&2
+    exit 3
+  fi
+fi
 LOOP_KNOWLEDGE_LAYER="$(printf '%s' "$DET" | jq -r '.knowledge_layer // ""')"
 LOOP_CONVENTION_DOCS="$(printf '%s' "$DET" | jq -r '(.convention_docs // []) | join(" ")')"
 # 프로젝트 특유 심각도 규칙은 선택적 LOCAL rubric. 있으면 BASE 와 병합 채점, 없으면 BASE 만으로 돈다.
 # 스택 특유 종류(예: postgres→ddl-safety)는 자동 생성하지 않는다 — 사람이 /loop-lessons 로 덧붙여 키운다.
 if [ -f "$PROJECT_ROOT/.loop/rubric.md" ]; then export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"; fi
-TICKET="$(git rev-parse --abbrev-ref HEAD | grep -oE "$LOOP_TICKET_REGEX" || echo loop)"
+# 티켓 키가 상태 디렉터리(LOOP_DIR)를 가른다. JIRA 키 없을 때 'loop' 단일 폴백은 동시 실행·다중
+# 워크트리에서 같은 LOOP_DIR 를 공유해 정체 상태(stall.json)가 충돌한다 — 브랜치 슬러그로 분리한다.
+TICKET="$(git rev-parse --abbrev-ref HEAD | grep -oE "$LOOP_TICKET_REGEX" || true)"
+[ -n "$TICKET" ] || TICKET="loop-$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
 LOOP_DIR="$PROJECT_ROOT/.loop/run/$TICKET"; mkdir -p "$LOOP_DIR"
 # 런타임 상태는 커밋 대상이 아니다 — .gitignore 에 .loop/run/ 멱등 추가(생성기가 없으니 여기서 보장).
 grep -qxF '.loop/run/' "$PROJECT_ROOT/.gitignore" 2>/dev/null || printf '.loop/run/\n' >> "$PROJECT_ROOT/.gitignore"
@@ -104,8 +118,18 @@ echo "loop-run 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack
 ITER=$(wc -l < "$HIST" 2>/dev/null | tr -d ' '); ITER=${ITER:-0}
 ELAPSED_MIN=$(( ( $(date +%s) - $(cat "$LOOP_DIR/started.epoch") ) / 60 ))
 echo "사이클 진입: 완료 $ITER 회 / 경과 ${ELAPSED_MIN}분"
-# brake: 반복·시간·천장. 도달했으면 평가 없이 종료(Step 5 의 '사람 호출'로).
-#   if [ "$ITER" -ge "$MAX_ITER" ] || [ "$ITER" -ge "$ABS_CEIL" ] || [ "$ELAPSED_MIN" -ge "$BUDGET_MIN" ]; then → 종료
+# brake: 반복·시간·천장. 주석 의사코드가 아니라 실행 블록이다 — 매 사이클 실제로 돌아야 강제된다.
+if [ "$ITER" -ge "$MAX_ITER" ] || [ "$ITER" -ge "$ABS_CEIL" ] || [ "$ELAPSED_MIN" -ge "$BUDGET_MIN" ]; then
+  echo "loop: brake 도달 (iter=$ITER/$MAX_ITER 천장 $ABS_CEIL, 경과 ${ELAPSED_MIN}/${BUDGET_MIN}분) — 평가 없이 종료, Step 5 사람 호출" >&2
+  # 더 진행하지 말고 Step 4 분기 2(brake) → Step 5 로.
+fi
+# 점검 대상이 실제로 있나 — 베이스 오감지·빈 작업이면 finding 0 이 거짓 PASS 로 둔갑한다(Step 3 채점은 빈 입력을 PASS 로).
+CHANGED=$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD 2>/dev/null | wc -l | tr -d ' ')
+DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+if [ "${CHANGED:-0}" -eq 0 ] && [ "${DIRTY:-0}" -eq 0 ]; then
+  echo "loop: 점검 대상 변경 0건 ($LOOP_BASE_BRANCH...HEAD + uncommitted) — PASS 아님. 베이스 브랜치 확인 필요, 멈추고 사람 호출" >&2
+  # 조용히 통과 금지 — Step 5 사람 호출로.
+fi
 # 게이트: 컴파일 먼저(빠름), 통과하면 변경 모듈 테스트(또는 전체).
 # 컴파일 게이트(빠름). 명령은 Step 0 감지가 준다. 빈 값이면 스킵하되 시끄럽게 알린다(silent skip 금지).
 if [ -n "${LOOP_BUILD_CMD:-}" ]; then eval "$LOOP_BUILD_CMD"   # 실패 → 즉시 maker 재진입, checker 안 부름

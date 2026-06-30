@@ -24,6 +24,7 @@ import audit  # noqa: E402
 import config_loader  # noqa: E402
 import dashboard  # noqa: E402
 import extract_antipatterns  # noqa: E402
+import install_hook  # noqa: E402
 import managed_doc  # noqa: E402
 import scaffold  # noqa: E402
 
@@ -219,10 +220,19 @@ class TestConfigAwareScoring(unittest.TestCase):
     def test_freshness_hook_excluded_from_verification(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
+            # 픽스처는 install_hook 이 실제로 써넣는 정규 경로를 그대로 쓴다(드리프트 방지).
             self._write(root, ".claude/settings.json", json.dumps(
                 {"hooks": {"Stop": [{"matcher": ".*", "hooks": [
-                    {"type": "command", "command": "$CLAUDE_PLUGIN_ROOT/.ai-ready/hooks/freshness_check.sh"}]}]}}))
+                    {"type": "command", "command": install_hook.HOOK_COMMAND}]}]}}))
             self.assertEqual(audit._ai_harness_verification_hooks(root), [])
+
+    def test_install_hook_command_matches_documented_path(self):
+        # install_hook 이 써넣는 명령은 SKILL.md / 복사본이 안내하는 경로와 같아야 한다.
+        # 프로젝트 settings.json Stop hook 은 프로젝트 컨텍스트라 $CLAUDE_PROJECT_DIR 만 해석된다.
+        self.assertEqual(
+            install_hook.HOOK_COMMAND,
+            "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh",
+        )
 
 
 class TestManagedDocGuard(unittest.TestCase):

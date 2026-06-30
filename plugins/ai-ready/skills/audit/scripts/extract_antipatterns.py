@@ -67,7 +67,9 @@ def run_git(target: Path, args: list[str], timeout: int = 60) -> str:
             ["git", "-C", str(target), *args],
             capture_output=True, text=True, timeout=timeout,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.SubprocessError):
+        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
+        # gen_index 의 git 래퍼와 동일 폭으로 통일(PermissionError 미처리 크래시 차단).
         return ""
     if result.returncode != 0:
         return ""
