@@ -20,7 +20,8 @@
 #      kind·dimension 인덱싱은 null-safe(`// ""`) — 필드 누락이 jq 크래시로 배치 전체를 날리지 않게.
 #      모르는/누락 dimension 은 가장 관대한 MINOR 가 아니라 보수적으로 CRITICAL 로 떨어뜨린다.
 #      (dimension 은 checker 가 5값으로 못박은 닫힌 어휘라, 그 밖의 값은 정당한 신호가 아니라 LLM 오타다.)
-#   2. weights 비어있지 않으면 한 단계 상향 (CRITICAL→BLOCKER 등).
+#   2. weights 중 rubric WEIGHTS 표의 허용 키가 하나라도 있으면 한 단계 상향 (CRITICAL→BLOCKER 등).
+#      표 밖 키는 무시하고 weights_ignored 로 노출(임의 상향 차단). 허용 표가 없으면 레거시(비어있지 않으면 상향).
 #   3. force_await(always 종류 / finding 플래그) 또는 BLOCKER 면 await=true.
 #
 # 출력(JSON): 입력 findings 각각에 severity, await, base, kind_known 추가.
@@ -35,10 +36,12 @@ loop_validate_json "$input" \
   'score 입력은 {"findings":[...]} 객체여야 한다 (checker JSON 추출 실패 의심 — 사람 대기). 깨끗하면 {"findings":[]}'
 kinds="$(loop_kinds_json)"
 dimfloor="$(loop_dimfloor_json)"
+weights_allowed="$(loop_weights_json)"
 
 jq \
   --argjson kinds "$kinds" \
-  --argjson dim "$dimfloor" '
+  --argjson dim "$dimfloor" \
+  --argjson wal "$weights_allowed" '
   def levels: ["_", "MINOR", "MAJOR", "CRITICAL", "BLOCKER"];
   def rank($s): {"MINOR":1, "MAJOR":2, "CRITICAL":3, "BLOCKER":4}[$s] // 0;
   def upgrade($s): rank($s) as $r | (if ($r >= 1 and $r < 4) then $r + 1 else $r end) | levels[.];
@@ -47,11 +50,15 @@ jq \
     . as $f
     | ($kinds[$f.kind // ""]) as $k
     | (if $k then $k.base else ($dim[$f.dimension // ""] // "CRITICAL") end) as $base
-    | (if (($f.weights // []) | length) > 0 then upgrade($base) else $base end) as $sev
+    # 가중 키를 rubric 허용 집합(WEIGHTS 표)으로 거른다 — 표 밖 키는 무시(임의 상향 차단).
+    # 허용 표가 없으면(빈 배열) 레거시 동작 유지: 비어있지 않은 weights 면 상향.
+    | (($f.weights // []) | if ($wal | length) == 0 then . else map(select(IN($wal[]))) end) as $vw
+    | (if ($wal | length) == 0 then [] else (($f.weights // []) - $wal) end) as $vign
+    | (if ($vw | length) > 0 then upgrade($base) else $base end) as $sev
     | ( $sev == "BLOCKER"
         or (($k.force_await // "no") == "always")
         or (($f.force_await // false) == true)
       ) as $await
-    | $f + { severity: $sev, await: $await, base: $base, kind_known: ($k != null) }
+    | $f + { severity: $sev, await: $await, base: $base, kind_known: ($k != null), weights_ignored: $vign }
   ))
 ' <<<"$input"

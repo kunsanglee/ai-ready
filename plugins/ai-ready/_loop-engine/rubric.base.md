@@ -36,7 +36,18 @@ finding 이 아래 4개 가중 조건 중 **하나라도** 걸리면 기본 seve
 - `money` — 돈·정산 경로
 - `authz` — 인가 변경
 
-checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 비어있지 않으면 한 단계 올린다.
+checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 아래 허용 표의 키가 하나라도 있으면 한 단계 올린다(표 밖 키는 무시 — 임의 상향 차단). 아래 표가 가중 키의 단일 원천이며, 프로젝트가 LOCAL rubric 의 같은 마커로 키를 더할 수 있다.
+
+<!-- LOOP_RUBRIC:WEIGHTS:BEGIN -->
+
+| weight_key |
+|---|
+| hotpath |
+| operational_data |
+| money |
+| authz |
+
+<!-- LOOP_RUBRIC:WEIGHTS:END -->
 
 ## 자동화 금지 영역 (severity 무관 사람 대기)
 
@@ -145,9 +156,9 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 <!-- LOOP_RUBRIC:PARAMS:END -->
 
 > 정체 파라미터와 brake 파라미터를 한 표에 둔다 — 이 표가 loop 설정 전체의 단일 원천이다.
-> 정체 파라미터(`stall_threshold_*`, `regress_consecutive`)는 c8c-api 의 `stall.sh` 가 `loop_param` 으로 읽는다.
-> brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버
-> (agent 프로젝트)가 같은 `loop_param` 으로 읽는다. 드라이버는 c8c-api 워크트리를 들고 있어 이 읽기가 공짜다.
+> 정체 파라미터(`stall_threshold_*`, `regress_consecutive`)는 `stall.sh` 가 `loop_param` 으로 읽는다.
+> brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
+> 같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
 > 값은 단일 통일(10회 / $100 / 1M 토큰 / 60분) — 무인(케이스2)·핸드오프(케이스3) 같은 상한. 케이스별 프로파일은 두지 않는다.
 > 토큰(1M)이 실질 상한이고 $100 은 폭주 안전망(opus 단가상 1M 토큰을 넉넉히 덮어 토큰이 먼저 닿게). 케이스2 는 회차별 정확 집행,
 > 케이스3 은 회차·시간·정체 자가 집행 + 종료 후 비용 백스톱. 런별 오버라이드가 필요하면 드라이버 호출 시 env 로 전달해

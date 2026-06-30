@@ -309,7 +309,13 @@ def main():
     if not audit_path.is_file():
         print(f"오류: audit 파일이 없습니다: {audit_path}", file=sys.stderr)
         sys.exit(2)
-    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    try:
+        # utf-8-sig: BOM 투명 제거. ValueError 는 json.JSONDecodeError 를 포함 — 손상된
+        # audit.json 에 처리 없는 트레이스백 대신 깨끗한 오류로 종료(다른 스크립트 관례와 일치).
+        audit = json.loads(audit_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as e:
+        print(f"오류: audit.json 읽기/파싱 실패 — {e}", file=sys.stderr)
+        sys.exit(2)
     history = read_history(audit_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render_html(audit, history), encoding="utf-8")

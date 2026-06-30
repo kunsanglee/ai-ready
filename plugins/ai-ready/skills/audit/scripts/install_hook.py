@@ -18,17 +18,21 @@ import json
 import sys
 from pathlib import Path
 
-HOOK_COMMAND = "$CLAUDE_PLUGIN_ROOT/skills/audit/hooks/freshness_check.sh"
+# 프로젝트 settings.json 의 Stop hook 은 *프로젝트 컨텍스트*에서 실행돼 $CLAUDE_PROJECT_DIR 만
+# 안정적으로 해석된다($CLAUDE_PLUGIN_ROOT 는 플러그인 자기 hook 에만 보장 — 프로젝트 hook 에선 미해석).
+# audit.py 가 freshness_check.sh 를 <target>/.ai-ready/hooks/ 로 복사하므로 그 경로를 가리킨다.
+# 이 경로는 SKILL.md "Installing the Freshness Hook" + 복사본 헤더와 동일해야 한다(단일 경로).
+HOOK_COMMAND = "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh"
 
 
 def is_freshness_hook(entry: dict) -> bool:
     """이 hook entry가 우리 freshness hook인지 확인."""
-    # marker 는 실제로 써넣는 HOOK_COMMAND 와 일치해야 한다. HOOK_COMMAND 는
-    # "$CLAUDE_PLUGIN_ROOT/skills/audit/hooks/freshness_check.sh" 라 'ai-ready/' 가 없어서
-    # 옛 marker("ai-ready/skills/...")는 자기가 쓴 entry 조차 못 알아봐 멱등성·제거가 깨졌다.
+    # marker 는 신·구 경로 양쪽을 잡도록 공통 꼬리로 둔다 — 새 경로
+    # ($CLAUDE_PROJECT_DIR/.ai-ready/hooks/...)와 옛 경로($CLAUDE_PLUGIN_ROOT/skills/audit/hooks/...)
+    # 둘 다 인식해 멱등성·제거(옛 설치분 정리 포함)가 깨지지 않게 한다.
     if not isinstance(entry, dict):
         return False
-    marker = "skills/audit/hooks/freshness_check"
+    marker = "hooks/freshness_check"
     hooks = entry.get("hooks", [])
     if not isinstance(hooks, list):
         return False
@@ -45,14 +49,24 @@ def install(target: Path) -> str:
     settings_path = target / ".claude" / "settings.json"
     if settings_path.exists():
         try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as e:
-            return f"오류: settings.json JSON 파싱 실패 — {e}"
+            settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError) as e:
+            return f"오류: settings.json 읽기/파싱 실패 — {e}"
     else:
         settings = {}
 
-    hooks = settings.setdefault("hooks", {})
-    stop_hooks = hooks.setdefault("Stop", [])
+    # 손상된 settings 형식 방어: hooks 가 dict 가, Stop 이 list 가 아니면 빈 것으로 시작한다
+    # (잘못된 타입에 setdefault/append 를 부르면 AttributeError 로 크래시).
+    if not isinstance(settings, dict):
+        settings = {}
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+        settings["hooks"] = hooks
+    stop_hooks = hooks.get("Stop")
+    if not isinstance(stop_hooks, list):
+        stop_hooks = []
+        hooks["Stop"] = stop_hooks
 
     # 이미 설치됐는지 확인
     for entry in stop_hooks:
@@ -75,12 +89,18 @@ def uninstall(target: Path) -> str:
     if not settings_path.exists():
         return "settings.json 없음 — 변경 없음"
     try:
-        settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        return f"오류: settings.json JSON 파싱 실패 — {e}"
+        settings = json.loads(settings_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as e:
+        return f"오류: settings.json 읽기/파싱 실패 — {e}"
 
+    if not isinstance(settings, dict):
+        return "settings.json 형식이 object 아님 — 변경 없음"
     hooks = settings.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return "hooks 형식이 dict 아님 — 변경 없음"
     stop_hooks = hooks.get("Stop", [])
+    if not isinstance(stop_hooks, list):
+        return "Stop hooks 형식이 list 아님 — 변경 없음"
     before_len = len(stop_hooks)
     new_stop_hooks = [e for e in stop_hooks if not is_freshness_hook(e)]
     if len(new_stop_hooks) == before_len:

@@ -183,13 +183,32 @@ def build_root_stub(target: Path, modules: list[Path]) -> str:
 
 
 def inject(text: str, new_section: str) -> str:
-    """기존 섹션이 있으면 교체, 없으면 파일 끝에 추가."""
+    """기존 섹션이 있으면 교체, 없으면 파일 끝에 추가.
+
+    1) 마커가 있으면 마커 구간 교체.
+    2) 마커는 없지만 손수 작성한 `## 모듈 맵` 헤더 섹션이 있으면 그 헤더부터 다음 헤딩(또는 EOF)
+       까지를 마커 래핑된 새 섹션으로 *교체* 한다 — EOF 에 둘째 `## 모듈 맵` 을 덧붙여 영구 중복을
+       만들던 버그 차단(inject_lazy_load_index 의 마커 없는 기존 섹션 처리와 동일한 결).
+    3) 둘 다 없으면 파일 끝에 추가.
+    """
     if SECTION_BEGIN in text and SECTION_END in text:
         before, _, rest = text.partition(SECTION_BEGIN)
         if before.rstrip().endswith(SECTION_HEADER):
             before = before.rstrip()[: -len(SECTION_HEADER)].rstrip() + "\n"
         _, _, after = rest.partition(SECTION_END)
         return before.rstrip() + "\n\n" + new_section + after
+    # 마커 없는 손수 작성 `## 모듈 맵` 섹션이 있으면 그 자리를 교체(중복 추가 방지).
+    lines = text.split("\n")
+    for i, ln in enumerate(lines):
+        if ln.strip() == SECTION_HEADER:
+            j = i + 1
+            while j < len(lines) and not (lines[j].startswith("## ") or lines[j].startswith("# ")):
+                j += 1
+            before = "\n".join(lines[:i]).rstrip()
+            after = "\n".join(lines[j:]).strip("\n")
+            head = (before + "\n\n") if before else ""
+            tail = ("\n\n" + after + "\n") if after else "\n"
+            return head + new_section + tail
     # replace 분기와 동일한 spacing 으로 통일 — 첫 실행(append)과 재실행(replace) 출력이 일치(멱등).
     return text.rstrip() + "\n\n" + new_section + "\n"
 

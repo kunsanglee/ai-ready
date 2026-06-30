@@ -56,7 +56,7 @@ Rules below show both forms where they differ.
 | (Multi) Build manifests parseable for static dep graph (gradle/maven/npm/cargo)<br>(Single) Package catalog with ≥3 sections **AND** ≥60% of domain packages follow standard layout (`controller/ service/ domain/ repository/` — at least 3 of 4) | 5 |
 | Cross-module API contracts documented (OpenAPI, proto, contracts/; config `rubric.api_contracts.build_deps` accepts code-gen deps, e.g. springdoc/springfox that emit OpenAPI at runtime) | 5 |
 
-> **Why standard-layout check on single-module**: gradle 같은 빌드 시스템이 모듈 간 의존 그래프를 강제하는 것과 동등한 신호를 단일 모듈에서는 *패키지 간 구조적 일관성* 이 제공한다. 도메인 패키지가 같은 모양이면 (1) AI 가 패턴 모방으로 새 도메인을 추가하기 쉽고, (2) 패키지 경계가 명시적이라 순환 의존이 들어올 자리가 줄어든다.
+> **Why the multi vs single asymmetry is intentional**: this rule rewards a *machine-extractable dependency graph*. In a multi-module repo, ≥2 build manifests (gradle/maven/npm/cargo) **already encode inter-module dependencies natively** — the manifest *is* the graph, so its presence is the signal and no extra structural check is needed. A single-module repo has no such graph, so the equivalent signal must come from *structural consistency across packages*: when domain packages share the same shape (1) AI adds a new domain by mimicking the pattern, and (2) explicit package boundaries leave less room for cyclic dependencies. Hence single-module requires catalog + ≥60% standard layout to earn the same 5 points the manifest grants automatically — same signal, measured where it actually lives.
 
 ## 5. Verification Quality Gates (10)
 
@@ -94,12 +94,15 @@ Rules below show both forms where they differ.
 
 The full credit still requires an in-repo artifact so it can be re-verified next run.
 
+> **Scope note (cost is not measured here)**: this category checks whether AI effectiveness / usage is *tracked at all* (an in-repo metrics doc, or a pointer to an external dashboard). It does **not** measure token/cache cost itself — there is no session-log parser or cache-hit scorer in this plugin. Per-session cost/cache analysis is a separate concern (e.g. `ccusage`, RTK `gain`); this rubric only rewards that such tracking *exists*. Don't expect a token/cache dashboard from `/ai-ready:audit`.
+
 ---
 
 ## Scoring Notes
 
-- **Half-credit when partial**: e.g. if module docs cover 60% of modules, score 5 + (60-50)/30 * 3 ≈ 6 points (rounded down).
-- **Evidence required**: every awarded point must reference a file path or measurement that can be re-verified next run.
+- **Coverage-proportional credit**: module-doc coverage scores `round(coverage_ratio × 5)`, capped at the rule max of 5 — e.g. 60% coverage → `round(0.6 × 5)` = 3 points. The score is proportional to coverage and never exceeds the rule max (no bonus above max). (This matches `audit.py` rule 1.3; the earlier "60% → 6" example was impossible since 5 is the cap.)
+- **Minimum-content gate**: existence-based rules (ANTIPATTERNS, NAMING, ARCHITECTURE, TESTING) require the file to carry actual content (≥3 non-blank lines) for full credit. An empty / stub file scores partial (2/5 or 2/4) with a note — presence alone is not enough. A domain glossary (`docs/glossary.md`, `GLOSSARY.md`) is also credited under the naming rule (3.3).
+- **Evidence required**: every awarded point must reference a file path or measurement that can be re-verified next run. `Rule.award` emits a stderr warning if points are granted with neither evidence nor a note (invariant guard).
 - **Don't count root README** as an AI-ready doc unless it's structured for agents (has explicit "for AI" / "agent guidelines" section).
 - **One source per rule**: if `wiki/decisions/` has 12 ADRs, that still scores 5 points for rule 3.2, not 60.
 - **Self-output excluded**: `.ai-ready/` (the audit's own output directory) is excluded from scans. Module-CLAUDE.md scaffolds in `.ai-ready/scaffolds/` do NOT count toward coverage — they only count once moved to the actual module.

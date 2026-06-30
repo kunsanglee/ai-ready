@@ -101,7 +101,9 @@ def extract_summary(path: Path, max_chars: int = 120) -> str:
     """첫 비-블랭크, 비-헤딩, 비-frontmatter, 비-메타 라인을 한 줄 요약으로 반환."""
     import re as _re
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        # utf-8-sig: 선두 BOM 을 투명하게 제거(없으면 무해). BOM 이 남으면 i==0 의 '---'
+        # frontmatter 감지가 빗나가고 요약 줄에 BOM 이 박혀 INDEX 항목이 깨진다.
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return "(읽기 실패)"
     lines = text.splitlines()

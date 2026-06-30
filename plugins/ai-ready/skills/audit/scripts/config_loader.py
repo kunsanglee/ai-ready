@@ -89,7 +89,9 @@ def load_config(target: Path) -> dict[str, Any] | None:
     if not cfg_path.is_file():
         return None
     try:
-        raw = cfg_path.read_text(encoding="utf-8")
+        # utf-8-sig: BOM 이 있으면 투명하게 제거(없으면 무해). BOM 한 글자 때문에 config 전체가
+        # 조용히 버려지던 것을 막는다.
+        raw = cfg_path.read_text(encoding="utf-8-sig")
         cfg = json.loads(raw)
     except (OSError, json.JSONDecodeError) as e:
         # JSON 깨짐 — stderr 로 경고만 출력하고 None 반환 (기존 동작 유지).
