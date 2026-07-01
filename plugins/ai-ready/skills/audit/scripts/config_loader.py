@@ -71,6 +71,7 @@ from typing import Any
 __all__ = [
     "load_config", "CONFIG_FILE_NAME", "CONFIG_VERSION",
     "rubric_section", "decision_record_hints", "api_contract_build_deps",
+    "antipattern_doc_hints", "naming_doc_hints",
 ]
 
 
@@ -183,6 +184,24 @@ def api_contract_build_deps(cfg: dict | None) -> list[str]:
     """API 계약 rule(4.3) 에서 인정할 빌드 의존성 문자열 (예: springdoc)."""
     ac = _as_dict(rubric_section(cfg).get("api_contracts"))
     return [d.lower() for d in _as_list(ac.get("build_deps")) if isinstance(d, str)]
+
+
+def antipattern_doc_hints(cfg: dict | None) -> list[str]:
+    """안티패턴 rule(3.1) 에서 인정할 *추가* 문서 경로 (예: 통합 문서 docs/CONVENTIONS.md).
+
+    파일명 정확 매칭(ANTIPATTERNS.md) 밖에서, 안티패턴을 통합 문서에 두는 프로젝트가
+    그 경로를 선언할 때. 값은 target 기준 상대 파일 경로. 파일 존재 + 최소 내용만 보고
+    섹션 헤더 스캔은 하지 않는다(거짓양성 회피)."""
+    ap = _as_dict(rubric_section(cfg).get("antipatterns"))
+    return [h.strip("/").replace("\\", "/")
+            for h in _as_list(ap.get("doc_hints")) if isinstance(h, str)]
+
+
+def naming_doc_hints(cfg: dict | None) -> list[str]:
+    """네이밍 rule(3.3) 에서 인정할 *추가* 문서 경로 (예: 통합 문서 docs/CONVENTIONS.md)."""
+    nm = _as_dict(rubric_section(cfg).get("naming"))
+    return [h.strip("/").replace("\\", "/")
+            for h in _as_list(nm.get("doc_hints")) if isinstance(h, str)]
 
 
 # CLI 진단 — config 가 정상 로드되는지 확인

@@ -26,6 +26,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 from config_loader import (  # noqa: E402
     load_config, decision_record_hints, api_contract_build_deps,
+    antipattern_doc_hints, naming_doc_hints,
 )
 
 # --- Constants -------------------------------------------------------------
@@ -54,6 +55,10 @@ PACKAGE_CATALOG_CANDIDATES = (
 # 단일 모듈 프로젝트에서 도메인 패키지가 따라야 하는 표준 레이아웃 디렉토리.
 # 4개 중 3개 이상을 가지면 "표준 레이아웃 준수" 로 판정.
 STANDARD_LAYOUT_DIRS = ("controller", "service", "domain", "repository")
+
+# 하위 매니페스트 없이 워크스페이스 선언만 있는 모노레포(Nx/Turbo 등) 감지용.
+# 이들이 루트에 있으면 하위 빌드 매니페스트가 안 잡혀도 멀티 모듈로 본다.
+WORKSPACE_MARKERS = ("pnpm-workspace.yaml", "nx.json", "turbo.json", "go.work")
 
 # 단일 모듈 base package 자동 감지를 위한 JVM 소스 루트와 Application 마커.
 JVM_SOURCE_ROOTS = ("src/main/kotlin", "src/main/java")
@@ -213,12 +218,18 @@ def count_package_sections(catalog_text: str) -> int:
     return count
 
 
-def is_single_module(modules: list[Path]) -> bool:
-    """build manifest 가 루트에만 있는 단일 모듈 프로젝트인지."""
-    if not modules:
-        return True
-    non_root = [m for m in modules if m != Path(".")]
-    return len(non_root) == 0
+def is_single_module(modules: list[Path], target: Path | None = None) -> bool:
+    """build manifest 가 루트에만 있는 단일 모듈 프로젝트인지.
+
+    하위 매니페스트가 없더라도 워크스페이스 선언(pnpm-workspace.yaml·nx.json·turbo.json·
+    go.work)이 루트에 있으면 멀티 모듈로 본다 — Nx/Turbo 는 하위 프로젝트를 package.json
+    없이 project.json 등으로 정의해 매니페스트 스캔만으론 단일로 오분류되기 때문. target 을
+    안 넘기면 기존 동작(매니페스트 위치만)."""
+    non_root = [m for m in modules if str(m) not in (".", "")] if modules else []
+    single = len(non_root) == 0
+    if single and target is not None and any((target / w).is_file() for w in WORKSPACE_MARKERS):
+        return False
+    return single
 
 
 def _rglob_excluded(path: Path, root: Path) -> bool:
@@ -428,7 +439,7 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
     rules = []
     modules = scan["modules"]
     claude_docs = scan["claude_docs"]
-    single_module = is_single_module(modules)
+    single_module = is_single_module(modules, target)
     catalog_doc = find_package_catalog(target) if single_module else None
     catalog_text = read_text(catalog_doc) if catalog_doc else ""
     catalog_sections = count_package_sections(catalog_text) if catalog_text else 0
@@ -538,7 +549,7 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
     claude_docs = scan["claude_docs"]
     root_doc = next((d for d in claude_docs if d.parent == target), None)
     module_docs = [d for d in claude_docs if d.parent != target]
-    single_module = is_single_module(scan["modules"])
+    single_module = is_single_module(scan["modules"], target)
     catalog_doc = find_package_catalog(target) if single_module else None
 
     # 2.1 루트 CLAUDE.md 200줄 이하
@@ -618,7 +629,7 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
     }
 
 
-def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
+def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict, cfg: dict | None = None) -> dict:
     rules = []
 
     r = Rule("ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재", 5)
@@ -632,6 +643,14 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
         wiki_ap = target / "wiki" / "anti-patterns"
         if wiki_ap.is_dir() and any(wiki_ap.iterdir()):
             r.award(5, [str(wiki_ap.relative_to(target))])
+    # config 선언 통합 문서(예: docs/CONVENTIONS.md)에 안티패턴을 두는 프로젝트 인정 (D1).
+    # 파일 존재 + 최소 내용 게이트만 본다 — 섹션 헤더 스캔은 거짓양성이라 안 함.
+    if r.points == 0:
+        for hint in antipattern_doc_hints(cfg):
+            hp = target / hint
+            if hp.is_file() and _has_min_content(hp):
+                r.award(5, [hint], note="config antipatterns.doc_hints 선언 문서 인정")
+                break
     if r.points == 0:
         r.note = "안티패턴 문서 없음 — RUBRIC 권장 사항 참조"
     rules.append(r)
@@ -648,6 +667,7 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
     r = Rule("네이밍 컨벤션 문서화", 5)
     naming_doc = scan["naming_docs"][0] if scan["naming_docs"] else None
     glossary_doc = next((target / c for c in GLOSSARY_CANDIDATES if (target / c).is_file()), None)
+    hint_doc = next((target / h for h in naming_doc_hints(cfg) if (target / h).is_file()), None)
     if naming_doc and _has_min_content(naming_doc):
         ev = [str(p.relative_to(target)) for p in scan["naming_docs"]]
         if glossary_doc:
@@ -657,6 +677,9 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
         # 도메인 용어집(glossary)도 네이밍·도메인 용어를 코드와 매핑한 컨벤션 자산으로 인정.
         r.award(5, [str(glossary_doc.relative_to(target))],
                 note="도메인 용어집(glossary) 인정 — 용어·한영 동의어·코드 위치 매핑")
+    elif hint_doc and _has_min_content(hint_doc):
+        # config 선언 통합 문서(예: docs/CONVENTIONS.md)에 네이밍 규칙을 두는 프로젝트 인정 (D1).
+        r.award(5, [str(hint_doc.relative_to(target))], note="config naming.doc_hints 선언 문서 인정")
     elif naming_doc:
         r.award(3, [str(naming_doc.relative_to(target))], note="네이밍 문서가 비어/스텁 — 채우면 만점")
     else:
@@ -689,7 +712,7 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
             r.award(2, ev, note="존재하나 비어/스텁 — 의존 그래프/다이어그램을 채우면 만점")
     rules.append(r)
 
-    if is_single_module(modules):
+    if is_single_module(modules, target):
         # 단일 모듈 — 카탈로그 + 표준 레이아웃 일관성 둘 다 요구.
         # 단일 모듈의 *진짜* 모듈성 신호는 패키지 간 일관된 구조다.
         r = Rule("논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈)", 5)
@@ -710,9 +733,16 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
             r.award(5, evidence,
                     note="카탈로그 + 표준 레이아웃 일관성 모두 만족")
         elif catalog_doc and sections >= 3:
-            r.award(4, evidence,
-                    note=("카탈로그 OK / 표준 레이아웃 60% 미만 — 도메인 패키지에 "
-                          "controller/service/domain/repository 일관성을 보강하세요"))
+            if layout_total == 0:
+                # C4: 비-JVM 또는 Application 마커 부재 — 레이아웃을 측정하지 못한 것이지
+                # "60% 미만"이 아니다. 0점 침묵 대신 미측정임을 명시.
+                r.award(4, evidence,
+                        note=("카탈로그 OK / 표준 레이아웃 미측정 — JVM-Spring 웹 레이아웃"
+                              "(controller/service/domain/repository)이 아니면 카탈로그만으로 충분합니다"))
+            else:
+                r.award(4, evidence,
+                        note=("카탈로그 OK / 표준 레이아웃 60% 미만 — 도메인 패키지에 "
+                              "controller/service/domain/repository 일관성을 보강하세요"))
         elif catalog_doc:
             r.award(3, evidence,
                     note=f"카탈로그 섹션 {sections}개 (3개 이상 권장)")
@@ -849,6 +879,13 @@ def score_verification(target: Path, scan: dict, doc_text: dict) -> dict:
                 r.award(3, [str(d.relative_to(target))],
                         note="CLAUDE.md에 테스트 언급 있음 (TESTING.md로 분리 권장)")
                 break
+    # B2: 재현 명령 문서(COMMANDS.md)는 점수를 바꾸지 않고 note 로만 부기 — 에이전트가
+    # 빌드·테스트를 스스로 재현할 수 있는 신호(_has_min_content 로 스텁 제외).
+    for cmd_label in ("docs/COMMANDS.md", "COMMANDS.md"):
+        if (target / cmd_label).is_file() and _has_min_content(target / cmd_label):
+            extra = f"재현 명령 문서({cmd_label}) 발견 — 에이전트가 빌드·테스트를 스스로 재현 가능"
+            r.note = f"{r.note} · {extra}" if r.note else extra
+            break
     rules.append(r)
 
     return {
@@ -1094,6 +1131,8 @@ def build_action_list(category_results: list[dict]) -> list[dict]:
                 "category": cat["name"],
                 "rule": rule["name"],
                 "missing_points": missing,
+                "current_points": rule["points"],
+                "max_points": rule["max"],
                 "effort_minutes": effort,
                 "impact": impact,
                 "roi_score": round(roi, 2),
@@ -1101,7 +1140,9 @@ def build_action_list(category_results: list[dict]) -> list[dict]:
                 "current_evidence": rule["evidence"],
                 "current_note": rule["note"],
             })
-    actions.sort(key=lambda a: a["roi_score"], reverse=True)
+    # D5: roi 동점 시 impact 높은 항목 우선 — 정렬식(roi_score) 자체는 불변이라 기존
+    # 우선순위 대부분 보존, 동점 구간만 고임팩트로 정리.
+    actions.sort(key=lambda a: (a["roi_score"], a["impact"]), reverse=True)
     return actions
 
 
@@ -1157,11 +1198,12 @@ def render_report(audit: dict) -> str:
     if not audit["actions"]:
         lines.append("모든 카테고리 만점입니다. 30일 후 재실행해 신선도를 점검하세요.")
     else:
-        lines.append("| 순위 | ROI | 소요 | 카테고리 | 액션 |")
-        lines.append("|------|-----|------|----------|------|")
+        lines.append("| 순위 | ROI | 현재 | 소요 | 카테고리 | 액션 |")
+        lines.append("|------|-----|------|------|----------|------|")
         for i, a in enumerate(audit["actions"][:15], 1):
+            cur = f"{a.get('current_points', '?')}/{a.get('max_points', '?')}"
             lines.append(
-                f"| {i} | {a['roi_score']} | {a['effort_minutes']}분 "
+                f"| {i} | {a['roi_score']} | {cur} | {a['effort_minutes']}분 "
                 f"| {_sanitize_md_cell(a['category'])} | {_sanitize_md_cell(a['action'])} |"
             )
     lines.append("")
@@ -1316,7 +1358,7 @@ def run(target: Path, out_dir: Path) -> dict:
     categories = [
         score_navigation(target, scan, doc_text),
         score_doc_quality(target, scan, doc_text),
-        score_tribal_knowledge(target, scan, doc_text),
+        score_tribal_knowledge(target, scan, doc_text, cfg),
         score_dependency_tracking(target, scan),
         score_verification(target, scan, doc_text),
         score_freshness(target, scan, doc_text),
@@ -1324,7 +1366,7 @@ def run(target: Path, out_dir: Path) -> dict:
     ]
     total = sum(c["score"] for c in categories)
     now_utc = datetime.now(timezone.utc)
-    single_module = is_single_module(scan["modules"])
+    single_module = is_single_module(scan["modules"], target)
     catalog_doc = find_package_catalog(target) if single_module else None
     audit = {
         "schema_version": 3,  # 2 → 3: timestamp_local, history archive, outcome 부분점수, single-module mode + package catalog
