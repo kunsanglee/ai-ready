@@ -199,11 +199,12 @@ def count_package_sections(catalog_text: str) -> int:
       ### `packagename` ...
       ## packagename/ ...
     """
+    # 백틱으로 감싼 코드형 패키지명만 신뢰한다. em-dash 패턴(`## 이름 —`)은
+    # `## 개요 —`·`## Architecture —` 같은 산문 헤더까지 패키지 섹션으로 오인해
+    # 섹션 수를 부풀렸다(rule 1.3·4.2 점수 인플레) — 제거.
     patterns = [
         r"^#{2,4}\s+`[\w\-]+/`",       # ### `enrollment/`
         r"^#{2,4}\s+`[\w\-]+`",        # ### `enrollment`
-        r"^#{2,4}\s+[\w\-]+/\s+—",     # ### enrollment/ — ...
-        r"^#{2,4}\s+[\w\-]+\s+—",      # ### enrollment — ...
     ]
     count = 0
     for line in catalog_text.splitlines():
@@ -220,24 +221,48 @@ def is_single_module(modules: list[Path]) -> bool:
     return len(non_root) == 0
 
 
+def _rglob_excluded(path: Path, root: Path) -> bool:
+    """rglob 결과 path 가 root 기준 EXCLUDE_DIRS(build·target·.gradle 등) 안에 있으면 True.
+
+    scan_target 의 단일 walk 는 EXCLUDE_DIRS 를 거르지만 find_base_package·
+    find_domain_packages 는 별도 rglob 을 돌려 그 방어를 우회한다. build/generated 의
+    생성물(Q타입·생성 Controller 등)이 섞이면 clean/dirty 상태에 따라 점수가 흔들리므로
+    여기서 되거른다.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    return any(p in EXCLUDE_DIRS for p in parts)
+
+
 def find_base_package(target: Path) -> Path | None:
-    """JVM 소스 루트에서 Application 클래스가 위치한 base package 를 찾는다."""
+    """JVM 소스 루트에서 Application 클래스가 위치한 base package 를 찾는다.
+
+    build/generated 등 산출물은 제외하고, 마커가 여럿이면 경로가 가장 짧은(소스 루트에
+    가장 가까운) 것을 택해 결정성을 보장한다 — rglob 은 순서 미보장이라 첫 매칭을 그냥
+    쓰면 실행·머신마다 base package 가 달라진다.
+    """
     for src in JVM_SOURCE_ROOTS:
         root = target / src
         if not root.is_dir():
             continue
         for marker in APPLICATION_MARKERS:
             try:
-                hit = next(root.rglob(marker), None)
+                hits = [h for h in root.rglob(marker) if not _rglob_excluded(h, root)]
             except OSError:
                 continue
-            if hit is not None:
-                return hit.parent
+            if hits:
+                return min(hits, key=lambda p: (len(p.parts), str(p))).parent
     return None
 
 
 def find_domain_packages(base: Path) -> list[Path]:
-    """base package 의 직속 자식 중 Controller 파일을 *하나라도* 포함하는 도메인 패키지."""
+    """base package 의 직속 자식 중 Controller 파일을 *하나라도* 포함하는 도메인 패키지.
+
+    build/generated 등 산출물의 생성 Controller(예: build/gen/*Controller.kt)는 제외해
+    도메인 패키지 수가 clean/dirty 상태에 따라 부풀지 않게 한다.
+    """
     if not base.is_dir():
         return []
     out = []
@@ -245,7 +270,8 @@ def find_domain_packages(base: Path) -> list[Path]:
         if not child.is_dir() or child.name.startswith(".") or child.name in EXCLUDE_DIRS:
             continue
         try:
-            if next(child.rglob("*Controller.*"), None) is not None:
+            hits = (f for f in child.rglob("*Controller.*") if not _rglob_excluded(f, child))
+            if next(hits, None) is not None:
                 out.append(child)
         except OSError:
             continue
@@ -613,6 +639,10 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict) -> dict:
     r = Rule("아키텍처 의사결정 기록 (ADR / wiki/decisions)", 5)
     if scan["adr_dirs"]:
         r.award(5, scan["adr_dirs"][:3])
+    else:
+        r.note = ("ADR/decisions 디렉토리 미발견 — 결정을 docs/adr 또는 docs/decisions 에 두거나, "
+                  "docs/design 등 통합 디렉토리에 둔다면 .ai-ready/config.json 의 "
+                  "rubric.decision_records.dir_hints 로 선언하세요.")
     rules.append(r)
 
     r = Rule("네이밍 컨벤션 문서화", 5)
@@ -1021,15 +1051,26 @@ ACTION_HINTS = {
 
 
 def _validate_action_hints(category_results: list[dict]) -> None:
-    """T-8: 모든 rule.name 이 ACTION_HINTS 에 등록됐는지 smoke check.
+    """T-8: 모든 rule.name 이 ACTION_HINTS 에 등록됐는지 + 힌트가 가리키는 스크립트가 실재하는지 smoke check.
 
     의도된 skip rule(빌드 매니페스트)을 제외하고 미등록 룰이 있으면 stderr 경고.
+    또한 힌트 메시지가 언급하는 `*.py`(scaffold.py·extract_antipatterns.py 등)가 이 스크립트
+    디렉토리에 실제로 존재하는지 검사한다 — 파일명이 바뀌거나 삭제되면 리포트가 없는 명령을
+    실행하라고 안내하는 죽은 포인터가 되므로.
     """
     rule_names = {r["name"] for cat in category_results for r in cat["rules"]}
     intentional_skip = {"빌드 매니페스트로 의존 그래프 추출 가능"}
     missing = rule_names - set(ACTION_HINTS.keys()) - intentional_skip
     if missing:
         print(f"경고: ACTION_HINTS 미정의 룰 {len(missing)}건 — {sorted(missing)}", file=sys.stderr)
+
+    referenced = set()
+    for _effort, _impact, message in ACTION_HINTS.values():
+        referenced.update(re.findall(r"\b[\w\-]+\.py\b", message))
+    dead = sorted(s for s in referenced if not (_SCRIPT_DIR / s).is_file())
+    if dead:
+        print(f"경고: ACTION_HINTS 가 가리키는 스크립트 {len(dead)}건이 {_SCRIPT_DIR} 에 없음 — {dead}",
+              file=sys.stderr)
 
 
 # ROI 스케일 상수 — effort=15분/missing=5점/impact=5 일 때 ROI≈100 으로 정수 직관 범위
