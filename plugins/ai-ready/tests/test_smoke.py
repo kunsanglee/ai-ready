@@ -264,5 +264,64 @@ class TestManagedDocGuard(unittest.TestCase):
             self.assertTrue(managed_doc.guard_overwrite(Path(td) / "NEW.md", force=False))
 
 
+class TestScoreTotalsInvariant(unittest.TestCase):
+    """M2: 카테고리 max 합이 배점표(100)와 어긋나지 않는지 — 레이아웃 무관.
+
+    배점이 코드 Rule 리터럴과 RUBRIC.md 표에 이중으로 살아 드리프트할 수 있으므로,
+    실행 결과의 총합을 100 으로 고정해 한쪽만 바뀌면 CI 가 잡게 한다.
+    """
+
+    def test_category_max_sums_to_100_single_module(self):
+        with tempfile.TemporaryDirectory() as td:
+            result = audit.run(Path(td), Path(td) / ".ai-ready")
+            self.assertEqual(result["max_score"], 100)
+            self.assertEqual(sum(c["max"] for c in result["categories"]), 100)
+
+    def test_category_max_sums_to_100_multi_module(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for mod in ("core", "app"):
+                (root / mod).mkdir()
+                (root / mod / "build.gradle.kts").write_text("plugins {}", encoding="utf-8")
+            result = audit.run(root, root / ".ai-ready")
+            self.assertEqual(sum(c["max"] for c in result["categories"]), 100)
+
+
+class TestEvidenceInvariant(unittest.TestCase):
+    """M4: 점수를 받은 규칙은 재검증 가능한 근거(evidence 또는 note)를 가져야 한다.
+
+    Rule.award 는 근거 없는 점수에 stderr 경고만 낸다(비강제). 이 테스트가 그 불변식을
+    실효화한다 — 근거 없이 점수를 주는 규칙이 생기면 CI 가 실패한다.
+    """
+
+    def _assert_all_points_evidenced(self, result):
+        for cat in result["categories"]:
+            for rule in cat["rules"]:
+                if rule["points"] > 0:
+                    self.assertTrue(
+                        rule["evidence"] or rule["note"],
+                        f"규칙 '{rule['name']}' 이 근거 없이 {rule['points']}점 — 재검증 불가",
+                    )
+
+    def test_no_unevidenced_points_on_empty(self):
+        with tempfile.TemporaryDirectory() as td:
+            result = audit.run(Path(td), Path(td) / ".ai-ready")
+            self._assert_all_points_evidenced(result)
+
+    def test_no_unevidenced_points_on_rich_repo(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "CLAUDE.md").write_text(
+                "# proj\n절대 금지: mocks\nWhen to use: 이 문서\n"
+                "- [`docs/INDEX.md`](docs/INDEX.md)\n## 갱신 트리거\n", encoding="utf-8")
+            (root / "docs").mkdir()
+            (root / "docs" / "INDEX.md").write_text("# index\nlinks\nmore", encoding="utf-8")
+            (root / "docs" / "ANTIPATTERNS.md").write_text("# ap\n금지1\n금지2\n금지3\n", encoding="utf-8")
+            (root / "docs" / "NAMING.md").write_text("# naming\nRegisterX\nQueryX\nrule3\n", encoding="utf-8")
+            (root / "ARCHITECTURE.md").write_text("# arch\nmod graph\ndeps here\n", encoding="utf-8")
+            result = audit.run(root, root / ".ai-ready")
+            self._assert_all_points_evidenced(result)
+
+
 if __name__ == "__main__":
     unittest.main()
