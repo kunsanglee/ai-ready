@@ -1,6 +1,24 @@
 # ai-ready
 
-Claude Code 마켓플레이스 — 코드베이스의 AI 준비도(AI-readiness) 를 7카테고리 100점 루브릭으로 측정하고(audit), ROI 우선순위로 개선을 적용하고(apply), 변경을 무인 검증 루프로 점검하는(/loop-run·/loop-review·/loop-lessons) 단일 플러그인. v0.6.0 부터 과거 별도 plugin 이던 loop-engine 이 ai-ready 안으로 통합돼, 하나만 설치하면 audit→apply→verify 전 주기를 쓴다.
+**코드베이스를 AI 에이전트가 다루기 좋은 상태로 만들고, 그 위에서 코드 변경을 무인으로 검증·빌드아웃하는 Claude Code 플러그인.**
+
+세 가지를 하나의 플러그인으로 묶습니다.
+
+1. **audit** — 코드베이스의 AI 준비도(AI-readiness)를 7개 카테고리 100점 척도로 채점하고 개선 로드맵을 만듭니다.
+2. **apply** — 그 감사 결과에서 투자 대비 효과(ROI)가 높은 개선을 실제로 적용합니다.
+3. **무인 검증 루프**(loop-run · loop-review · loop-lessons · loop-build) — 코드 변경을 사람이 매 단계 지켜보지 않아도 자동으로 점검·수정·빌드아웃합니다.
+
+`audit → apply → verify` 한 주기를 하나만 설치해서 씁니다.
+
+---
+
+## 한눈에
+
+AI 에이전트(Claude 등)가 낯선 코드베이스에서 잘 일하려면, 사람에게 필요한 것과 같은 것이 필요합니다. 어디에 뭐가 있는지 알려주는 지도, 모듈별 맥락 문서, "이렇게 하지 마라"는 안티패턴, 의존 관계 그림, 검증 장치가 그것입니다. **audit** 은 이 다섯 가지가 얼마나 갖춰졌는지 점수로 측정하고, **apply** 는 부족한 것을 채워 넣습니다. 준비가 되면, **loop 계열** 스킬이 그 위에서 실제 코드 작업을 무인으로 돌립니다.
+
+> **이 문서 읽는 법** — 플러그인이 처음이면 위에서부터 읽으세요. 특정 스킬만 궁금하면 [스킬 6개](#스킬-6개) 로 바로 가세요. 무인 루프(loop 계열)를 볼 거라면 먼저 [알아둘 용어](#먼저-알아둘-용어-loop-계열) 를 훑어두면 뒤가 쉽습니다.
+
+---
 
 ## 설치
 
@@ -11,89 +29,219 @@ Claude Code 마켓플레이스 — 코드베이스의 AI 준비도(AI-readiness)
 
 ## 업데이트
 
-이미 설치한 사용자가 최신 버전으로 갱신하려면 세 명령을 *각각 한 줄씩* 입력 (slash command 는 한 줄에 한 명령만 받아서 주석을 같은 줄에 붙이면 marketplace 이름으로 오해석됩니다):
-
-마켓플레이스의 최신 `plugin.json` 정보 fetch:
+이미 설치했다면 아래를 **각각 한 줄씩** 입력합니다. 슬래시 명령은 한 줄에 하나만 받으므로 주석을 같은 줄에 붙이면 마켓플레이스 이름으로 오해석됩니다.
 
 ```
 /plugin marketplace update ai-ready
 ```
-
-plugin 자체를 새 version 으로 갱신:
-
 ```
 /plugin update ai-ready@ai-ready
 ```
-
-설치된 version 확인:
-
 ```
 /plugin list
 ```
 
-> Claude Code 는 `plugin.json` 의 `version` 필드가 바뀐 경우에만 새 버전으로 인지합니다. 이 repo 는 매 릴리즈에 version 을 bump 합니다.
+> Claude Code 는 `plugin.json` 의 `version` 필드가 바뀐 경우에만 새 버전으로 인지합니다. 이 저장소는 매 릴리스에 버전을 올립니다. 현재 버전은 **v0.8.1** 입니다.
 
-### 최근 주요 변경
+## 요구사항
 
-- **0.7.0** — *5관점 적대 리뷰 기반 보강 묶음*. (1) **채점 정직화**: 존재만으로 만점이던 규칙(ANTIPATTERNS/NAMING/ARCHITECTURE/TESTING)에 최소 내용 게이트(≥3 비-공백 줄) — 빈/스텁 문서는 부분점수. `DO NOT` 매칭에서 흔한 단어 `NEVER`/`DON'T` 를 줄 시작·헤더/리스트 위치로 좁혀 산문 오탐 제거. RUBRIC 의 half-credit 공식을 코드(`round(coverage×5)`, max 5)와 일치(불가능한 "60%→6" 예시 제거). 도메인 용어집(`docs/glossary.md`)을 네이밍 규칙에서 인정. `Rule.award` 가 근거 없는 점수 부여 시 경고(재검증 불변식). cat7 에 "비용 자체는 측정 안 함" 범위 명시. **채점값이 일부 달라지므로 추이 재기준 필요.** (2) **무인 루프 안전**: 베이스 ref 미검증·빈 diff 가 거짓 PASS 로 둔갑하던 경로에 가드(베이스 검증 + 변경 0건 시 멈춤). brake 의사코드를 실행 블록으로 승격 + 집행 주체(LLM) 명시. checker/synthesizer 에 "쓰기 계열 Bash 금지" 명문화(Edit/Write 부재만으론 독립성 미보장). 가중 키를 rubric `WEIGHTS` 허용표로 검증(표 밖 키 무시). 티켓 폴백을 브랜치 슬러그로 분리(동시 실행 상태 충돌 방지). `lessons.sh` 가 비통과 종료의 사라진 finding 을 `disappearance` 로 라벨링. (3) **배포 위생**: freshness 훅 설치 경로를 `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/` 로 통일(install_hook ↔ SKILL ↔ 복사본 일치, 런타임 미해석 버그 수정). `LICENSE`(MIT) 파일 추가. 엔진 파일의 개인 프로젝트명(c8c-api) 출처 제거. (4) **스크립트 견고성**: BOM 처리(gen_index·config_loader·install_hook·dashboard), dashboard 손상 JSON 크래시 가드, git 래퍼 예외 폭 통일(`OSError`+`SubprocessError` — PermissionError 포함), install_hook 의 settings.json 타입 가드, inject_module_map 의 마커 없는 기존 섹션 중복 생성 차단. 스모크 29/0 + 루프 채점 29/0.
-- **0.6.1** — loop 스킬 3개(`/loop-run`·`/loop-review`·`/loop-lessons`)의 frontmatter 에서 `disable-model-invocation: true` 제거. 이전엔 이 플래그가 모델의 자동 호출을 막고 모델 컨텍스트의 스킬 목록에서 숨겼다(사용자 슬래시 명령은 영향 없음). 이제 사용자 명령뿐 아니라 모델 컨텍스트·자동 트리거에도 노출된다. 기능 변화 없음(스킬 본문 동일).
-- **0.6.0** — *loop-engine 을 ai-ready 한 plugin 으로 통합*. 별도 plugin 이던 무인 검증 루프(maker→checker→결정론 루브릭 채점→decide→정체 감지)를 ai-ready 안으로 흡수했다. 스킬 `/loop-run`(수렴까지 도는 루프)·`/loop-review`(1회 적대적 점검)·`/loop-lessons`(잡은 실수를 사람 승인 거쳐 지식층에 반영) + 서브에이전트 `loop-checker`·`loop-lesson-synthesizer` + 결정론 채점 셸 `_loop-engine/` 이 audit/apply 와 같은 plugin 으로 배포된다. 따라서 ai-ready 하나만 설치하면 audit→apply→verify 전 주기를 쓴다(별도 설치 불필요). severity 는 LLM 이 아니라 채점 셸이 매기고, 빌드·테스트·린트 명령·티켓 패턴·베이스 브랜치는 `detect_build.py` 가 런타임에 감지해 어댑터 파일을 만들지 않는다(선택적 프로젝트 LOCAL `.loop/rubric.md` 만 BASE 루브릭에 병합). 루프의 지식층은 ai-ready 가 만드는 `docs/ANTIPATTERNS.md` — checker 가 읽고 `/loop-lessons` 가 덧붙인다. 채점 회귀 29/0 + ai-ready 스모크 28/0.
-- **0.5.0** — *apply 가 문서를 외과적으로 유지보수*. 문서를 만지는 5개 스크립트(`gen_index`/`gen_arch_diagram`/`extract_section`/`inject_module_map`/`inject_lazy_load_index`)에 `--json` 읽기 전용 사실 모드를 추가하고, apply 가 그 사실 + 현재 문서를 대조해 새 항목만 더하고 바뀐 것만 고치며 사람 큐레이션(그룹·순서·산문)을 보존한다 — 통째 덮어쓰기 폐기. 통째 생성은 문서 부재 시만. 의존 그래프는 스크립트가 정확한 엣지를 주고 AI 가 그걸로 Mermaid 를 렌더해 지어내지 않는다. 스모크 23 + apply_facts 5 = 28/0. stdlib-only 유지.
-- **0.4.2** — *INDEX 생성이 .gitignore 를 존중*. 이전에는 `gen_index` 가 대상 트리의 모든 `.md` 를 walk 로 수집해, .gitignore 된 산출물(생성된 http API 문서)이나 로컬 전용 파일(`.claude/commands`)까지 INDEX 에 유입됐다. 이제 git repo 면 `git ls-files --cached --others --exclude-standard` 로 *추적됐거나 미추적이지만 ignore 되지 않은* `.md` 집합을 받아 그 안의 문서만 인덱싱한다. .gitignore 된 산출물은 빠지고, git-tracked 화이트리스트(`.claude/skills` 등)는 그대로 남는다. 비-git 디렉토리면 fallback 으로 떨어져 기존 전체 walk 동작을 그대로 쓴다(하위 호환). walk 의 디렉토리 가지치기(EXCLUDE_DIRS·worktrees 제외)도 fallback 으로 유지. 기존 스모크 테스트 23개 통과(회귀 0). stdlib-only 유지.
-- **0.4.1** — *생성 스크립트 전반의 버그 수정 묶음 (기능 추가 없음)*. 13개 스크립트를 전수 검토(검토 + 적대적 검증)해 확정한 결함 30건 수정. 가장 큰 패턴은 walk-pollution — `gen_index` 만 `.claude/worktrees`(git worktree = repo 전체 복사본)를 제외했고 `audit` / `gen_arch_diagram` / `extract_antipatterns` / `inject_module_map` / `freshness_check` / `scaffold` / `extract_section` 7개가 같은 제외를 빠뜨려 worktree 가 있으면 모듈·문서가 9배로 부풀었다(`audit` 모듈 570 vs 실제 64). EXCLUDE_DIRS 를 8개 전부에 맞췄다. 그 외 — `config_loader` 가 잘못된 타입 config 에서 audit 전체를 크래시시키던 것을 타입 가드로 방어, `frontmatter_parser` 의 nested object 키 오염·BOM·콤마 스칼라 처리, `inject_lazy_load_index` 의 손상된 잔존 마커가 사용자 섹션을 파괴하던 버그(+dry-run 미리보기·테이블 이스케이프), `install_hook` 의 설치 감지 마커가 실제 명령과 불일치해 멱등성·제거가 깨지던 것, `gen_index` 의 콤마 module 섹션 분리·요약 속 링크 정제·cross_reference 콤마 스칼라, `extract_antipatterns`/`extract_section`/`scaffold`/`inject_module_map` 의 비멱등 출력, `audit.json` utf-8 인코딩, `dashboard` 의 스키마 어긋난 입력 방어. 기존 스모크 테스트 23개 통과(회귀 0). stdlib-only 유지.
-- **0.4.0** — *사람이 인수한 문서 보호*. 지금까지 생성 스크립트(`gen_index` / `gen_arch_diagram` / `extract_section` / `inject_module_map`)는 대상 파일을 전체 덮어썼다. 사람이 그 문서를 직접 손보며 자동 생성 시그니처를 지우면(예: `NAMING.md` / `TESTING.md` 를 권위 문서로 다듬음) 다음 apply 때 작업이 날아갔다. 신규 `managed_doc` 가드가 출력 대상에 자동 생성 시그니처(신형·구형 모두)가 없으면 덮어쓰기를 거부하고(`중단` + exit 3) `--force` 로만 우회하게 한다. 더해 `apply` 스킬은 mechanical 생성도 *문서별 diff confirm 루프*(임시 출력 → diff → 승인분만 반영)로 바꿔 무조건 덮어쓰지 않는다. 결정론 스크립트는 confirm 하지 않고(헤드리스 안전), 대화형 confirm 은 스킬 레이어가 담당하는 역할 분담. stdlib-only 유지.
-- **0.3.0** — `.ai-ready/config.json` 에 `rubric` 섹션 신설 — *채점 로직이 프로젝트 현실을 존중* 하도록 확장 (지금까지 config 는 INDEX/lazy-load 생성에만 작용하고 `audit.py` 채점은 무시했음). ① `rubric.decision_records.dir_hints` 로 ADR/PRD/api-doc 을 흡수한 통합 design 디렉토리(`docs/design/`)를 의사결정 기록(rule 3.2)으로 인정, ② `rubric.api_contracts.build_deps` 로 springdoc/springfox 처럼 코드에서 OpenAPI 를 런타임 생성하는 의존성을 API 계약(rule 4.3)으로 인정. 추가로 config 없이도 — 검증 게이트(rule 5.1)가 프로젝트 레벨 `.claude/settings.json` 의 편집/커밋 시점 lint/test/format hook 을 pre-commit 과 동등한 *기계적 검증 장치* 로 인정 (AI 코딩 harness 자체가 검증 게이트라는 관점, 글로벌 `~/.claude` 는 제외). config 없으면 기존 동작 100% 유지. stdlib-only 정책 유지.
-- **0.2.0** — 프로젝트별 `.ai-ready/config.json` 으로 *frontmatter 인지 INDEX 그룹화* 활성화. `gen_index.py` 가 frontmatter 의 `feature` / `aliases` / `tags` / `supersedes` 필드를 스캔해 ① 그룹별 sub-group 분류, ② 한영 자연어 query 의 1차 인덱스가 되는 cross-reference 섹션, ③ ADR 결정 진화 (supersedes/superseded-by) 그래프를 자동 빌드. `inject_lazy_load_index.py` 는 `<!-- lazy-load:user-begin -->` ~ `<!-- lazy-load:user-end -->` 마커로 사용자 수동 추가 행 보존 (v0.1.x 시한폭탄 해소 — 기존 단일 마커 환경에서도 자동 마이그레이션). config 없으면 기존 동작 100% 유지 (backward compat). stdlib-only 정책 유지 — 신규 의존성 0.
-- **0.1.2** — manifest schema 오류 수정 (`repository` 가 string URL 이어야 함), 단일 모듈 프로젝트 평가/스캐폴드 분기 추가 (패키지 = 논리 모듈 관점, `docs/PACKAGES.md` 카탈로그 + 표준 레이아웃 일관성 평가), thin-index 인식, sparkline / history archive, ANTIPATTERNS 클러스터링, `.ai-ready/README.md` 자동 생성, iOS 빌드 매니페스트 지원.
+로컬 셸과 git 만 있으면 됩니다. 외부 서비스 인증은 필요 없습니다.
 
-### v0.2.0 config 사용법 (선택)
+- Python 3, `jq`, `bash` 3.2+ (macOS 기본 환경 호환), `git`
+- 감사·문서 생성 스크립트는 **표준 라이브러리만** 씁니다(외부 의존성 0).
 
-대상 코드베이스의 `<target>/.ai-ready/config.json` 을 만들면 활성. 없으면 v0.1.x 동작 그대로.
+---
 
-```json
-{
-  "version": 1,
-  "frontmatter": {
-    "required": ["type", "feature", "module", "status", "created", "updated"],
-    "search":   ["aliases", "tags"],
-    "evolution": ["supersedes", "superseded-by"]
-  },
-  "index": {
-    "groups": [
-      {
-        "id": "adr",
-        "title": "ADR (`docs/adr/`)",
-        "match": { "path_prefix": "docs/adr/" },
-        "sub_group_by": "feature"
-      }
-    ],
-    "cross_reference": { "enabled": true, "title": "한영 검색 인덱스" },
-    "evolution_graph": { "enabled": true, "title": "ADR 결정 진화", "scope": "adr" }
-  },
-  "lazy_load_triggers": {
-    "detect": [
-      { "path": "docs/adr/", "label": "[`docs/adr/`](docs/adr/)", "trigger": "ADR 조회" }
-    ],
-    "override_hardcoded": ["docs/decisions"]
-  }
-}
-```
+## 무엇을 담고 있나 — 두 축
 
-전체 스키마는 `plugins/ai-ready/skills/audit/scripts/config_loader.py` 의 모듈 docstring 에 정의되어 있습니다.
+플러그인은 성격이 다른 두 묶음으로 나뉩니다.
 
-## 사용
+**축 A · 문서화와 AI 준비도** — 코드베이스를 에이전트가 읽기 좋게 만드는 쪽입니다. `audit` 이 진단하고 `apply` 가 처방합니다. 산출물은 사람과 에이전트가 함께 읽는 문서(CLAUDE.md, INDEX.md, ARCHITECTURE.md, ANTIPATTERNS.md 등)입니다.
 
-```
-/ai-ready:audit   # 점수·리포트·대시보드 생성 + 핫 모듈 CLAUDE.md 초안 + 안티패턴 시드
-/ai-ready:apply   # 감사 결과의 ROI 상위 액션 자동 적용
-/loop-run         # 변경을 무인 검증 루프로 수렴까지 점검·수정 (maker→checker→채점→decide)
-/loop-review      # 변경을 1회 적대적 점검 (코드 안 고침, 사람이 곧 루프)
-/loop-lessons     # 루프가 잡은 실수를 사람 승인 거쳐 docs/ANTIPATTERNS.md 에 반영
-```
+**축 B · 무인 검증 루프** — 준비된 코드베이스 위에서 실제 코드 변경을 자동으로 검증·수정·빌드아웃하는 쪽입니다. `loop-run`(변경 하나 수렴), `loop-review`(1회 점검), `loop-lessons`(실수 회수), `loop-build`(설계를 여러 단계로 빌드아웃)로 구성됩니다. 이 넷은 같은 판정 엔진(`_loop-engine`)을 공유합니다.
 
-자세한 내용은 audit/apply 는 [`audit/SKILL.md`](plugins/ai-ready/skills/audit/SKILL.md)·[`apply/SKILL.md`](plugins/ai-ready/skills/apply/SKILL.md), 검증 루프는 [`loop-run/SKILL.md`](plugins/ai-ready/skills/loop-run/SKILL.md)·[`loop-review/SKILL.md`](plugins/ai-ready/skills/loop-review/SKILL.md)·[`loop-lessons/SKILL.md`](plugins/ai-ready/skills/loop-lessons/SKILL.md) 참고.
+두 축은 한 지점에서 만납니다. audit 이 만드는 `docs/ANTIPATTERNS.md` 가 loop 계열의 **지식층**이 됩니다. 루프가 점검할 때 이 문서를 읽고, `loop-lessons` 가 새로 잡은 실수를 여기에 덧붙입니다.
 
-## 구조
+---
+
+## 먼저 알아둘 용어 (loop 계열)
+
+무인 루프 설명에 반복해 나오는 말들입니다. 여기만 훑어두면 뒤가 술술 읽힙니다.
+
+| 용어 | 뜻 |
+|---|---|
+| **maker** | 실제로 코드를 작성·수정하는 주체. loop-build 에선 단계마다 새로 띄우는 서브에이전트가 맡습니다. |
+| **checker** | maker 가 고친 코드를 독립된 시각으로 점검하는 주체. 결함의 종류와 위치만 태깅합니다. 매번 새로 띄웁니다. |
+| **오케스트레이터** | 직접 코딩하지 않고 순서를 관리하는 조율자. 당신이 명령을 친 메인 세션이 이 역할입니다. |
+| **서브에이전트** | 메인 세션이 따로 띄우는 독립 작업 에이전트. 자기만의 대화 맥락을 가져서, 여기서 한 작업이 메인 맥락을 어지럽히지 않습니다. |
+| **rubric(루브릭)** | "무엇을 통과로 볼지"와 "언제 멈출지(회차·시간·예산 상한)"를 적어둔 채점 규칙표. LLM 주관이 아니라 이 규칙대로 기계적으로 판정합니다. |
+| **severity(심각도)** | checker 가 찾은 결함의 등급. 심한 순으로 `BLOCKER` · `CRITICAL` · `MAJOR` · `MINOR`. 통과 조건은 "BLOCKER 0개 그리고 CRITICAL 0개". |
+| **게이트** | 통과해야 다음으로 넘어가는 관문. 시작 게이트(사람 승인), 빌드 게이트(컴파일·기존 테스트), 종료 게이트(severity 판정) 셋이 나옵니다. |
+| **brake(브레이크)** | 무인 실행이 무한정 돌지 않게 강제로 멈추는 안전 상한. 회차·시간을 다 쓰면 걸려 사람을 부릅니다. |
+| **phase / step** | phase 는 설계를 독립적으로 개발·검증할 수 있는 큰 덩어리, step 은 그 안의 세부 작업(loop-build 전용 개념). |
+| **워크트리** | 이 작업만을 위한 격리된 작업 폴더(git worktree). 변경이 여기 쌓이고 커밋 전까지 메인 브랜치를 건드리지 않습니다. |
+
+> **왜 고치는 쪽(maker)과 점검하는 쪽(checker)을 나누나?** 자기가 짠 코드를 자기가 검토하면 결함을 놓칩니다. 글쓴이가 자기 글의 오탈자를 잘 못 잡는 것과 같습니다. 그래서 쓴 사람과 교정 보는 사람을 나누고, 교정자는 매번 선입견 없는 새 눈으로 바꿉니다.
+
+---
+
+## 스킬 6개
+
+### `audit` — AI 준비도 채점 + 개선 로드맵
+
+코드베이스가 AI 에이전트에게 얼마나 친화적인지 7개 카테고리로 채점하고, 무엇부터 고칠지 우선순위를 매긴 리포트와 대시보드를 만듭니다.
+
+- **트리거** — `/ai-ready:audit`, "AI 준비도", "코드베이스 감사", "score my codebase for AI agents", "모듈별 CLAUDE.md 생성"
+- **입력** — 대상 코드베이스 경로. 선택으로 스캐폴드할 상위 모듈 수(기본 5개), 안티패턴을 캐낼 git 이력 기간(기본 180일).
+- **산출물** — 대상의 `.ai-ready/` 아래에 생성합니다.
+  - `audit.json` — 카테고리·규칙별 원시 점수와 근거
+  - `audit-report.md` — ROI 우선순위 개선 액션 목록(사람이 읽는 로드맵)
+  - `dashboard.html` — 게이지·카테고리 막대·점수 추이 스파크라인을 담은 자체완결 대시보드
+  - `history/{시각}.json` — 실행 이력(추이 렌더용, 삭제 금지)
+  - `scaffolds/` — 누락 문서 초안(모듈별 CLAUDE.md 등)과 git 이력에서 추출한 `ANTIPATTERNS.md` 시드
+  - `hooks/freshness_check.sh` — 문서 신선도 점검 훅
+- **평가 카테고리 (7개, 총 100점)**
+
+  | # | 카테고리 | 무엇을 보나 |
+  |---|---|---|
+  | 1 | 내비게이션 | 루트에서 모듈까지 찾아가는 경로·문서 참조 |
+  | 2 | 컨텍스트 문서 품질 | CLAUDE.md 와 문서의 내용 충실도 |
+  | 3 | 암묵지 & 안티패턴 | ANTIPATTERNS.md, git 핫스팟에서 드러나는 함정 |
+  | 4 | 모듈 간 의존성 추적 | ARCHITECTURE.md, 의존 그래프 |
+  | 5 | 검증 게이트 | CI 훅, 테스트, 린트 같은 기계적 검증 장치 |
+  | 6 | 신선도 자동 유지 | 문서가 코드와 함께 갱신되게 하는 장치 |
+  | 7 | 성과 지표 | 결과 측정·추적 인프라 |
+
+- **점수 등급**
+
+  | 등급 | 점수 | 상태 |
+  |---|---|---|
+  | AI-blind | 0–39 | 에이전트가 컨벤션·경계 없이 헤맴. 매 PR마다 같은 맥락을 다시 설명 |
+  | AI-aware | 40–59 | 일부 가이드 존재. 핫 모듈에만 도움 |
+  | AI-enabled | 60–79 | 모듈 가이드·안티패턴·의존 그래프를 갖춰 에이전트가 자율 작업 가능 |
+  | AI-maximalist | 80–89 | 신선도 자동 갱신 + 측정 인프라 운영 |
+  | Agentic-ready | 90–100 | 다중 에이전트가 자율적으로 PR 을 만들 수 있는 상태 |
+
+- 멀티모듈과 단일모듈(패키지=논리 모듈) 레이아웃을 자동 감지해 채점 규칙과 스캐폴드 출력을 달리합니다.
+- 대상에 `.ai-ready/config.json` 을 두면(선택) frontmatter 인식 INDEX 그룹화·lazy-load 트리거 보존·프로젝트 현실을 반영한 채점(통합 design 디렉터리를 ADR 로 인정 등)을 활성화합니다. 없으면 기본 동작 그대로입니다.
+
+### `apply` — 감사 결과를 실제로 적용
+
+`audit.json` 과 `audit-report.md` 를 읽어, ROI 상위 개선 액션을 차례로 실행합니다.
+
+- **트리거** — `/ai-ready:apply`, "audit 적용", "ROI 액션 실행", "우선순위 액션 적용"
+- **입력** — 대상 디렉터리(이미 `audit.json` 이 있어야 함).
+- **처리 방식** — 각 액션을 성격에 따라 넷 중 하나로 다룹니다.
+  - **maintain(외과적 유지보수)** — 스크립트가 사실만 모으고(`--json` 읽기 전용), AI 가 현재 문서를 읽어 **새 항목만 추가하고 바뀐 것만 고칩니다.** 사람이 손댄 그룹·순서·산문은 보존합니다. 통째 덮어쓰기를 하지 않습니다.
+  - **judgment** — AI 가 초안을 쓰고 사용자가 승인합니다(안티패턴 항목, ADR, "DO NOT" 섹션 등).
+  - **mechanical** — 멱등 스크립트를 실행합니다(모듈 CLAUDE.md 스캐폴드, ARCHITECTURE.md 다이어그램, 신선도 훅 설치 등).
+  - **skip** — 이미 충족된 항목.
+- **사람이 인수한 문서 보호** — 생성 대상 파일에 자동 생성 서명이 없으면(사람이 직접 다듬은 문서라는 뜻) 덮어쓰기를 거부하고 멈춥니다. `--force` 로만 우회하며, 적용은 문서별 diff 확인 루프를 거쳐 승인분만 반영합니다.
+
+### `loop-run` — 변경 하나를 통과까지 무인 수렴
+
+사람이 작업을 맡기고 빠지면, `maker`(고치기) → `checker`(독립 점검) → 결정론 채점 → 정체 판정을 통과 기준을 만족할 때까지 반복합니다. 코드를 실제로 고치며 N회 수렴합니다.
+
+- **트리거** — `/loop-run [회차]`, "루프 돌려", "이 작업 루프로 수렴시켜"
+- **입력** — 작업 지시(무엇을 만들/고칠지 + 완료 기준), 비교 베이스(기본 `origin/main`), 회차 상한(선택, 기본 5회·하드 천장 10회).
+- **산출물** — 수렴된 변경(워크트리에 쌓이고 커밋은 하지 않음) + 사이클 로그(`.loop/run/{ticket}/history.jsonl`).
+- 빌드·테스트·린트 명령, 티켓 패턴, 베이스 브랜치는 `detect_build.py` 가 런타임에 감지해 어댑터 파일을 남기지 않습니다.
+
+### `loop-review` — 1회 점검·보고 (코드는 안 고침)
+
+무인 루프와 같은 판정 엔진으로 현재 변경을 **한 번만** 점검해 등급순 리포트를 냅니다. 고치는 건 사람이 합니다.
+
+- **트리거** — `/loop-review [--html]`, "loop 리뷰", "이 변경 점검"
+- **입력** — 현재 브랜치 변경(기본 `origin/main..HEAD` + 커밋 전 변경), 작업 정의(선택).
+- **산출물** — 마크다운 리포트(기본) 또는 `--html` 로 자체완결 HTML. 등급별(BLOCKER→CRITICAL→MAJOR→MINOR) finding 과 판정 요약.
+- 빌드·테스트를 돌리지 않고 점검만 하므로 빠릅니다.
+
+### `loop-lessons` — 잡은 실수를 재발 방지 지식으로
+
+루프가 끝난 뒤, 잡힌 실수와 사람·PR 지적을 모아 `docs/ANTIPATTERNS.md` 후보 초안을 만들고, **사람이 하나씩 승인**해서 반영합니다.
+
+- **트리거** — `/loop-lessons [--history <경로>]`, "lesson 종합", "안티패턴 후보"
+- **입력** — 루프 이력(`history.jsonl`, 자동), 선택으로 사람·PR 지적, 티켓 요약.
+- **산출물** — `docs/ANTIPATTERNS.md` 에 승인 항목 추가(통째 덮어쓰기 없음), 필요 시 프로젝트 LOCAL 루브릭에 예외 한 줄 추가.
+- **수록 문턱** — 같은 자리 수정이 3회 이상 반복되거나 revert 가 난 것만 올립니다. 일회성 국소 실수는 버립니다. 무인 루프여도 이 반영 단계만은 반드시 사람 승인을 거칩니다.
+
+### `loop-build` — 설계를 여러 단계로 무인 빌드아웃
+
+확정된 설계 문서를 phase/step 으로 쪼개 사람이 승인한 뒤, 각 phase 를 maker 서브에이전트로 개발하고 loop-run 의 판정 엔진으로 통과까지 수렴시키며 여러 phase 를 순차 전진합니다. **loop-run 을 감싼 멀티-phase 확장**입니다.
+
+- **트리거** — `/loop-build [phase당 회차] [설계 문서 경로]`, "설계대로 쭉 빌드해", "phase 순회 루프"
+- **입력** — 설계 문서/spec 경로(형식 무관, 오케스트레이터가 phase 로 분해), phase 당 회차(선택, 기본 5). 인자는 타입으로 구분해 순서가 바뀌어도 안전합니다.
+- **동작** — Step 0 셋업 → Step 1 분해 후 **사람 승인(유일한 시작 게이트)** → Step 2 phase 순회(각 phase 마다 새 maker, 빌드 게이트 → checker → 채점 → 분기) → Step 3 완료 보고. 커밋은 하지 않고 워크트리에 누적합니다.
+- **핵심 성질**
+  - 회차·시간·예산 상한을 **phase 하나 기준**으로 봅니다(loop-run 은 작업 전체 기준). 전체 시간 상한은 `phase당 120분 × phase수` 로 자동 확장돼, phase 가 늘어도 뒤 phase 가 시간에 잘리지 않습니다.
+  - maker 는 phase 마다 새 서브에이전트로 격리하되, **한 phase 안의 재시도는 같은 maker 를 이어 부릅니다**(수정 맥락 유지).
+  - 무인 순회를 시작·재개하기 직전 분해 결과(`phases.json`)가 온전한지 검증하고, 손상됐으면 즉시 멈춰 사람을 부릅니다(v0.8.1).
+  - 구현이 설계와 어긋나야 한다고 판단되면 임의로 설계를 바꾸지 않고 멈춰 사람에게 재결정을 맡깁니다. 목표는 "설계대로 구현"이지 "설계를 고쳐 구현"이 아닙니다.
+
+> loop-build 하나만 더 깊게 보려면 브라우저용 시각 가이드가 별도로 있습니다. 이 README 는 플러그인 전체를 다룹니다.
+
+### 언제 무엇을 쓰나
+
+| 상황 | 스킬 |
+|---|---|
+| 코드베이스가 AI 에게 얼마나 준비됐는지 점수·로드맵을 보고 싶다 | `audit` |
+| 그 로드맵의 개선을 실제로 적용하고 싶다 | `apply` |
+| 변경 **하나**를 통과까지 무인으로 수렴시키고 싶다 | `loop-run` |
+| 지금 변경을 고치지 않고 **한 번** 점검만 받고 싶다 | `loop-review` |
+| 루프가 잡은 실수를 재발 방지 지식으로 정리하고 싶다 | `loop-lessons` |
+| **설계 전체**를 여러 단계로 무인 빌드아웃하고 싶다 | `loop-build` |
+
+---
+
+## 판정 엔진은 어떻게 판단하나 (`_loop-engine`)
+
+loop 계열 넷은 같은 결정론 판정 엔진을 공유합니다. 핵심은 **"등급을 LLM 이 매기지 않는다"** 입니다.
+
+**checker(LLM)는 결함의 종류와 위치만 찾고, 등급은 규칙표를 보고 셸이 매깁니다.** LLM 이 등급을 매기면 같은 코드에도 실행마다 판정이 흔들려 통과 여부가 불안정해집니다. 종류·위치만 LLM 이 태깅하고 심각도는 결정론 셸이 매기면, 같은 코드엔 항상 같은 등급이 나옵니다.
+
+- **checker 의 5개 점검 차원** — `compatibility`(하위 호환), `security`(권한·입력 검증), `runtime`(동시성·트랜잭션·N+1·멱등성 등), `intent`(작업 정의 ↔ 코드 정합), `convention`(네이밍·컨벤션·테스트 누락).
+- **severity 4단계와 행동**
+
+  | 등급 | 행동 | 뜻 |
+  |---|---|---|
+  | BLOCKER | 사람 대기(AWAIT_USER) | maker 가 못 고치거나 고치면 안 됨. 비가역·자동화 금지 |
+  | CRITICAL | 재시도(RETRY) | 진짜 결함이나 maker 가 고칠 수 있음 |
+  | MAJOR | 계속 개선(RETRY_SOFT) | 고치면 좋으나 통과 가능. 정체 시 사람 승인으로 통과 |
+  | MINOR | 통과(기록만) | 사소 |
+
+- **통과는 점수 합산이 아니라 게이트** — 사소한 결함이 10개라도 심각한 게 없으면 통과, 단 하나라도 BLOCKER 면 불통과입니다. "총점 평균"이 아니라 "가장 심각한 게 무엇이냐"로 문을 엽니다.
+- **비가역 영역은 등급과 무관하게 사람 대기** — 운영 DB 변경, 돈·정산, 인가 정책, 대량 발송, 삭제·탈퇴는 점수가 만점이어도 멈춰 사람을 부릅니다.
+- **상한 기본값(단일 원천)** — 회차 5(천장 10), 시간 120분, 비용 $500, 토큰 5M. 정체·악화 감지 파라미터도 같은 표에 있습니다.
+- **BASE + LOCAL 루브릭** — 프로젝트 무관 골격은 `_loop-engine/rubric.base.md`(BASE)에, 프로젝트 특유 규칙은 대상의 `.loop/rubric.md`(LOCAL)에 둡니다. 둘은 병합되며 같은 항목은 LOCAL 이 우선합니다.
+
+엔진을 이루는 조각은 이렇습니다.
+
+| 파일 | 책임 |
+|---|---|
+| `score.sh` | checker 가 낸 결함마다 규칙표로 severity 를 매김 |
+| `decide.sh` | 매겨진 결함을 모아 판정(PASS/RETRY/AWAIT_USER 등)을 냄 |
+| `stall.sh` | 회차 간 정체·악화를 감지 |
+| `lessons.sh` | 루프 이력에서 "고쳐진 실수"를 추출(loop-lessons 입력) |
+| `detect_build.py` | 매니페스트·브랜치를 읽어 빌드·테스트·린트 명령, 티켓 패턴, 베이스 브랜치, 컨벤션 문서를 런타임 감지 |
+| `rubric.base.md` | BASE 루브릭(사람이 읽고 편집하는 규칙 데이터) |
+| `test.sh` | 채점 로직의 결정론 회귀 테스트 |
+
+두 에이전트가 함께 움직입니다. **`loop-checker`** 는 위 5개 차원으로 변경을 적대적으로 점검해 구조화 결과를 냅니다. **`loop-lesson-synthesizer`** 는 루프가 끝난 뒤 실수를 안티패턴 후보로 정리합니다. 둘 다 **코드를 수정하지 않습니다**(읽기 전용). checker 의 독립성과 synthesizer 의 사람 승인 게이트를 지키기 위해서입니다.
+
+---
+
+## 설계 원칙
+
+- **심각도는 결정론 셸이 매긴다** — 같은 코드엔 같은 등급. 판정의 재현성을 보장합니다.
+- **문서는 AI 가 외과적으로 유지보수한다** — 사실은 스크립트가 모으고, 새 항목 추가와 변경분 수정만 AI 가 하며, 사람이 손댄 큐레이션은 보존합니다.
+- **maker 와 checker 를 분리한다** — checker 는 코드를 수정하지 않고 maker 의 변명을 듣지 않습니다. 독립성이 신뢰의 근거입니다.
+- **fail-loud** — 비었거나 형식이 어긋난 입력을 조용히 통과시키지 않고 즉시 멈춥니다. loop-build 는 무인 순회 직전 `phases.json` 을 이렇게 검증합니다.
+- **사람 승인을 의무화한다** — apply 의 매 액션, loop-lessons 의 모든 반영, loop-build 의 분해 승인이 사람 게이트입니다.
+- **비가역 영역은 사람이 판단한다** — 운영 DB·돈·인가·대량 발송·삭제는 자동화하지 않습니다.
+
+---
+
+## 저장소 구조
 
 ```
 .
@@ -102,14 +250,40 @@ plugin 자체를 새 version 으로 갱신:
     └── ai-ready/
         ├── .claude-plugin/plugin.json
         ├── skills/
-        │   ├── audit/         # 감사 + 리포트 + 대시보드 + 시드 생성
-        │   ├── apply/         # ROI 액션 자동 적용
-        │   ├── loop-run/      # 무인 검증 루프 (수렴까지)
-        │   ├── loop-review/   # 1회 적대적 점검
-        │   └── loop-lessons/  # 잡은 실수 → 지식층 반영 (사람 승인)
-        ├── agents/            # loop-checker · loop-lesson-synthesizer
+        │   ├── audit/         # AI 준비도 채점 + 리포트·대시보드·시드 생성
+        │   ├── apply/         # ROI 액션 적용 (외과적 문서 유지보수)
+        │   ├── loop-run/      # 변경 하나를 통과까지 무인 수렴
+        │   ├── loop-review/   # 1회 점검·보고
+        │   ├── loop-lessons/  # 잡은 실수 → 지식층 반영 (사람 승인)
+        │   └── loop-build/    # 설계를 여러 phase 로 무인 빌드아웃
+        ├── agents/            # loop-checker · loop-lesson-synthesizer (읽기 전용)
         └── _loop-engine/      # 결정론 채점 셸 + BASE 루브릭 + detect_build.py
 ```
+
+---
+
+## 변경 이력
+
+- **0.8.1** — loop-build 견고성. 무인 순회를 시작·재개하기 직전 `phases.json` 을 검증해, 손상된 분해(빈 phase 목록, 이름·step·완료 확인 명령 누락, 잘못된 상태 값)면 즉시 멈추고 사람을 부릅니다. 기존 loop-run 등 사용처와 격리돼 하위호환을 깨지 않습니다.
+- **0.8.0** — `loop-build` 신설(멀티-phase 무인 빌드아웃, phase 별 서브에이전트 maker). 루프 상한 기본값 조정(회차 10→5, 시간 60→120분, 비용 $100→$500, 토큰 1M→5M). loop-run 문서 정정.
+- **0.6.0** — 과거 별도 plugin 이던 무인 검증 루프(loop-engine)를 ai-ready 안으로 통합. `/loop-run`·`/loop-review`·`/loop-lessons` + `loop-checker`·`loop-lesson-synthesizer` 에이전트 + 결정론 채점 셸이 audit/apply 와 한 plugin 으로 배포됩니다. 하나만 설치하면 `audit→apply→verify` 전 주기를 씁니다.
+- **0.5.0** — apply 가 문서를 외과적으로 유지보수(사실만 모으는 `--json` 모드 + AI 부분 수정 + 사람 큐레이션 보존). 통째 덮어쓰기 폐기.
+- **0.4.0** — 사람이 인수한 문서 보호(자동 생성 서명 없으면 덮어쓰기 거부, `--force` 우회, 문서별 diff 확인 루프).
+- **0.3.0** — `.ai-ready/config.json` 의 rubric 섹션으로 채점이 프로젝트 현실을 반영(통합 design 디렉터리를 ADR 로, springdoc 를 API 계약으로 인정 등).
+- **0.2.0** — `.ai-ready/config.json` 으로 frontmatter 인식 INDEX 그룹화와 사용자 lazy-load 트리거 보존.
+
+<details>
+<summary>더 이전 버전</summary>
+
+- **0.7.0** — 5관점 적대 리뷰 기반 보강. 채점 정직화(빈/스텁 문서 부분점수, half-credit 공식 정합), 무인 루프 안전(베이스 ref·빈 diff 거짓 PASS 가드, checker/synthesizer 쓰기 금지 명문화), 배포 위생(freshness 훅 경로 통일, LICENSE 추가), 스크립트 견고성(BOM·타입 가드 등). **채점값이 일부 달라져 추이 재기준이 필요합니다.**
+- **0.6.1** — loop 스킬 3개의 `disable-model-invocation` 제거(모델 자동 트리거에도 노출). 기능 변화 없음.
+- **0.4.2** — INDEX 생성이 `.gitignore` 를 존중(추적·미무시 `.md` 만 인덱싱, 비-git 디렉터리는 전체 walk 로 폴백).
+- **0.4.1** — 생성 스크립트 전반 버그 수정 묶음(worktree 오염으로 모듈·문서가 부풀던 문제 등 30건).
+- **0.1.2** — manifest 스키마 수정, 단일 모듈 프로젝트 평가·스캐폴드 분기, thin-index 인식, 추이 스파크라인, ANTIPATTERNS 클러스터링.
+
+</details>
+
+---
 
 ## 라이선스
 
