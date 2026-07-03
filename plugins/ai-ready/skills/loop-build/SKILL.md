@@ -92,9 +92,23 @@ PHASES="$LOOP_DIR/phases.json"   # 분해 결과 + phase 별 status 를 여기 �
 
 `phases.json` 의 phase 를 순서대로 돈다. 각 phase 를 아래 안쪽 루프로 PASS 시키고 다음으로 넘어간다.
 
-순회 시작 전, Step 1 에서 확정된 phase 수 `N` 으로 전체 시간 상한을 phase 수 비례로 재계산한다 — Step 0 이 loop-run 방식으로 잡은 phase 당 `BUDGET_MIN`(rubric `budget_minutes`, 기본 120)에 `N` 을 곱한다:
+순회 시작 전 두 가지를 한다. 먼저 `phases.json` 이 소비 가능한 형식인지 **fail-loud 로 검증**한다. 무인 시작 후엔 사람이 빠져 조용한 순회 오작동(status 오타로 phase 를 영영 pending 으로 봐 무한 순회하거나 건너뜀)을 잡을 사람이 없으므로, `score.sh` 가 변질된 checker JSON 을 exit 65 로 거부하는 것과 같은 결로 소비 직전에 거른다. 그다음 Step 1 에서 확정된 phase 수 `N` 으로 전체 시간 상한을 phase 수 비례로 재계산한다 — Step 0 이 loop-run 방식으로 잡은 phase 당 `BUDGET_MIN`(rubric `budget_minutes`, 기본 120)에 `N` 을 곱한다:
 
 ```bash
+# (1) phases.json fail-loud 검증 — 무인 시작·재개 직전. score.sh 의 변질 입력 exit 65 거부와 같은 결.
+#     .phases 비배열/빈배열, phase 의 name·steps 누락, step 의 ac_cmd 누락(AC 없으면 step 이 아님),
+#     status 가 pending/in_progress/done/blocked 밖 — 하나라도 걸리면 멈추고 사람 호출.
+jq -e '
+  (.phases | type=="array" and length>0) and all(.phases[];
+    (.name | type=="string" and length>0)
+    and (.status | IN("pending","in_progress","done","blocked"))
+    and (.steps | type=="array" and length>0)
+    and all(.steps[];
+      (.ac_cmd | type=="string" and length>0)
+      and (.status | IN("pending","in_progress","done","blocked"))))
+' "$PHASES" >/dev/null || { echo "loop-build: phases.json 스키마 위반 — 무인 시작 중단, 사람 호출" >&2; exit 65; }
+
+# (2) 전체 시간 상한을 phase 수 비례로 재계산.
 NPHASE=$(jq '.phases | length' "$PHASES")
 BUDGET_MIN=$(( BUDGET_MIN * NPHASE ))   # phase 당 120분 × phase 수 = 전체 상한. 뒤 phase 가 시간에 안 잘리게.
 echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 120 × ${NPHASE}개)"
