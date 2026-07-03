@@ -28,7 +28,7 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 1. **작업 지시(필수)**: grill-me 합의 요약 또는 spec 경로. "무엇을 만들/고칠지 + 완료 기준". 같은 세션 컨텍스트로 들어온다.
 2. **비교 베이스**: `$LOOP_BASE_BRANCH`(Step 0 감지, 기본 `origin/main`). 점검 범위 = `$LOOP_BASE_BRANCH...HEAD + uncommitted`.
 3. **작업 정의 문서 경로**(있으면): design/티켓 문서. checker 가 정합 층 점검에 쓴다. 없으면 "missing".
-4. **시도 횟수 상한(선택)**: 사용자가 `/loop-run` 에 회차를 명시하면(예: "5회로", "--max-iter 5") 그 값을 쓴다. 없으면 rubric `max_iterations`(현재 10). 명시값도 하드 천장 10 으로 깎인다. 횟수를 늘려도 PASS·정체·시간·비가역 조기 종료는 그대로라 상한을 다 안 쓰고 일찍 끝날 수 있다 — 상한이지 목표가 아니다.
+4. **시도 횟수 상한(선택)**: 사용자가 `/loop-run` 에 회차를 명시하면(예: "5회로", "--max-iter 5") 그 값을 쓴다. 없으면 rubric `max_iterations`(현재 5). 명시값도 하드 천장 10 으로 깎인다. 횟수를 늘려도 PASS·정체·시간·비가역 조기 종료는 그대로라 상한을 다 안 쓰고 일찍 끝날 수 있다 — 상한이지 목표가 아니다.
 
 작업 지시가 모호하면 루프를 **시작하지 않는다** — checker 의 정합 층이 기준을 못 잡아 헛돈다. 사람이 빠지기 전에 grill-me 로 완료 기준부터 확정하게 한다.
 
@@ -48,13 +48,13 @@ brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)
 
 | brake | 출처 | 이 스킬의 집행 |
 |---|---|---|
-| `max_iterations` (기본 10, 사용자 명시 시 그 값) | rubric PARAMS 또는 호출 인자 | 매 사이클 후 `history.jsonl` 줄 수로 회차 세고 도달 시 멈춰 사람 호출. 명시값은 천장 10 으로 클램프 |
-| `budget_minutes` (기본 60) | rubric PARAMS | 시작 epoch 영속 → 매 사이클 벽시계 경과 확인, 초과 시 멈춤 |
+| `max_iterations` (기본 5, 사용자 명시 시 그 값) | rubric PARAMS 또는 호출 인자 | 매 사이클 후 `history.jsonl` 줄 수로 회차 세고 도달 시 멈춰 사람 호출. 명시값은 천장 10 으로 클램프 |
+| `budget_minutes` (기본 120) | rubric PARAMS | 시작 epoch 영속 → 매 사이클 벽시계 경과 확인, 초과 시 멈춤 |
 | `stall_threshold_*` / `regress_consecutive` | rubric PARAMS | `stall.sh` 가 상태 파일로 자가 집행. `STALLED`/`REGRESS_ESCALATE` 면 멈춤 |
 | 하드코딩 천장 `ABS_CEIL=10` | 이 스킬 | rubric 오설정(max_iterations 폭주) 대비 백스톱. 무슨 일이 있어도 10회 초과 금지 |
-| `budget_usd`(기본 100)·`budget_tokens`(1M) | rubric PARAMS | **케이스3은 종료 후 참고 백스톱**. 세션 도중 누적 비용을 정확히 못 읽어 회차별 정밀 차단 불가(그건 케이스2 agent 드라이버 몫). 실질 brake 는 회차·시간·정체 |
+| `budget_usd`(기본 500)·`budget_tokens`(5M) | rubric PARAMS | **케이스3은 종료 후 참고 백스톱**. 세션 도중 누적 비용을 정확히 못 읽어 회차별 정밀 차단 불가(그건 케이스2 agent 드라이버 몫). 실질 brake 는 회차·시간·정체 |
 
-런별 오버라이드가 필요하면 호출 전에 env 로 덮어쓴다(예: `LOOP_PARAM_max_iterations` 대신 rubric 기본을 쓰되, 급하면 `MAX_ITER` 를 셋업에서 직접 지정). 기본값은 단일 통일됐다(10회 / 60분 / 1M 토큰 / $100).
+런별 오버라이드가 필요하면 호출 전에 env 로 덮어쓴다(예: `LOOP_PARAM_max_iterations` 대신 rubric 기본을 쓰되, 급하면 `MAX_ITER` 를 셋업에서 직접 지정). 기본값은 단일 통일됐다(5회 / 120분 / 5M 토큰 / $500).
 
 ## 작업 흐름
 
@@ -207,7 +207,7 @@ rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(�
 
 이 세션이 maker 다. Step 3 의 `$SCORED` finding(등급 내림차순)을 보고 **CRITICAL → MAJOR 순으로 실제 코드를 고친다**. 고치고 나면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시). 매 회차 코드가 바뀌어야 루프가 의미 있다 — 같은 결과를 N번 내지 않는다.
 
-- **코드를 작성·수정하면 그 변경분에 대응하는 테스트도 함께 작성한다.** 단 이 강제는 LOCAL rubric 의 KINDS 표가 그 프로젝트에 `test-missing`(convention, CRITICAL) 을 등록한 경우에만 작동한다 — 테스트 문화·도구는 프로젝트마다 다르니 스킬 본문이 아니라 rubric 이 결정한다. 작성 직전에 Step 0 감지가 준 `$LOOP_CONVENTION_DOCS`(공백 구분 경로 목록 — 테스트 규약·네이밍·에러 처리 등 ai-ready 가 만든 문서) 중 변경 표면에 닿는 문서를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다. 목록이 비었거나 파일이 없으면 그 단계를 건너뛴다. 작성한 테스트는 Step 1 의 테스트 게이트(`$LOOP_TEST_CMD`)에 포함돼 실제로 실행·검증된다.
+- **코드를 작성·수정하면 그 변경분에 대응하는 테스트도 함께 작성한다.** 이 강제는 rubric 의 KINDS 표에 `test-missing`(convention, CRITICAL) 이 있어야 작동하는데, **현재 BASE rubric 에 등록돼 있어 LOCAL rubric 없이도 프로젝트 무관하게 작동한다**(checker 가 변경분에 대응 테스트 누락을 잡으면 셸이 CRITICAL→RETRY). 테스트 규약·도구가 다른 프로젝트는 LOCAL rubric 의 같은 kind 로 override 하거나 끈다 — 스킬 본문이 아니라 rubric 이 결정한다. 작성 직전에 Step 0 감지가 준 `$LOOP_CONVENTION_DOCS`(공백 구분 경로 목록 — 테스트 규약·네이밍·에러 처리 등 ai-ready 가 만든 문서) 중 변경 표면에 닿는 문서를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다. 목록이 비었거나 파일이 없으면 그 단계를 건너뛴다. 작성한 테스트는 Step 1 의 테스트 게이트(`$LOOP_TEST_CMD`)에 포함돼 실제로 실행·검증된다.
 - MINOR 만 남았으면 보통 PASS 라 여기 오지 않는다. RETRY_SOFT(MAJOR)는 고치되, 정체로 멈추면 사람 승인으로 통과 가능.
 - 고칠 수 없거나 고치면 안 되는 finding(force_await·비가역)은 maker 가 만지지 말고 AWAIT_USER 로 사람에게.
 

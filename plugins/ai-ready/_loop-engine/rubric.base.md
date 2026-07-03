@@ -148,10 +148,10 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 | stall_threshold_critical | 2 |
 | stall_threshold_major | 2 |
 | regress_consecutive | 2 |
-| max_iterations | 10 |
-| budget_usd | 100 |
-| budget_tokens | 1000000 |
-| budget_minutes | 60 |
+| max_iterations | 5 |
+| budget_usd | 500 |
+| budget_tokens | 5000000 |
+| budget_minutes | 120 |
 
 <!-- LOOP_RUBRIC:PARAMS:END -->
 
@@ -159,7 +159,7 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 > 정체 파라미터(`stall_threshold_*`, `regress_consecutive`)는 `stall.sh` 가 `loop_param` 으로 읽는다.
 > brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
 > 같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
-> 값은 단일 통일(10회 / $100 / 1M 토큰 / 60분) — 무인(케이스2)·핸드오프(케이스3) 같은 상한. 케이스별 프로파일은 두지 않는다.
-> 토큰(1M)이 실질 상한이고 $100 은 폭주 안전망(opus 단가상 1M 토큰을 넉넉히 덮어 토큰이 먼저 닿게). 케이스2 는 회차별 정확 집행,
+> 값은 단일 통일(5회 / $500 / 5M 토큰 / 120분) — 무인(케이스2)·핸드오프(케이스3) 같은 상한. 케이스별 프로파일은 두지 않는다.
+> 토큰(5M)이 실질 상한이고 $500 은 폭주 안전망(opus 단가상 5M 토큰을 넉넉히 덮어 토큰이 먼저 닿게). 케이스2 는 회차별 정확 집행,
 > 케이스3 은 회차·시간·정체 자가 집행 + 종료 후 비용 백스톱. 런별 오버라이드가 필요하면 드라이버 호출 시 env 로 전달해
 > 이 기본값을 덮어쓴다 — 별도 `profile.env` 파일은 두지 않는다(`.loop/run/{ticket}/` 는 state·history 전용).
