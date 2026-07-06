@@ -151,14 +151,26 @@ else echo "loop: LOOP_TEST_CMD 비어있음 — 테스트 게이트 스킵(셋�
 - 작업 정의 문서 경로(있으면, 없으면 "missing").
 - 비교 베이스: `$LOOP_BASE_BRANCH`(기본 `origin/main`).
 
-**maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 절대 넣지 마라**(핵심 불변 1). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff·컨벤션 문서·ANTIPATTERNS 를 직접 읽어 독립 판단한다. checker 는 마지막에 정확히 하나의 ```json 펜스 블록으로 `{base, findings:[...]}` 를 낸다. 그 블록만 추출한다.
+**maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 절대 넣지 마라**(핵심 불변 1). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff·컨벤션 문서·ANTIPATTERNS 를 직접 읽어 독립 판단한다.
+
+**checker 결과는 파일로 회수한다.** checker 를 스핀하기 **전에** findings 출력 경로를 결정적 위치로 잡고 **비운 뒤**, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 명시한다. checker 는 `{base, findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 대화형 가독성용 사본 — 백그라운드 세션에선 서브에이전트 최종 메시지가 오케스트레이터에 인라인으로 전달되지 않아, 파일이 정본 회수 경로다).
+
+```bash
+# 랜덤 mktemp 는 쓰지 않는다 — Bash 호출마다 셸이 새로 떠 그 변수는 다음(채점) 호출에 안 남는다.
+# 결정적 경로를 써야 스핀 프롬프트와 Step 3 채점이 같은 경로를 가리킨다. .loop/run/ 하위라 gitignore·소스 밖.
+F="$LOOP_DIR/checker-findings.json"
+: > "$F"   # 스핀 직전 비우기 — 직전 사이클 잔여가 남으면 checker 미기입을 거짓 통과로 가릴 수 있다.
+```
+
+이 `$F` 절대경로를 checker 프롬프트에 넘긴다. checker 가 완료되면(툴 결과/완료 통지) `$F` 를 그대로 Step 3 채점에 넣는다.
 
 ### Step 3. 결정론 채점 + history append
 
-추출한 checker JSON 을 임시 파일에 저장하고 채점 셸 파이프에 흘린다. **severity 는 셸이 매긴다 — checker 등급을 쓰지 않는다.**
+checker 가 쓴 findings 파일(`$F`)을 채점 셸 파이프에 흘린다. **severity 는 셸이 매긴다 — checker 등급을 쓰지 않는다.**
 
 ```bash
-F=$(mktemp)   # 추출한 {base, findings:[...]} 를 $F 에 기록
+# $F 는 Step 2 에서 잡아 checker 에 넘긴 findings 출력 파일(= "$LOOP_DIR/checker-findings.json", checker 가 쓴 정본).
+[ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 조용히 PASS 로 넘기지 말고 멈춰 사람 호출" >&2; }
 SCORED=$(bash "$ENG/score.sh" "$F")                              # finding 마다 severity·await 부여
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, counts, await}
 STALL=$(printf '%s' "$VERDICT"  | bash "$ENG/stall.sh" --state "$STATE")   # 정체 판정 + 상태 영속
@@ -167,13 +179,13 @@ jq -nc --argjson it "$ITER" \
        --argjson v "$VERDICT" \
        --argjson s "$SCORED" \
   '{iteration:$it, verdict:$v.verdict, findings:($s.findings // [])}' >> "$HIST"   # 한 줄 = 한 사이클
-rm -f "$F"
+# $F 는 지우지 않는다 — 다음 사이클 Step 2 가 스핀 직전 비운다. 남겨두면 이번 사이클 findings 를 디버깅에 쓸 수 있다(gitignore).
 V=$(printf  '%s' "$VERDICT" | jq -r .verdict)
 ST=$(printf '%s' "$STALL"   | jq -r .status)
 echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDICT" | jq -c .counts)"
 ```
 
-- 채점 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker JSON 추출이 실패한 것이다 — **조용히 PASS 로 넘기지 말고** 멈춰 사람에게 "checker 출력 파싱 실패"로 보고. fail-loud 가 설계다.
+- 채점 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — **조용히 PASS 로 넘기지 말고** 멈춰 사람에게 "checker 출력 파싱 실패"로 보고. fail-loud 가 설계다.
 
 ### Step 4. verdict + stall 분기 (우선순위 순서대로)
 
@@ -222,7 +234,7 @@ rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(�
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
 | 빌드/테스트 명령이 비어 게이트 스킵 | `detect_build.py` 가 빌드 시스템 미인식(unknown) | 매니페스트(build.gradle/package.json 등) 확인. 비표준이면 셋업에서 `LOOP_BUILD_CMD`/`LOOP_TEST_CMD` 를 직접 지정 |
 | `python3` / `detect_build.py` 오류 | python3 미설치 또는 감지기 부재(설치 손상) | python3 설치 확인. plugin 재설치(감지기는 `_loop-engine/detect_build.py`) |
-| `score.sh: 입력 형식 오류 — exit 65` | checker JSON 추출 실패(빈/null/형식오류) | 마지막 ```json 블록만 정확히 추출했는지 확인. 멈추고 보고 — PASS 로 넘기지 말 것 |
+| `score.sh: 입력 형식 오류 — exit 65` | checker 가 findings 파일(`$LOOP_DIR/checker-findings.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | 정체 감지가 매번 INIT | 사이클 간 `stall.json` 이 사라짐(셸 종료마다 리셋한 경우) | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history.jsonl` append 누락 | Step 3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
 | 무한 같은 finding | maker 가 안 고치고 재진입 | Step 6 에서 실제 코드를 바꿨는지 확인. 못 고치는 finding 은 AWAIT_USER |
