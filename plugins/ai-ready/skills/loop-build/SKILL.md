@@ -121,8 +121,8 @@ echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 120 × ${NPHA
 **안쪽 루프 — loop-run Step 1~4 를 이 phase 컨텍스트에서:**
 
 1. **게이트(loop-run Step 1)**: brake 선확인 → 컴파일(`$LOOP_BUILD_CMD`) → 테스트(`$LOOP_TEST_CMD`). 깨지면 checker 안 부르고 **maker 재진입**(아래 5번)으로.
-2. **checker 1회(loop-run Step 2)**: `Agent` 로 `loop-checker` 를 **매 사이클 새로** 띄운다. 프롬프트에 원 작업 정의 + 설계 문서 경로 + **이 phase 의 `design_ref` 와 step 목록**(이 phase 가 그 설계대로 구현됐는지 정합을 phase 단위로 점검하게 한다) + 베이스. **maker 의 변명·구현 설명을 절대 넣지 않는다**(불변 1). checker 는 diff·컨벤션·ANTIPATTERNS 를 독립적으로 읽고, intent 차원으로 **이 phase 코드 ↔ `design_ref` 정합**을 본다 — 코드가 설계를 벗어나면 finding(채점을 거쳐 PASS 를 막으므로, 이게 곧 "이 phase 를 설계대로 구현했나"라는 phase 통과 조건이다). `{base, findings:[...]}` 를 낸다.
-3. **채점(loop-run Step 3)**: 추출한 checker JSON 을 `score.sh → decide.sh → stall.sh` 파이프에 흘려 verdict·정체를 낸다. severity 는 셸이 매긴다. 이 phase 의 history 는 `$LOOP_DIR/history-{phase}.jsonl` 에 append(phase 별 정체 감지 분리).
+2. **checker 1회(loop-run Step 2)**: `Agent` 로 `loop-checker` 를 **매 사이클 새로** 띄운다. 스핀 전에 findings 출력 경로를 결정적 위치(`$LOOP_DIR/checker-findings.json`, 소스 밖·gitignore)로 잡고 `: > "$F"` 로 비운다 — checker 는 결과 `{base, findings:[...]}` 를 그 파일에 쓰고, 오케스트레이터는 그 파일을 읽어 채점한다(백그라운드 세션은 서브에이전트 최종 메시지가 인라인으로 안 와 파일이 정본 회수 경로, loop-run Step 2 개정판). 프롬프트에 원 작업 정의 + 설계 문서 경로 + **이 phase 의 `design_ref` 와 step 목록**(이 phase 가 그 설계대로 구현됐는지 정합을 phase 단위로 점검하게 한다) + 베이스 + 그 findings 출력 경로. **maker 의 변명·구현 설명을 절대 넣지 않는다**(불변 1). checker 는 diff·컨벤션·ANTIPATTERNS 를 독립적으로 읽고, intent 차원으로 **이 phase 코드 ↔ `design_ref` 정합**을 본다 — 코드가 설계를 벗어나면 finding(채점을 거쳐 PASS 를 막으므로, 이게 곧 "이 phase 를 설계대로 구현했나"라는 phase 통과 조건이다).
+3. **채점(loop-run Step 3)**: checker 가 쓴 findings 파일(`$F`, 비었으면 checker 실패 — `[ -s "$F" ]` 로 fail-loud, PASS 로 넘기지 말 것)을 `score.sh → decide.sh → stall.sh` 파이프에 흘려 verdict·정체를 낸다. severity 는 셸이 매긴다. 이 phase 의 history 는 `$LOOP_DIR/history-{phase}.jsonl` 에 append(phase 별 정체 감지 분리).
 4. **분기(loop-run Step 4, 우선순위 순)**:
    - `AWAIT_USER`(비가역/force_await) → **멈춤, 사람 호출.**
    - brake 도달(phase iter ≥ MAX_ITER 또는 전체 경과 ≥ BUDGET_MIN) → **멈춤, 사람 호출.**

@@ -55,11 +55,11 @@ git diff --staged --stat             # uncommitted (staged)
 
 **maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
 
-checker 는 마지막에 정확히 하나의 ```json 펜스 블록으로 `{base, findings:[...]}` 를 낸다. 그 블록만 추출한다.
+**checker 결과는 파일로 회수한다.** 스핀 전에 findings 출력 경로를 결정적 위치(`F="${TMPDIR:-/tmp}/loop-review-findings.json"`)로 잡고 `: > "$F"` 로 비운 뒤, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 넘긴다. checker 는 `{base, findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 랜덤 `mktemp` 는 쓰지 않는다(Bash 호출마다 셸이 새로 떠 변수가 Step 3 채점에 안 남는다). 완료되면 그 파일을 Step 3 채점에 넣는다.
 
 ### Step 3. 결정론 채점 (score → decide)
 
-추출한 JSON 을 임시 파일에 저장하고 채점 셸에 흘린다. **severity 는 셸이 매긴다 — checker 가 낸 등급을 쓰지 않는다(애초에 checker 는 등급을 안 낸다).**
+checker 가 쓴 findings 파일(`$F`)을 채점 셸에 흘린다. **severity 는 셸이 매긴다 — checker 가 낸 등급을 쓰지 않는다(애초에 checker 는 등급을 안 낸다).**
 
 ```bash
 ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
@@ -68,8 +68,9 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 LOOP_BASE_BRANCH="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT" | jq -r '.base_branch // "origin/main"')"
 # 프로젝트에 LOCAL rubric 이 있으면 BASE 와 병합(없으면 BASE 만으로 점검).
 [ -f "$PROJECT_ROOT/.loop/rubric.md" ] && export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"
-F=$(mktemp)                                  # checker JSON 저장
-# (위에서 추출한 {base,findings:[...]} 를 $F 에 기록)
+# F 는 Step 2 에서 잡아 checker 에 넘긴 findings 출력 파일(= checker 가 쓴 정본). 결정적 경로라 여기서 같은 값으로 재현된다.
+F="${TMPDIR:-/tmp}/loop-review-findings.json"
+[ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 조용히 PASS 로 넘기지 말고 멈춰 보고" >&2; }
 SCORED=$(bash "$ENG/score.sh" "$F")          # finding 마다 severity·await·base·kind_known 추가
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")   # verdict·counts·await 집계
 rm -f "$F"
@@ -77,7 +78,7 @@ rm -f "$F"
 
 - `$SCORED` = `{base, findings:[{..., severity, await, base, kind_known}]}`.
 - `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, await}`.
-- 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker JSON 추출이 실패한 것이다 — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
+- 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
 
 verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 처리), `RETRY`(CRITICAL≥1 — 무인 loop 면 maker 재진입감), `RETRY_SOFT`(MAJOR≥1 — 정체 시 사람 승인으로 통과 가능), `PASS`(MINOR 만/깨끗).
 
@@ -117,7 +118,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
-| `score.sh: 입력 형식 오류 — ... exit 65` | checker JSON 추출 실패(빈/null/형식오류) | checker 출력의 마지막 ```json 블록만 정확히 추출했는지 확인. 멈추고 보고 — PASS 로 넘기지 말 것 |
+| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일(`${TMPDIR:-/tmp}/loop-review-findings.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | `loop: 'jq' 필요` | jq 미설치 | `brew install jq` |
 | 모든 finding 이 CRITICAL 로 뜸 | checker 가 dimension 을 5값 밖으로 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker 출력의 dimension 값 점검 |
 
