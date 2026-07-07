@@ -47,14 +47,15 @@ description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 �
   ```
   (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다.
 - **출처2 (checker 가 놓친 것, 선택)**: 사람이 결과 검토 중 "checker 가 여기 놓쳤다/과하게 잡았다" 한 지적(세션 안이면 대화에서), 또는 무인 드라이버면 PR 코멘트 추출 결과. 텍스트로 모은다.
+- **출처3 (maker 구현 노트, 있으면)**: `.loop/run/{ticket}/deviations.jsonl` — loop-run/loop-build 의 maker 가 작업 정의·design 문서가 침묵한 지점에서 스스로 내린 결정 기록(`{iteration|phase, where, gap, chosen, why}`). 파일이 존재하고 비어 있지 않으면 그대로 읽어 넘긴다. 실수 로그가 아니라 지도(문서)와 영토(코드)의 간극 증거다 — 지식층 후보 외에 design 문서 보강 후보로 분류될 수 있다.
 - 티켓/작업 요약 1~3문장(없으면 "작업 정의 없음").
 
 ### Step 2. synthesizer 호출 (후보 초안 작성)
 
-`Agent` 툴로 `loop-lesson-synthesizer` 를 호출한다. 프롬프트에 출처1 경로(또는 내용)·출처2 지적·티켓 요약을 넘긴다. synthesizer 는:
+`Agent` 툴로 `loop-lesson-synthesizer` 를 호출한다. 프롬프트에 출처1 경로(또는 내용)·출처2 지적·출처3 구현 노트(있으면)·티켓 요약을 넘긴다. synthesizer 는:
 
-- 출처1+출처2 를 같은 근본원인끼리 클러스터링.
-- 각 클러스터를 일반 규칙인지/일회성인지 가르고 목적지 분류(ANTIPATTERNS / 모듈 CLAUDE.md / 버림·관찰).
+- 출처1~출처3 을 같은 근본원인끼리 클러스터링.
+- 각 클러스터를 일반 규칙인지/일회성인지 가르고 목적지 분류(ANTIPATTERNS / 모듈 CLAUDE.md / design 문서 보강 제안 / 버림·관찰).
 - 후보마다 `DO NOT / 이유 / 대신` 초안 + (해당 시) rubric KINDS 예외표 한 줄을 낸다.
 - 기존 ANTIPATTERNS·모듈 CLAUDE.md 와 중복이면 "기존 항목 N 보강" 으로 표시.
 
@@ -68,7 +69,7 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 
 ```
 ### 후보 {i} — {제목}
-- 목적지(추천): {ANTIPATTERNS.md | {module}/CLAUDE.md | 버림/관찰}
+- 목적지(추천): {ANTIPATTERNS.md | {module}/CLAUDE.md | design 문서 보강 | 버림/관찰}
 - 수록 문턱: {충족 | 미충족(이유) | 과거 핫스팟 합산 시 충족}
 - 초안:
   - DO NOT: ...
@@ -88,6 +89,7 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 - **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(ai-ready 가 만든 `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 *덧붙인다*(append, 통째 덮어쓰기 금지 — ai-ready 와 공동 저작하는 문서). 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다. 감지된 지식층 경로가 비어 있으면(프로젝트에 `docs/ANTIPATTERNS.md` 부재) 사용자에게 어디에 둘지 묻는다 — 임의 생성 금지.
 - **모듈 CLAUDE.md 추가**(문턱 미달·모듈 고유): 해당 `{module}/CLAUDE.md` "절대 금지" 섹션에 짧게.
 - **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다(이것이 스택 특유 종류가 자라는 유일한 경로 — 별도 생성기 없음). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "$CLAUDE_PLUGIN_ROOT/_loop-engine/test.sh"` 로 BASE 채점 회귀 0 확인.
+- **design 문서 보강 제안**(주로 출처3 — 문서가 침묵해 maker 가 스스로 결정한 지점): 이 스킬이 설계 문서를 직접 고치지 않는다. 보강 포인트(어느 문서 어느 구역에 어떤 결정을 명문화할지)를 사용자에게 제시하고, 프로젝트의 설계 문서 절차(예: c8c-api `/design --behavior`·`--decision`)로 넘긴다.
 - 반영 후 변경 파일·추가 항목을 사용자에게 1줄로 보고한다. 커밋은 사용자/별도 절차가 한다(이 스킬은 파일 기록까지).
 
 ## 트러블슈팅

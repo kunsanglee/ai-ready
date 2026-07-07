@@ -93,9 +93,9 @@ TICKET="$(git rev-parse --abbrev-ref HEAD | grep -oE "$LOOP_TICKET_REGEX" || tru
 LOOP_DIR="$PROJECT_ROOT/.loop/run/$TICKET"; mkdir -p "$LOOP_DIR"
 # 런타임 상태는 커밋 대상이 아니다 — .gitignore 에 .loop/run/ 멱등 추가(생성기가 없으니 여기서 보장).
 grep -qxF '.loop/run/' "$PROJECT_ROOT/.gitignore" 2>/dev/null || printf '.loop/run/\n' >> "$PROJECT_ROOT/.gitignore"
-STATE="$LOOP_DIR/stall.json"; HIST="$LOOP_DIR/history.jsonl"
+STATE="$LOOP_DIR/stall.json"; HIST="$LOOP_DIR/history.jsonl"; DEVI="$LOOP_DIR/deviations.jsonl"
 # 같은 티켓 재실행이면 직전 상태가 남아 정체 감지를 오염시킨다 — 새 루프면 초기화.
-: > "$HIST"; rm -f "$STATE"
+: > "$HIST"; rm -f "$STATE"; : > "$DEVI"
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -203,11 +203,11 @@ echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDIC
 
 - **PASS(수렴)**: 사람에게 결과 보고 — 통과 verdict, 사이클 수, 남은 MINOR(기록만), 변경 요약. PR 인계는 **보류 합의 사항**이라 자동으로 올리지 않는다(spec). feature-wrapup 또는 `/pr` 로 사람이 마감하도록 제안하고, 원하면 그때 진행.
 - **AWAIT_USER / STALLED / REGRESS / brake**: 멈춘 이유 + 현재 남은 finding(등급 내림차순) + 다음 행동 후보(고쳐서 재개 / 이 등급 안고 통과 승인 / 작업 정의 재정렬)를 사람에게 핑. 이 경우 코드는 마지막 maker 시도 상태로 워크트리에 남는다.
-- 종료 후(특히 PASS·사람 멈춤 모두) `/loop-lessons` 로 이 루프의 `history.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 사람에게 제안한다(선순환 닫기). 강제 아님.
+- 종료 후(특히 PASS·사람 멈춤 모두) `/loop-lessons` 로 이 루프의 `history.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 사람에게 제안한다(선순환 닫기). `deviations.jsonl`(maker 구현 노트 — Step 6)이 비어 있지 않으면 함께 넘긴다 — 작업 정의가 침묵했던 지점의 결정 기록이라 design 문서 보강 소재다. 강제 아님.
 
 ### Step 5-1. 종료 정리 (런타임 상태 폐기)
 
-`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
+`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch·deviations)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl`·`deviations.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
 
 ```bash
 rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
@@ -222,6 +222,7 @@ rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(�
 이 세션이 maker 다. Step 3 의 `$SCORED` finding(등급 내림차순)을 보고 **CRITICAL → MAJOR 순으로 실제 코드를 고친다**. 고치고 나면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시). 매 회차 코드가 바뀌어야 루프가 의미 있다 — 같은 결과를 N번 내지 않는다.
 
 - **코드를 작성·수정하면 그 변경분에 대응하는 테스트도 함께 작성한다.** 이 강제는 rubric 의 KINDS 표에 `test-missing`(convention, CRITICAL) 이 있어야 작동하는데, **현재 BASE rubric 에 등록돼 있어 LOCAL rubric 없이도 프로젝트 무관하게 작동한다**(checker 가 변경분에 대응 테스트 누락을 잡으면 셸이 CRITICAL→RETRY). 테스트 규약·도구가 다른 프로젝트는 LOCAL rubric 의 같은 kind 로 override 하거나 끈다 — 스킬 본문이 아니라 rubric 이 결정한다. 작성 직전에 Step 0 감지가 준 `$LOOP_CONVENTION_DOCS`(공백 구분 경로 목록 — 테스트 규약·네이밍·에러 처리 등 ai-ready 가 만든 문서) 중 변경 표면에 닿는 문서를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다. 목록이 비었거나 파일이 없으면 그 단계를 건너뛴다. 작성한 테스트는 Step 1 의 테스트 게이트(`$LOOP_TEST_CMD`)에 포함돼 실제로 실행·검증된다.
+- **작업 정의가 침묵하는 지점은 기록하고 계속 간다(구현 노트).** 고치다 보면 작업 정의·design 문서에 없는 세부 결정을 스스로 내려야 하는 지점(지도에 없는 영토)이 나온다. 조용히 추측만 하고 지나가지 말고: 보수적인 쪽(되돌리기 쉬운 쪽)을 고르고, `$LOOP_DIR/deviations.jsonl` 에 `{"iteration":N,"where":"파일:라인","gap":"문서가 침묵한 것","chosen":"실제 선택","why":"근거"}` 한 줄을 append 한 뒤 멈추지 않고 계속 간다. 작업 정의와 **모순**되는 지점(설계 결함 의심)은 이 기록 대상이 아니다 — 그건 기존대로 AWAIT_USER 로 사람에게. 이 파일은 종료 후 `/loop-lessons` 의 출처3으로 수확돼 design 문서 보강·지식층 후보 소재가 된다.
 - MINOR 만 남았으면 보통 PASS 라 여기 오지 않는다. RETRY_SOFT(MAJOR)는 고치되, 정체로 멈추면 사람 승인으로 통과 가능.
 - 고칠 수 없거나 고치면 안 되는 finding(force_await·비가역)은 maker 가 만지지 말고 AWAIT_USER 로 사람에게.
 

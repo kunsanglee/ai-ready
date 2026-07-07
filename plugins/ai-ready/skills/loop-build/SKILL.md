@@ -116,7 +116,7 @@ echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 120 × ${NPHA
 
 **phase 진입 — maker 서브에이전트 1명 스핀:**
 
-`Agent`(general-purpose) 로 maker 를 **하나** 띄운다. 프롬프트에 (1) 그 phase 의 step 들(goal·layer·signature·ac_cmd)과 `design_ref`(구현할 설계 구역), (2) **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄 요약**(진행 맥락 — 코드는 워크트리에 있지만 요약을 주면 재파악이 빠르다), (3) 프로젝트 컨벤션 문서 경로(`$LOOP_CONVENTION_DOCS`)를 준다. "이 phase 의 step 만, `design_ref` 의 설계대로 구현하라. 다른 phase 에 의존하지 마라. 코드를 고치면 대응 테스트도 함께 작성하라. **설계대로 구현이 불가능하거나 설계에 결함이 보이면 임의로 바꾸지 말고 그 사실을 보고하라**(→ 사람 판단)." maker 의 `agentId` 를 보관한다(사이클 이어가기용).
+`Agent`(general-purpose) 로 maker 를 **하나** 띄운다. 프롬프트에 (1) 그 phase 의 step 들(goal·layer·signature·ac_cmd)과 `design_ref`(구현할 설계 구역), (2) **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄 요약**(진행 맥락 — 코드는 워크트리에 있지만 요약을 주면 재파악이 빠르다), (3) 프로젝트 컨벤션 문서 경로(`$LOOP_CONVENTION_DOCS`), (4) 구현 노트 파일 절대경로(`$LOOP_DIR/deviations.jsonl`)를 준다. "이 phase 의 step 만, `design_ref` 의 설계대로 구현하라. 다른 phase 에 의존하지 마라. 코드를 고치면 대응 테스트도 함께 작성하라. **설계대로 구현이 불가능하거나 설계에 결함이 보이면 임의로 바꾸지 말고 그 사실을 보고하라**(→ 사람 판단). 설계가 **침묵**하는 세부(`design_ref` 에 없는 결정)를 스스로 내려야 하면 보수적인 쪽을 고르고, 구현 노트 파일에 `{"phase":"...","where":"파일:라인","gap":"설계가 침묵한 것","chosen":"실제 선택","why":"근거"}` 한 줄을 append 한 뒤 계속 가라 — 설계와의 모순은 보고(중단), 설계의 공백은 기록(계속)." maker 의 `agentId` 를 보관한다(사이클 이어가기용).
 
 **안쪽 루프 — loop-run Step 1~4 를 이 phase 컨텍스트에서:**
 
@@ -133,7 +133,7 @@ echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 120 × ${NPHA
    - 게이트가 깨진 경우도 같은 maker 에게 `SendMessage` 로 "빌드/테스트가 깨졌다. 고쳐라"를 넘긴다.
    - 못 고치거나 고치면 안 되는 finding(force_await·비가역)은 maker 에게 넘기지 말고 `AWAIT_USER`.
 
-> **설계 drift 는 무인이 판단하지 않는다(사람 게이트).** 실제 구현이 최초 설계(`design_ref`)와 달라져야 한다고 maker 가 보고하거나, checker 가 "코드가 설계와 다른데 코드 쪽이 맞아 보인다(설계 결함 의심)"를 잡으면 — maker 가 코드를 설계에 맞추는 걸로 끝내지 않고 **`AWAIT_USER` 로 멈춰 사람에게 설계 재결정을 맡긴다**. loop-build 는 "설계대로 구현"이 목표이지 "설계를 고쳐 구현"이 아니다. 설계 자체를 바꾸는 결정은 사람이 하고, 승인되면 프로젝트의 설계 문서 스킬(예: c8c-api `/design --decision`)로 설계 문서를 갱신한 뒤 그 phase 를 재개한다.
+> **설계 drift 는 무인이 판단하지 않는다(사람 게이트).** 실제 구현이 최초 설계(`design_ref`)와 달라져야 한다고 maker 가 보고하거나, checker 가 "코드가 설계와 다른데 코드 쪽이 맞아 보인다(설계 결함 의심)"를 잡으면 — maker 가 코드를 설계에 맞추는 걸로 끝내지 않고 **`AWAIT_USER` 로 멈춰 사람에게 설계 재결정을 맡긴다**. loop-build 는 "설계대로 구현"이 목표이지 "설계를 고쳐 구현"이 아니다. 설계 자체를 바꾸는 결정은 사람이 하고, 승인되면 프로젝트의 설계 문서 스킬(예: c8c-api `/design --decision`)로 설계 문서를 갱신한 뒤 그 phase 를 재개한다. 반대로 설계가 **침묵**하는 세부 결정은 이 게이트 대상이 아니다 — maker 가 보수 선택 + 구현 노트(`deviations.jsonl`) 기록으로 계속 가고, 종료 후 문서 보강 소재로 수확된다(Step 3).
 
 phase 가 PASS 하면 `phases.json` 의 그 phase `status=done` 으로 갱신하고 다음 phase 로. 남은 phase 가 없으면 Step 3.
 
@@ -145,12 +145,12 @@ phase 가 PASS 하면 `phases.json` 의 그 phase `status=done` 으로 갱신하
 
 - **커밋·push 하지 않는다.** 변경은 워크트리에 누적된 채 남긴다. 논리 단위 커밋·PR 은 프로젝트의 커밋·PR 마감 워크플로우(예: c8c-api `/feature-wrapup`·`/ship`·`/pr`)에서 사람이 마감한다. 이는 loop-run 의 "PR 인계 보류"와 정합적이다.
 - 롱런으로 uncommitted 가 커지면 wrapup 에서 phase 경계를 따라 쪼개 커밋하도록 제안한다.
-- 종료 후 `/loop-lessons` 로 이 루프의 `history-*.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 제안한다(선순환). 강제 아님.
+- 종료 후 `/loop-lessons` 로 이 루프의 `history-*.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 제안한다(선순환). `deviations.jsonl`(maker 구현 노트 — 설계가 침묵한 지점의 결정 기록)이 비어 있지 않으면 함께 넘긴다 — 아래 설계 문서 정합 반영 제안에서 어느 구역을 보강할지 짚는 1차 입력이다. 강제 아님.
 - **종료 후 설계 문서 정합 반영 제안.** phase 도중 큰 drift 는 `AWAIT_USER` 로 사람이 이미 `/design` 을 갱신했지만, 설계 의도 안에서 실제 구현이 문서와 미세하게 달라진 부분은 종료 후 프로젝트의 문서 정합·갱신 스킬(예: c8c-api `/sync-docs`·`/design --behavior`)로 반영하도록 제안한다. 각 phase 의 `design_ref` 가 어느 구역을 대조해야 하는지 짚어줘 사람이 코드↔문서를 처음부터 전수 대조하지 않게 한다. 강제 아님, 반영 주체는 사람.
 
 ### Step 3-1. 종료 정리 (loop-run Step 5-1 과 동일)
 
-`$LOOP_DIR`(phases.json·history-*.jsonl·stall)은 루프 한정 휘발성이다. **lesson 종합 다음에만** 폐기한다(종합 전 삭제 시 선순환 입력 소멸). 사람 멈춤(AWAIT_USER/STALLED/brake)으로 재개 여지가 있으면 바로 폐기하지 않는다 — `phases.json`(done/pending)·stall 이 남아야 이어서 돌릴 수 있다.
+`$LOOP_DIR`(phases.json·history-*.jsonl·stall·deviations)은 루프 한정 휘발성이다. **lesson 종합 다음에만** 폐기한다(종합 전 삭제 시 선순환 입력 소멸). 사람 멈춤(AWAIT_USER/STALLED/brake)으로 재개 여지가 있으면 바로 폐기하지 않는다 — `phases.json`(done/pending)·stall 이 남아야 이어서 돌릴 수 있다.
 
 ```bash
 rm -rf "$LOOP_DIR"   # PASS(전 phase done) + lesson 종합(또는 생략 결정) 후에만.
