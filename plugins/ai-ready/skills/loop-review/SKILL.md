@@ -70,7 +70,8 @@ LOOP_BASE_BRANCH="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT" | jq
 [ -f "$PROJECT_ROOT/.loop/rubric.md" ] && export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"
 # F 는 Step 2 에서 잡아 checker 에 넘긴 findings 출력 파일(= checker 가 쓴 정본). 결정적 경로라 여기서 같은 값으로 재현된다.
 F="${TMPDIR:-/tmp}/loop-review-findings.json"
-[ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 조용히 PASS 로 넘기지 말고 멈춰 보고" >&2; }
+# checker 가 파일에 못 썼으면(빈/미생성) exit 65 로 fail-loud — 조용히 PASS 금지(정상 빈 배열은 -s 통과라 오탐 없음).
+[ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 멈춰 보고" >&2; exit 65; }
 SCORED=$(bash "$ENG/score.sh" "$F")          # finding 마다 severity·await·base·kind_known 추가
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")   # verdict·counts·await 집계
 rm -f "$F"
