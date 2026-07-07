@@ -157,7 +157,7 @@ else echo "loop: LOOP_TEST_CMD 비어있음 — 테스트 게이트 스킵(셋�
 
 ```bash
 # 랜덤 mktemp 는 쓰지 않는다 — Bash 호출마다 셸이 새로 떠 그 변수는 다음(채점) 호출에 안 남는다.
-# 결정적 경로를 써야 스핀 프롬프트와 Step 3 채점이 같은 경로를 가리킨다. .loop/run/ 하위라 gitignore·소스 밖.
+# 결정적 경로를 써야 스핀 프롬프트와 Step 3 채점이 같은 경로를 가리킨다. .loop/run/ 하위라 gitignore(추적 소스 아님).
 F="$LOOP_DIR/checker-findings.json"
 : > "$F"   # 스핀 직전 비우기 — 직전 사이클 잔여가 남으면 checker 미기입을 거짓 통과로 가릴 수 있다.
 ```
@@ -169,8 +169,10 @@ F="$LOOP_DIR/checker-findings.json"
 checker 가 쓴 findings 파일(`$F`)을 채점 셸 파이프에 흘린다. **severity 는 셸이 매긴다 — checker 등급을 쓰지 않는다.**
 
 ```bash
-# $F 는 Step 2 에서 잡아 checker 에 넘긴 findings 출력 파일(= "$LOOP_DIR/checker-findings.json", checker 가 쓴 정본).
-[ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 조용히 PASS 로 넘기지 말고 멈춰 사람 호출" >&2; }
+# $F 는 Step 2 에서 checker 에 넘긴 findings 출력 파일. 결정적 경로라 이 새 셸에서 같은 값으로 재유도한다($ENG·$STATE·$HIST 와 같은 carry-over 관례).
+F="$LOOP_DIR/checker-findings.json"
+# checker 가 파일에 못 썼으면(빈/미생성) 조용히 PASS 로 넘기지 말고 멈춘다 — exit 65 로 fail-loud(정상 빈 배열 {"findings":[]} 은 바이트가 있어 -s 통과, 오탐 없음).
+[ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 멈춰 사람 호출" >&2; exit 65; }
 SCORED=$(bash "$ENG/score.sh" "$F")                              # finding 마다 severity·await 부여
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, counts, await}
 STALL=$(printf '%s' "$VERDICT"  | bash "$ENG/stall.sh" --state "$STATE")   # 정체 판정 + 상태 영속
