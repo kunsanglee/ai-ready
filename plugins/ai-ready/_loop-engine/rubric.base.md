@@ -80,7 +80,9 @@ checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 
 floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외표에 한 줄 등록된다(옛 "lessons 졸업"을 대체).
 
 > floor 값은 "모르는 건 더 보수적으로"가 기준. runtime·intent 를 한 단계씩 올렸다(runtime MAJOR→CRITICAL: 모르는 runtime → RETRY,
-> intent MINOR→MAJOR: 모르는 intent → RETRY_SOFT). security 차원은 IDOR(`idor-self-resource`) 하나만 — checker 가 그것만 security 로 태깅한다.
+> intent MINOR→MAJOR: 모르는 intent → RETRY_SOFT). security 차원은 BASE 에선 넓게 본다(인가·인증·입력 검증·민감정보 —
+> checker 본문 security 절과 동일 기준). "security=IDOR 하나로 좁히기"는 특정 프로젝트(c8c-api)의 LOCAL 결정이지 BASE 규칙이
+> 아니다 — 좁히려는 프로젝트는 LOCAL rubric·컨벤션 문서에 그 결정을 명시한다.
 
 <!-- LOOP_RUBRIC:DIMFLOOR:BEGIN -->
 
@@ -104,8 +106,9 @@ floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외�
 
 > floor 로 처리되어 표에서 빠진 종류(결정 이력): compatibility 3종·security idor·runtime 8종(concurrency-bug, transaction-scope,
 > event-before-commit, idempotency-missing, unbounded-findall, logic-regression, timeout-missing, enum-removal-risk)·convention-violation·
-> intent-requirement-missing 은 전부 자기 dimension floor 와 같아 floor 가 채점한다. `input-validation-injection`·`sensitive-info-exposure` 는
-> security 차원에서 제거됨(C-8: security=IDOR only).
+> intent-requirement-missing 은 전부 자기 dimension floor 와 같아 floor 가 채점한다. `input-validation-injection`·`sensitive-info-exposure` 를
+> 점검 범위에서 뺀 것(C-8: security=IDOR only)은 c8c-api 의 LOCAL 결정이다 — BASE 채점은 지금도 그 kind 슬러그가 오면
+> security floor(CRITICAL)로 채점하며, 다른 프로젝트의 checker 는 security 를 넓게 본다.
 
 <!-- LOOP_RUBRIC:KINDS:BEGIN -->
 
