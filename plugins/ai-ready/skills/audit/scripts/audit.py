@@ -1343,12 +1343,18 @@ def _copy_freshness_hook(out_dir: Path) -> Path | None:
         dst = dst_dir / "freshness_check.sh"
         dst.write_text(hook_src.read_text(encoding="utf-8"), encoding="utf-8")
         os.chmod(dst, 0o755)
+        # .py 누락은 조용히 넘기지 않는다 — .sh 만 복사되면 훅이 매 세션 missing 경고만 내는
+        # 죽은 훅이 되는데 설치 요약은 "생성됨"으로 보여 사용자가 눈치챌 수 없다.
         if py_src.is_file():
             py_dst = dst_dir / "freshness_check.py"
             py_dst.write_text(py_src.read_text(encoding="utf-8"), encoding="utf-8")
             os.chmod(py_dst, 0o755)
+        else:
+            print(f"경고: freshness_check.py 원본 없음({py_src}) — 훅 셸만 복사돼 자기완결이 아님. "
+                  "플러그인 설치 상태를 확인하세요.", file=sys.stderr)
         return dst
-    except OSError:
+    except OSError as e:
+        print(f"경고: freshness 훅 복사 실패({e}) — 훅이 부분 설치 상태일 수 있음", file=sys.stderr)
         return None
 
 

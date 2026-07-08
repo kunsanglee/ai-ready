@@ -71,6 +71,19 @@ class TestDetectBuildSystem(unittest.TestCase):
             b = detect_build.detect_build_system(root)
             self.assertEqual(b["test_cmd"], "")
 
+    def test_npm_stub_detection_case_and_false_positive(self):
+        # 대문자 변형도 스텁으로 접고, 문구만 언급하는 정당한 테스트 스크립트는 채택한다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"test": "echo \\"Error: No test specified\\" && exit 1"}}')
+            self.assertEqual(detect_build.detect_build_system(root)["test_cmd"], "")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"test": "echo \'no test specified for e2e\' && jest"}}')
+            self.assertEqual(detect_build.detect_build_system(root)["test_cmd"], "npm test")
+
     def test_cargo(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
