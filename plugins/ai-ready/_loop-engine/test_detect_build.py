@@ -62,6 +62,28 @@ class TestDetectBuildSystem(unittest.TestCase):
             self.assertEqual(b["build_system"], "pnpm")
             self.assertEqual(b["test_cmd"], "pnpm test")
 
+    def test_npm_default_test_stub_treated_as_absent(self):
+        # npm init 기본 스텁은 항상 exit 1 — 게이트로 채택하면 maker 가 못 고치는 공회전이 된다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1"}}')
+            b = detect_build.detect_build_system(root)
+            self.assertEqual(b["test_cmd"], "")
+
+    def test_npm_stub_detection_case_and_false_positive(self):
+        # 대문자 변형도 스텁으로 접고, 문구만 언급하는 정당한 테스트 스크립트는 채택한다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"test": "echo \\"Error: No test specified\\" && exit 1"}}')
+            self.assertEqual(detect_build.detect_build_system(root)["test_cmd"], "")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"test": "echo \'no test specified for e2e\' && jest"}}')
+            self.assertEqual(detect_build.detect_build_system(root)["test_cmd"], "npm test")
+
     def test_cargo(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

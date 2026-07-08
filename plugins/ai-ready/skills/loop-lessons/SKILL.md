@@ -43,15 +43,17 @@ description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 �
   DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
   LOOP_KNOWLEDGE_LAYER="$(printf '%s' "$DET" | jq -r '.knowledge_layer // ""')"   # ai-ready 가 만든 docs/ANTIPATTERNS.md
   LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"                                # 있으면 병합 대상, 없으면 새 kind 추가 시 생성
+  # 감지 값을 창에 출력 — 변수 대입만으론 Step 2 프롬프트에 넣을 값이 오케스트레이터에게 존재하지 않는다.
+  echo "lessons 값: knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / local_rubric=$LOOP_RUBRIC_LOCAL / engine=$ENG"
   bash "$ENG/lessons.sh" --history <history.jsonl>
   ```
-  (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다.
+  (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다. loop-build 처럼 history 가 phase 별 여러 파일(`history-*.jsonl`)이면 `lessons.sh` 를 파일마다 반복 호출해 mistake 목록을 합친다(단일 `--history` 입력).
 - **출처2 (checker 가 놓친 것, 선택)**: 사람이 결과 검토 중 "checker 가 여기 놓쳤다/과하게 잡았다" 한 지적(세션 안이면 대화에서), 또는 무인 드라이버면 PR 코멘트 추출 결과. 텍스트로 모은다.
 - 티켓/작업 요약 1~3문장(없으면 "작업 정의 없음").
 
 ### Step 2. synthesizer 호출 (후보 초안 작성)
 
-`Agent` 툴로 `loop-lesson-synthesizer` 를 호출한다. 프롬프트에 출처1 경로(또는 내용)·출처2 지적·티켓 요약을 넘긴다. synthesizer 는:
+`Agent` 툴로 `loop-lesson-synthesizer` 를 호출한다. 프롬프트에 출처1 경로(또는 내용)·출처2 지적·티켓 요약, 그리고 **지식층 경로·LOCAL rubric 경로·엔진 경로**(Step 1 이 echo 한 "lessons 값:" 줄의 값들)를 넘긴다 — 환경변수는 서브에이전트에 전달되지 않으므로 값 자체를 프롬프트 텍스트로 넘긴다. 지식층·LOCAL rubric 은 synthesizer 의 중복 차단·예외표 동반 제안이 읽고, 엔진 경로는 출처1 이 없을 때 synthesizer 가 `lessons.sh` 를 직접 돌리는 폴백에 쓴다. synthesizer 는:
 
 - 출처1+출처2 를 같은 근본원인끼리 클러스터링.
 - 각 클러스터를 일반 규칙인지/일회성인지 가르고 목적지 분류(ANTIPATTERNS / 모듈 CLAUDE.md / 버림·관찰).
@@ -96,7 +98,7 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 |---|---|---|
 | lessons.sh 출력이 비어있음 | history.jsonl 에 "떴다가 사라진 finding" 없음(고친 실수 0) | 정상 — 후보 없음. 억지로 만들지 않는다 |
 | 후보가 전부 "버림/관찰" | 전부 일회성·중복 | 정상. ANTIPATTERNS 는 반복·일반 규칙만. 그대로 종료 |
-| rubric KINDS 추가 후 test 실패 | 표 형식 깨짐(열 수 불일치) | 5열(kind_id\|dimension\|layer\|base_severity\|force_await\|note) 맞췄는지 확인 |
+| rubric KINDS 추가 후 test 실패 | 표 형식 깨짐(열 수 불일치) | 6열(kind_id\|dimension\|layer\|base_severity\|force_await\|note) 맞췄는지 확인 |
 
 ## Non-Goals
 

@@ -33,7 +33,9 @@ state_file=""
 arg=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --state) state_file="$2"; shift 2;;
+    --state)
+      [ $# -ge 2 ] || { echo "stall: --state 에 <file> 인자 필요" >&2; exit 64; }
+      state_file="$2"; shift 2;;
     *) arg="$1"; shift;;
   esac
 done
@@ -43,6 +45,10 @@ if [ -n "$arg" ]; then input="$(cat "$arg")"; else input="$(cat)"; fi
 # 빈 입력 = 앞단(decide) 실패 의심. 조용히 죽으면 state(best-ever floor)를 잃어 다음 사이클이
 # INIT 로 리셋되고 정체 감지가 무력화된다. 시끄럽게 거부하고 state 는 건드리지 않는다.
 [ -n "$input" ] || { echo "stall: 빈 입력 — decide 단계 실패 의심 (사람 대기)" >&2; exit 65; }
+# counts 없는 JSON(예: score 출력을 직결한 배선 오류)을 // 0 으로 [0,0,0] 오독하면 floor 가 0 벡터로
+# 굳어 이후 모든 사이클이 "미갱신"으로 왜곡된다 — decide 출력 계약을 fail-loud 로 강제한다.
+loop_validate_json "$input" 'type=="object" and has("counts")' \
+  'stall 입력은 decide 출력({counts:{...}})이어야 한다 (파이프 배선 오류 의심 — 사람 대기)'
 cur="$(jq -c '[(.counts.CRITICAL // 0), (.counts.MAJOR // 0), (.counts.MINOR // 0)]' <<<"$input")"
 
 thr_c="$(loop_param stall_threshold_critical)"

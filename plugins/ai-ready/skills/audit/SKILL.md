@@ -18,7 +18,7 @@ For a target codebase you point it at, this skill creates an `.ai-ready/` direct
 5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete.
 6. **`scaffolds/...`** — drafts for the missing docs (see "Layout-aware scaffolds" below)
 7. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history (clustered hotspots)
-8. **`hooks/freshness_check.sh`** — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`
+8. **`hooks/freshness_check.sh`** (+ `hooks/freshness_check.py`) — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`; the `.py` runner is copied alongside so the hook works without `CLAUDE_PLUGIN_ROOT`
 
 ### Layout-aware scaffolds
 
@@ -80,7 +80,7 @@ To raise the score by executing ROI actions directly, use the scripts below. The
 | `scaffold.py` | "Module CLAUDE.md coverage" | Drafts CLAUDE.md for the top-N hot modules — fills module summary, dependency list, and hot-file list automatically |
 | `extract_antipatterns.py` | "Seed ANTIPATTERNS.md" | Clusters `fix` / `hotfix` / `revert` (and Korean equivalents) commits by keyword and module hotspot |
 
-Scripts that modify existing files (`inject_module_map.py`, `install_hook.py`) are idempotent and expose a `--dry-run` option so changes can be previewed first.
+Scripts that modify existing files (`inject_module_map.py`, `inject_lazy_load_index.py`, `install_hook.py`) are idempotent. `inject_module_map.py` and `inject_lazy_load_index.py` expose a `--dry-run` option so changes can be previewed first; `install_hook.py` has no `--dry-run` (it offers `--uninstall` to remove the hook instead).
 
 **`--json` facts mode (v0.5.0+)**: the doc-touching scripts (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `inject_lazy_load_index`) accept `--json` to emit the gathered facts (doc list + summaries, dependency edges, matched sections, module summaries, present triggers) as JSON **without writing any document**. This is how `ai-ready:apply` maintains docs surgically — the script supplies read-only facts and the AI adds/updates only what changed while preserving human curation, instead of wholesale-overwriting. The `--out` write mode remains for bootstrapping a doc that does not exist yet.
 
@@ -151,7 +151,7 @@ After reviewing the generated scaffold, add this to the target project's `.claud
 }
 ```
 
-The hook runs at session end, compares mtimes between source files and their nearest CLAUDE.md, and writes a warning if the source has drifted ahead by >7 days (configurable inside the script).
+The hook runs at session end, compares mtimes between source files and their nearest CLAUDE.md, and writes a warning if the source has drifted ahead by >7 days (configurable inside the script). The audit copies both `freshness_check.sh` and its `freshness_check.py` runner into `.ai-ready/hooks/`, so the hook is self-contained and does not depend on `CLAUDE_PLUGIN_ROOT`.
 
 ## The 7-Category Rubric (100 points)
 
