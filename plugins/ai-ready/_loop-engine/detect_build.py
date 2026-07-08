@@ -177,7 +177,13 @@ def detect_build_system(target: Path) -> dict[str, str]:
         run = lambda s: f"{pm} run {s}"  # noqa: E731
         build_cmd = run("build") if "build" in scripts else ""
         # npm/yarn/pnpm 은 test 가 최상위 명령(`npm test`)이라 run 없이.
-        test_cmd = f"{pm} test" if "test" in scripts else ""
+        # npm init 기본 스텁("no test specified" && exit 1)은 테스트가 아니다 — 게이트로 채택하면
+        # maker 가 고칠 수 없는 실패라 매 사이클 게이트 재진입 공회전이 된다. 부재로 취급한다.
+        # 판정은 두 신호 동시 요구: 문구만 보면 그 문구를 언급하는 정당한 스크립트를 오탐하고,
+        # 대소문자를 안 접으면 "No test specified" 변형이 빠져나간다.
+        stub_text = str(scripts.get("test", "")).lower()
+        is_npm_stub = "no test specified" in stub_text and "exit 1" in stub_text
+        test_cmd = f"{pm} test" if ("test" in scripts and not is_npm_stub) else ""
         lint_cmd = run("lint") if "lint" in scripts else ""
         return {
             "build_system": pm,

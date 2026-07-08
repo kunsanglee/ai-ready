@@ -49,6 +49,15 @@ assert_eq "findings 비배열 거부 exit65" "$(score_rc '{"findings":"oops"}')"
 printf '{}' | bash "$DIR/score.sh" 2>/dev/null | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
 assert_eq "변질 입력 파이프 fail-loud(비0)" "$([ "$rc" -ne 0 ] && echo loud || echo silent)" "loud"
 
+# decide/stall 계약 검증: findings/counts 없는 JSON 을 // 폴백으로 PASS·[0,0,0] 오독하지 않는다.
+printf '{"nothing":1}' | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
+assert_eq "decide: findings 없는 입력 거부 exit65" "$rc" "65"
+sttmp="$(mktemp -d)"; stf="$sttmp/s.json"
+printf '{"findings":[]}' | bash "$DIR/stall.sh" --state "$stf" >/dev/null 2>&1; rc=$?
+assert_eq "stall: counts 없는 입력 거부 exit65" "$rc" "65"
+assert_eq "stall: 거부 시 state 미기록(floor 오염 방지)" "$([ -f "$stf" ] && echo written || echo none)" "none"
+rm -rf "$sttmp"
+
 # ── 3. 필드 누락이 크래시 대신 보수 채점 (BLOCKER 2 + HIGH 3) ──────
 miss_kind="$(printf '%s' '{"findings":[{"id":"x","dimension":"runtime"}]}' | bash "$DIR/score.sh" 2>/dev/null)"
 assert_eq "kind 누락 → 크래시 없이 dimension floor CRITICAL" "$(sev "$miss_kind" x)" "CRITICAL"
