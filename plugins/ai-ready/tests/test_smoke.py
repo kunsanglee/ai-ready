@@ -11,6 +11,8 @@ from the plugin root, or:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -321,6 +323,34 @@ class TestEvidenceInvariant(unittest.TestCase):
             (root / "ARCHITECTURE.md").write_text("# arch\nmod graph\ndeps here\n", encoding="utf-8")
             result = audit.run(root, root / ".ai-ready")
             self._assert_all_points_evidenced(result)
+
+
+class TestFreshnessHookStandalone(unittest.TestCase):
+    """복사된 freshness 훅이 CLAUDE_PLUGIN_ROOT 없는 프로젝트 훅 환경에서 도는지.
+
+    install_hook.py 는 `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh` 를
+    등록하는데, 프로젝트 훅 실행 환경에는 CLAUDE_PLUGIN_ROOT 가 없다. 복사본이
+    자기 옆의 freshness_check.py 를 찾아 self-contained 로 동작해야 한다.
+    """
+
+    def test_copied_hook_runs_without_plugin_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            out_dir = target / ".ai-ready"
+            out_dir.mkdir()
+            hook_sh = audit._copy_freshness_hook(out_dir)
+            self.assertIsNotNone(hook_sh, "_copy_freshness_hook 이 .sh 를 복사해야 함")
+            self.assertTrue((out_dir / "hooks" / "freshness_check.py").is_file(),
+                            "freshness_check.py 가 .sh 옆에 같이 복사돼야 함")
+            proc = subprocess.run(
+                ["bash", str(hook_sh)],
+                env={"CLAUDE_PROJECT_DIR": str(target), "PATH": os.environ["PATH"]},
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(proc.returncode, 0,
+                             f"advisory 훅은 항상 exit 0 이어야 함 — stderr: {proc.stderr}")
+            self.assertNotIn("missing", proc.stderr,
+                             ".py 동반 복사로 missing 경고가 없어야 함")
 
 
 if __name__ == "__main__":
