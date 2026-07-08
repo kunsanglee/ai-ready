@@ -41,13 +41,13 @@ AI 에이전트(Claude 등)가 낯선 코드베이스에서 잘 일하려면, �
 /plugin list
 ```
 
-> Claude Code 는 `plugin.json` 의 `version` 필드가 바뀐 경우에만 새 버전으로 인지합니다. 이 저장소는 매 릴리스에 버전을 올립니다. 현재 버전은 **v0.8.1** 입니다.
+> Claude Code 는 `plugin.json` 의 `version` 필드가 바뀐 경우에만 새 버전으로 인지합니다. 이 저장소는 매 릴리스에 버전을 올립니다. 현재 버전은 **v0.8.3** 입니다.
 
 ## 요구사항
 
 로컬 셸과 git 만 있으면 됩니다. 외부 서비스 인증은 필요 없습니다.
 
-- Python 3, `jq`, `bash` 3.2+ (macOS 기본 환경 호환), `git`
+- Python **3.10 이상**(감사 스크립트가 `X | None` 유니온 타입 표기를 사용 — 3.9 이하는 import 시점에 문법 오류), `jq`, `bash` 3.2+ (macOS 기본 환경 호환), `git`
 - 감사·문서 생성 스크립트는 **표준 라이브러리만** 씁니다(외부 의존성 0).
 
 ---
@@ -99,7 +99,8 @@ AI 에이전트(Claude 등)가 낯선 코드베이스에서 잘 일하려면, �
   - `dashboard.html` — 게이지·카테고리 막대·점수 추이 스파크라인을 담은 자체완결 대시보드
   - `history/{시각}.json` — 실행 이력(추이 렌더용, 삭제 금지)
   - `scaffolds/` — 누락 문서 초안(모듈별 CLAUDE.md 등)과 git 이력에서 추출한 `ANTIPATTERNS.md` 시드
-  - `hooks/freshness_check.sh` — 문서 신선도 점검 훅
+  - `hooks/freshness_check.sh` + `freshness_check.py` — 문서 신선도 점검 훅(자기완결 복사본)
+  - `README.md` — 산출물 소비 가이드(무엇부터 읽고 어디에 옮기는지)
 - **평가 카테고리 (7개, 총 100점)**
 
   | # | 카테고리 | 무엇을 보나 |
@@ -177,8 +178,6 @@ AI 에이전트(Claude 등)가 낯선 코드베이스에서 잘 일하려면, �
   - maker 는 phase 마다 새 서브에이전트로 격리하되, **한 phase 안의 재시도는 같은 maker 를 이어 부릅니다**(수정 맥락 유지).
   - 무인 순회를 시작·재개하기 직전 분해 결과(`phases.json`)가 온전한지 검증하고, 손상됐으면 즉시 멈춰 사람을 부릅니다(v0.8.1).
   - 구현이 설계와 어긋나야 한다고 판단되면 임의로 설계를 바꾸지 않고 멈춰 사람에게 재결정을 맡깁니다. 목표는 "설계대로 구현"이지 "설계를 고쳐 구현"이 아닙니다.
-
-> loop-build 하나만 더 깊게 보려면 브라우저용 시각 가이드가 별도로 있습니다. 이 README 는 플러그인 전체를 다룹니다.
 
 ### 언제 무엇을 쓰나
 
@@ -264,6 +263,8 @@ loop 계열 넷은 같은 결정론 판정 엔진을 공유합니다. 핵심은 
 
 ## 변경 이력
 
+- **0.8.3** — 배선·컨텍스트 위생 묶음. (1) freshness Stop 훅이 설치 직후 `CLAUDE_PLUGIN_ROOT` 부재로 죽던 버그 수리 — 훅 셸이 자기 위치에서 파이썬 스크립트를 찾고, audit 가 `.py` 도 함께 복사합니다. (2) checker·synthesizer 에게 컨벤션 문서·지식층·LOCAL rubric 경로를 **프롬프트로** 전달하도록 배선 — 환경변수는 서브에이전트에 전달되지 않아 기존 배선이 끊겨 있었습니다. (3) loop-run 이 brake 값·감지 명령을 `params.env` 로 파일 영속하고 매 Step 이 재유도 — Bash 호출 간 변수 소실로 brake 가 무력화되던 구멍을 막습니다. 게이트 실패 재진입도 brake 가 셉니다. (4) loop-build 의 stall·history·게이트 카운터를 phase 별 파일로 분리(앞 phase 잔재로 인한 거짓 STALLED 차단). (5) 오케스트레이터 컨텍스트 위생 규칙 명문화 — findings 전문을 읽지 않고 채점 요약만 보유, maker 재진입은 scored 파일 경로 인계, phases.json 갱신은 jq, 설계 세션과 오케스트레이션 세션 분리 권고. (6) decide/stall 입력 계약 fail-loud 검증, npm 기본 test 스텁 미채택, loop-review 베이스 브랜치 감지 순서·findings 경로 격리, BASE rubric 의 c8c-api 특화 security 좁히기를 LOCAL 결정으로 명시, 문서 드리프트 다수 정정.
+- **0.8.2** — checker findings 를 오케스트레이터가 지정한 결정적 파일로 회수합니다. 백그라운드 세션에선 서브에이전트의 최종 메시지가 인라인으로 전달되지 않아, 파일이 유일한 회수 경로입니다. checker 의 쓰기 금지 규칙에 그 단일 경로 예외를 두고, 스핀 전 파일 비우기와 빈 파일 fail-loud 가드로 stale 결과·미기입이 통과로 둔갑하는 것을 막습니다.
 - **0.8.1** — loop-build 견고성. 무인 순회를 시작·재개하기 직전 `phases.json` 을 검증해, 손상된 분해(빈 phase 목록, 이름·step·완료 확인 명령 누락, 잘못된 상태 값)면 즉시 멈추고 사람을 부릅니다. 기존 loop-run 등 사용처와 격리돼 하위호환을 깨지 않습니다.
 - **0.8.0** — `loop-build` 신설(멀티-phase 무인 빌드아웃, phase 별 서브에이전트 maker). 루프 상한 기본값 조정(회차 10→5, 시간 60→120분, 비용 $100→$500, 토큰 1M→5M). loop-run 문서 정정.
 - **0.6.0** — 과거 별도 plugin 이던 무인 검증 루프(loop-engine)를 ai-ready 안으로 통합. `/loop-run`·`/loop-review`·`/loop-lessons` + `loop-checker`·`loop-lesson-synthesizer` 에이전트 + 결정론 채점 셸이 audit/apply 와 한 plugin 으로 배포됩니다. 하나만 설치하면 `audit→apply→verify` 전 주기를 씁니다.
