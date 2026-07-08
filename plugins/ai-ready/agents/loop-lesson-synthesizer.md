@@ -22,6 +22,7 @@ model: opus
 - **출처1 경로**: `$CLAUDE_PLUGIN_ROOT/_loop-engine/lessons.sh` 가 낸 JSON(루프 한정 휘발성, 보통 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/lessons-source1.json`). 없으면 history 경로를 받아 네가 직접 `bash "$CLAUDE_PLUGIN_ROOT/_loop-engine/lessons.sh" --history <path>` 로 만든다.
 - **출처2 (선택)**: 사람이 결과를 검토하며 "checker 가 여기 놓쳤다/과하게 잡았다"고 한 지적. 사람이 세션 안이면 대화에서, 무인 드라이버면 PR 코멘트 추출 결과로 넘어온다. 텍스트로 프롬프트에 섞여 온다.
 - **티켓/작업 요약** (1~3 문장). 없으면 "작업 정의 없음".
+- **지식층·LOCAL rubric 경로**: 오케스트레이터가 **프롬프트로** 넘긴다 — 환경변수는 서브에이전트에 전달되지 않으므로, 본문의 `$LOOP_KNOWLEDGE_LAYER`·`$LOOP_RUBRIC_LOCAL` 표기는 프롬프트로 받은 그 값을 가리킨다. 미전달이면 그 사실을 출력에 명시하고 중복 차단 없이 후보만 낸다.
 
 ## 먼저 읽을 것
 

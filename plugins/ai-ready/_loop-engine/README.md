@@ -114,7 +114,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 
 위 부품(채점 셸 score/decide/stall·lesson 추출기 lessons·에이전트 loop-checker/loop-lesson-synthesizer)을 묶는 오케스트레이션은 ai-ready 플러그인의 **스킬**이 한다. 별도 `/loop` 스킬·`profile.env`·외부 게이트 스크립트(enum-converter-guard 등)는 두지 않는다 — 부품을 묶는 정책이 곧 스킬 본문이고, 게이트는 런타임 감지한 빌드·테스트 명령으로 스킬이 직접 돌린다.
 
-- **`/loop-run`** — 무인 자동 루프(사람 핸드오프, 케이스3). Step 0 에서 `detect_build.py` 로 빌드·테스트·린트 명령·티켓·베이스를 런타임 감지(어댑터 파일 없음), 매 사이클 brake(반복·시간) 선확인 → 컴파일·테스트 게이트 → loop-checker 1회 → `score|decide|stall` → verdict 분기 → maker 재진입. brake 값은 `rubric.base.md` PARAMS(`max_iterations` 10·`budget_minutes` 60 등) 단일 원천.
+- **`/loop-run`** — 무인 자동 루프(사람 핸드오프, 케이스3). Step 0 에서 `detect_build.py` 로 빌드·테스트·린트 명령·티켓·베이스를 런타임 감지(어댑터 파일 없음), 매 사이클 brake(반복·시간) 선확인 → 컴파일·테스트 게이트 → loop-checker 1회 → `score|decide|stall` → verdict 분기 → maker 재진입. brake 값은 `rubric.base.md` PARAMS(`max_iterations` 5·`budget_minutes` 120 등) 단일 원천.
 - **`/loop-review`** — 1회 점검(사람이 곧 루프). checker 1회 + 채점 → 보고서. 코드 안 고침.
 - **`/loop-lessons`** — 종료 후 lesson 수확. `lessons.sh` 출력 + 사람·PR 지적을 loop-lesson-synthesizer 가 ANTIPATTERNS 후보 초안으로 만들고, 사람 승인분만 반영.
 - **케이스2(Sentry 무인)** — agent 봇이 `runLoopFix` 로 수정 worktree 에서 헤드리스로 `/loop-run` 을 띄워 같은 엔진을 돈다(케이스2 = 케이스3, 헤드리스 위임). brake 집행도 그 스킬이 한다.
