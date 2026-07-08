@@ -1326,20 +1326,27 @@ def _archive_history(out_dir: Path, audit: dict) -> Path | None:
 
 
 def _copy_freshness_hook(out_dir: Path) -> Path | None:
-    """T-4: 플러그인의 freshness_check.sh 를 .ai-ready/hooks/ 에 실제 복사.
+    """T-4: 플러그인의 freshness_check.sh + freshness_check.py 를 .ai-ready/hooks/ 에 실제 복사.
 
     install_hook.py 가 등록할 때 `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`
     경로를 가리키므로 파일이 실제로 존재해야 한다 (이전엔 SKILL.md 만 광고하고 안 만들었음).
+    .sh 는 자기 위치 옆의 freshness_check.py 를 우선 탐색하므로, 프로젝트 훅 실행
+    환경에 CLAUDE_PLUGIN_ROOT 가 없어도 동작하도록 .py 도 같은 디렉토리에 복사한다.
     """
-    src = Path(__file__).resolve().parent.parent / "hooks" / "freshness_check.sh"
-    if not src.is_file():
+    hook_src = Path(__file__).resolve().parent.parent / "hooks" / "freshness_check.sh"
+    py_src = Path(__file__).resolve().parent / "freshness_check.py"
+    if not hook_src.is_file():
         return None
     dst_dir = out_dir / "hooks"
     try:
         dst_dir.mkdir(exist_ok=True)
         dst = dst_dir / "freshness_check.sh"
-        dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        dst.write_text(hook_src.read_text(encoding="utf-8"), encoding="utf-8")
         os.chmod(dst, 0o755)
+        if py_src.is_file():
+            py_dst = dst_dir / "freshness_check.py"
+            py_dst.write_text(py_src.read_text(encoding="utf-8"), encoding="utf-8")
+            os.chmod(py_dst, 0o755)
         return dst
     except OSError:
         return None
