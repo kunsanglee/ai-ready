@@ -27,7 +27,7 @@ description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/ste
 - `ai-ready` plugin 의 일부. 판정 엔진은 loop-run 과 **같은 번들** 을 쓴다: `$CLAUDE_PLUGIN_ROOT/_loop-engine`(채점 셸 + `lib.sh` 의 `loop_param` + `detect_build.py`), `$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`(BASE rubric), `$CLAUDE_PLUGIN_ROOT/agents/loop-checker.md`.
 - 프로젝트 사실(빌드·테스트·린트·티켓·베이스 브랜치·컨벤션 docs·지식층)은 loop-run 과 똑같이 `detect_build.py` 가 런타임 감지. 별도 어댑터 파일 없음.
 - 프로젝트 LOCAL rubric(`.loop/rubric.md`)·지식층(`docs/ANTIPATTERNS.md`)도 loop-run 과 공유.
-- 런타임 상태는 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(loop-run 과 같은 자리, 티켓 슬러그로 분리). phase 진행 상태(`phases.json`)를 여기에 추가로 둔다 — 루프 한정 휘발성, `.gitignore` 로 `.loop/run/` 제외.
+- 런타임 상태는 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(loop-run 과 같은 자리, 티켓 슬러그로 분리). phase 진행 상태(`phases.json`)와 phase 별 history·stall·checker-findings·scored, 재유도 스냅숏 `params.env` 를 여기에 둔다 — 루프 한정 휘발성, `.gitignore` 로 `.loop/run/` 제외.
 
 ## 핵심 불변 (loop-run 5개 상속 + 2개 추가)
 
@@ -98,12 +98,21 @@ printf 'PHASES=%q\n' "$PHASES" >> "$LOOP_DIR/params.env"   # 재유도용 — �
 순회 시작 전 두 가지를 한다. 먼저 `phases.json` 이 소비 가능한 형식인지 **fail-loud 로 검증**한다. 무인 시작 후엔 사람이 빠져 조용한 순회 오작동(status 오타로 phase 를 영영 pending 으로 봐 무한 순회하거나 건너뜀)을 잡을 사람이 없으므로, `score.sh` 가 변질된 checker JSON 을 exit 65 로 거부하는 것과 같은 결로 소비 직전에 거른다. 그다음 Step 1 에서 확정된 phase 수 `N` 으로 전체 시간 상한을 phase 수 비례로 재계산한다 — Step 0 이 loop-run 방식으로 잡은 phase 당 `BUDGET_MIN`(rubric `budget_minutes`, 기본 120)에 `N` 을 곱한다:
 
 ```bash
+# 재유도 프리앰블(loop-run Step 1 과 동일) — 이 블록도 별도 Bash 호출이라 carry-over 를 가정하지 않는다.
+# (프리앰블 없이 돌면 BUDGET_MIN 미정의 → 0 이 영속돼 모든 사이클이 즉시 brake 된다.)
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LOOP_DIR/params.env" ] \
+  || { echo "loop-build: params.env 없음 — Step 0 미실행/폐기됨" >&2; exit 65; }
+set -a; . "$LOOP_DIR/params.env"; set +a
+
 # (1) phases.json fail-loud 검증 — 무인 시작·재개 직전. score.sh 의 변질 입력 exit 65 거부와 같은 결.
 #     .phases 비배열/빈배열, phase 의 name·steps 누락, step 의 ac_cmd 누락(AC 없으면 step 이 아님),
 #     status 가 pending/in_progress/done/blocked 밖 — 하나라도 걸리면 멈추고 사람 호출.
+#     name 은 파일명으로도 쓰인다(history-{phase}.jsonl 등) — '/' 가 들어가면 경로로 해석돼 생성이 깨지므로 금지.
 jq -e '
   (.phases | type=="array" and length>0) and all(.phases[];
-    (.name | type=="string" and length>0)
+    (.name | type=="string" and length>0 and (contains("/") | not))
     and (.status | IN("pending","in_progress","done","blocked"))
     and (.steps | type=="array" and length>0)
     and all(.steps[];
@@ -111,11 +120,13 @@ jq -e '
       and (.status | IN("pending","in_progress","done","blocked"))))
 ' "$PHASES" >/dev/null || { echo "loop-build: phases.json 스키마 위반 — 무인 시작 중단, 사람 호출" >&2; exit 65; }
 
-# (2) 전체 시간 상한을 phase 수 비례로 재계산.
+# (2) 전체 시간 상한을 phase 수 비례로 재계산 — 재개로 이 블록이 재실행돼도 멱등하도록,
+#     phase 당 원값(BUDGET_MIN_PHASE)을 따로 영속하고 늘 그 원값에서 곱한다(이미 곱한 BUDGET_MIN 에 재곱 금지).
 NPHASE=$(jq '.phases | length' "$PHASES")
-BUDGET_MIN=$(( BUDGET_MIN * NPHASE ))   # phase 당 120분 × phase 수 = 전체 상한. 뒤 phase 가 시간에 안 잘리게.
-printf 'BUDGET_MIN=%q\n' "$BUDGET_MIN" >> "$LOOP_DIR/params.env"   # 재계산 값 영속 — source 는 뒤 줄이 이겨 이 값이 집행된다
-echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 120 × ${NPHASE}개)"
+BUDGET_MIN_PHASE="${BUDGET_MIN_PHASE:-$BUDGET_MIN}"
+BUDGET_MIN=$(( BUDGET_MIN_PHASE * NPHASE ))
+printf 'BUDGET_MIN_PHASE=%q\nBUDGET_MIN=%q\n' "$BUDGET_MIN_PHASE" "$BUDGET_MIN" >> "$LOOP_DIR/params.env"
+echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 ${BUDGET_MIN_PHASE} × ${NPHASE}개)"
 ```
 
 **phase 진입 — maker 서브에이전트 1명 스핀:**
@@ -129,22 +140,29 @@ echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 120 × ${NPHA
 # (findings 파일 분리와 같은 결. phase 1 이 PASS 로 floor 를 낮춘 stall.json 을 phase 2 가 물려받으면
 #  첫 사이클부터 "floor 미갱신"이 쌓여 거짓 STALLED 가 뜬다 — stall 도 반드시 phase 별 파일로.)
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
-LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active")"; . "$LOOP_DIR/params.env"
+BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LOOP_DIR/params.env" ] \
+  || { echo "loop-build: params.env 없음 — Step 0 미실행/폐기됨" >&2; exit 65; }
+set -a; . "$LOOP_DIR/params.env"; set +a
 PHASE="<이 phase 의 name>"
-printf 'HIST=%q\nSTATE=%q\n' "$LOOP_DIR/history-$PHASE.jsonl" "$LOOP_DIR/stall-$PHASE.json" >> "$LOOP_DIR/params.env"
+# PHASE 자체도 영속 — 뒤 채점(scored-$PHASE.json)·done 갱신(jq --arg p "$PHASE")이 별도 Bash 호출이라,
+# 영속 없이는 프레시 셸에서 PHASE 가 빈 문자열이 되어 scored 파일이 겹쳐 쓰이고 done 갱신이 조용히 no-op 된다.
+printf 'PHASE=%q\nHIST=%q\nSTATE=%q\n' "$PHASE" "$LOOP_DIR/history-$PHASE.jsonl" "$LOOP_DIR/stall-$PHASE.json" >> "$LOOP_DIR/params.env"
 rm -f "$LOOP_DIR/gate.fail"   # 게이트 실패 카운터도 phase 단위로 리셋
+# checker 프롬프트에 넣을 값을 창에 출력(변수 대입만으론 오케스트레이터가 값을 모른다).
+echo "phase 진입: $PHASE / checker 프롬프트 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[${LOOP_RUBRIC_LOCAL:-없음}]"
 ```
 
-loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므로, 이 재정의 이후의 brake 회차(`$HIST` 줄 수)·정체 판정(`$STATE`)은 자동으로 이 phase 스코프가 된다.
+loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므로, 이 재정의 이후의 brake 회차(`$HIST` 줄 수)·정체 판정(`$STATE`)·scored 산출물(`$PHASE`)은 자동으로 이 phase 스코프가 된다.
 
 **안쪽 루프 — loop-run Step 1~4 를 이 phase 컨텍스트에서:**
 
 1. **게이트(loop-run Step 1)**: brake 선확인 → 컴파일(`$LOOP_BUILD_CMD`) → 테스트(`$LOOP_TEST_CMD`). 깨지면 checker 안 부르고 **maker 재진입**(아래 5번)으로.
-2. **checker 1회(loop-run Step 2)**: `Agent` 로 `loop-checker` 를 **매 사이클 새로** 띄운다. 스핀 전에 findings 출력 경로를 **phase 별** 결정적 위치로 잡고 비운다 — `F="$LOOP_DIR/checker-findings-{phase}.json"; : > "$F"`. **phase 별 파일이 핵심이다**: 단일 파일을 phase 가 공유하면 앞 phase 의 깨끗-통과 잔여(`{"findings":[]}`)가 남아, 다음 phase 에서 오케스트레이터가 비우기를 빠뜨리고 checker 가 안 쓰면 그 옛 빈 배열이 채점돼 미점검 phase 가 done 으로 둔갑한다. phase 분리(`history-{phase}.jsonl` 와 같은 결)면 다음 phase 의 파일은 없는 상태로 시작해 `[ -s "$F" ]`+score.sh 가 fail-loud 로 멈춘다. checker 는 결과 `{base, findings:[...]}` 를 그 파일에 쓰고, 오케스트레이터는 그 파일을 **열지 않고 경로째** 채점 셸에 넘긴다(백그라운드 세션은 서브에이전트 최종 메시지가 인라인으로 안 와 파일이 정본 회수 경로, loop-run Step 2 개정판). 프롬프트에 원 작업 정의 + 설계 문서 경로 + **이 phase 의 `design_ref` 와 step 목록**(이 phase 가 그 설계대로 구현됐는지 정합을 phase 단위로 점검하게 한다) + 베이스 + 점검 기준 문서(`$LOOP_CONVENTION_DOCS`·`$LOOP_KNOWLEDGE_LAYER`·LOCAL rubric 경로 — 환경변수는 서브에이전트에 전달되지 않으니 값 자체를 프롬프트 텍스트로, 비었으면 "없음" 명시) + 그 findings 출력 경로. **maker 의 변명·구현 설명을 절대 넣지 않는다**(불변 1). checker 는 diff·컨벤션·ANTIPATTERNS 를 독립적으로 읽고, intent 차원으로 **이 phase 코드 ↔ `design_ref` 정합**을 본다 — 코드가 설계를 벗어나면 finding(채점을 거쳐 PASS 를 막으므로, 이게 곧 "이 phase 를 설계대로 구현했나"라는 phase 통과 조건이다).
+2. **checker 1회(loop-run Step 2)**: `Agent` 로 `loop-checker` 를 **매 사이클 새로** 띄운다. 스핀 전에 findings 출력 경로를 **phase 별** 결정적 위치로 잡고 비운다 — `F="$LOOP_DIR/checker-findings-{phase}.json"; : > "$F"`. **phase 별 파일이 핵심이다**: 단일 파일을 phase 가 공유하면 앞 phase 의 깨끗-통과 잔여(`{"findings":[]}`)가 남아, 다음 phase 에서 오케스트레이터가 비우기를 빠뜨리고 checker 가 안 쓰면 그 옛 빈 배열이 채점돼 미점검 phase 가 done 으로 둔갑한다. phase 분리(`history-{phase}.jsonl` 와 같은 결)면 다음 phase 의 파일은 없는 상태로 시작해 `[ -s "$F" ]`+score.sh 가 fail-loud 로 멈춘다. checker 는 결과 `{base, findings:[...]}` 를 그 파일에 쓰고, 오케스트레이터는 그 파일을 **열지 않고 경로째** 채점 셸에 넘긴다(백그라운드 세션은 서브에이전트 최종 메시지가 인라인으로 안 와 파일이 정본 회수 경로, loop-run Step 2 개정판). 프롬프트에 원 작업 정의 + 설계 문서 경로 + **이 phase 의 `design_ref` 와 step 목록**(이 phase 가 그 설계대로 구현됐는지 정합을 phase 단위로 점검하게 한다) + 베이스 + 점검 기준 문서(`$LOOP_CONVENTION_DOCS`·`$LOOP_KNOWLEDGE_LAYER`·BASE/LOCAL rubric 경로 — 환경변수는 서브에이전트에 전달되지 않으니 phase 진입 블록이 echo 한 값 자체를 프롬프트 텍스트로, 비었으면 "없음" 명시) + 그 findings 출력 경로. **maker 의 변명·구현 설명을 절대 넣지 않는다**(불변 1). checker 는 diff·컨벤션·ANTIPATTERNS 를 독립적으로 읽고, intent 차원으로 **이 phase 코드 ↔ `design_ref` 정합**을 본다 — 코드가 설계를 벗어나면 finding(채점을 거쳐 PASS 를 막으므로, 이게 곧 "이 phase 를 설계대로 구현했나"라는 phase 통과 조건이다).
 3. **채점(loop-run Step 3)**: checker 가 쓴 findings 파일(`$F` = `$LOOP_DIR/checker-findings-{phase}.json`)을 `score.sh → decide.sh → stall.sh` 파이프에 흘려 verdict·정체를 낸다. 파일이 비었거나 없으면 checker 실패다 — `[ -s "$F" ] || { echo "checker 미기입" >&2; exit 65; }` 로 멈추고 사람 호출(조용히 PASS 금지). severity 는 셸이 매긴다. 이 phase 의 history 는 `$HIST`(= `$LOOP_DIR/history-{phase}.jsonl`)에, 정체 상태는 `$STATE`(= `$LOOP_DIR/stall-{phase}.json`)에 — 둘 다 phase 진입 때 재정의된 값이다. 채점 결과는 maker 인계용으로 파일에도 남긴다: `printf '%s' "$SCORED" > "$LOOP_DIR/scored-$PHASE.json"`. 오케스트레이터 창에는 counts 와 `등급·종류·위치` 한 줄 목록까지만 남기고 evidence 전문은 읽지 않는다.
 4. **분기(loop-run Step 4, 우선순위 순)**:
    - `AWAIT_USER`(비가역/force_await) → **멈춤, 사람 호출.**
-   - brake 도달(phase iter ≥ MAX_ITER 또는 전체 경과 ≥ BUDGET_MIN) → **멈춤, 사람 호출.**
+   - brake 도달(phase iter + 게이트 실패 ≥ MAX_ITER 또는 전체 경과 ≥ BUDGET_MIN — loop-run Step 1 과 동일 합산) → **멈춤, 사람 호출.**
    - `STALLED`/`REGRESS_ESCALATE` → **멈춤, 사람 호출.**
    - `PASS` → 이 phase `status=done`, maker 서브에이전트 종료, **다음 phase 로**.
    - `RETRY`/`RETRY_SOFT` → 5번(maker 재진입).
@@ -157,7 +175,14 @@ loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므�
 phase 가 PASS 하면 그 phase 를 `status=done` 으로 갱신하고 다음 phase 로. 갱신은 Read/Edit 가 아니라 Bash 의 jq 로 한다 — Read 는 파일 전문을 오케스트레이터 창에 다시 주입한다:
 
 ```bash
+# 프리앰블로 PHASE·PHASES 를 params.env 에서 복원(프레시 셸에서 빈 PHASE 면 jq 가 0건 매칭 no-op 된다).
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR")"; set -a; . "$LOOP_DIR/params.env"; set +a
 jq --arg p "$PHASE" '(.phases[] | select(.name==$p)).status = "done"' "$PHASES" > "$PHASES.tmp" && mv "$PHASES.tmp" "$PHASES"
+# 갱신 검증 — jq 는 매칭 0건이어도 exit 0 으로 원본을 그대로 내므로, 실제로 done 이 됐는지 확인해야 fail-loud 다.
+jq -e --arg p "$PHASE" '[.phases[] | select(.name==$p) | .status] == ["done"]' "$PHASES" >/dev/null \
+  || { echo "loop-build: phase '$PHASE' done 갱신 실패(매칭 0건/중복 이름) — 멈추고 사람 호출" >&2; exit 65; }
 ```
 
 남은 phase 가 없으면 Step 3.
@@ -181,6 +206,8 @@ jq --arg p "$PHASE" '(.phases[] | select(.name==$p)).status = "done"' "$PHASES" 
 
 ```bash
 rm -rf "$LOOP_DIR"   # PASS(전 phase done) + lesson 종합(또는 생략 결정) 후에만.
+BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+rm -f "$PROJECT_ROOT/.loop/run/.active-$BR"   # 이 브랜치의 재유도 포인터도 함께(loop-run Step 5-1 과 동일).
 ```
 
 ## 재개 (중단된 롱런 이어가기)

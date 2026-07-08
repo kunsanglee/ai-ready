@@ -105,7 +105,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
   빈/null/`{}`/형식오류 JSON 이 흔하다. 그걸 조용히 PASS 로 통과(fail-open)시키지 않고 `exit 65` 로 거부한다
   (오케스트레이터는 사람 대기 신호로 본다). 깨끗한 `{"findings":[]}` 만 정상 통과. kind·dimension 누락은 jq
   크래시 없이 보수 채점하며, 모르는/누락 dimension 은 가장 관대한 MINOR 가 아니라 CRITICAL 로 떨어뜨린다.
-  `decide.sh`·`stall.sh` 도 빈 입력을 거부해 파이프(`score|decide|stall`)가 앞단 실패를 통과로 둔갑시키지 못하게 한다.
+  `decide.sh`·`stall.sh` 도 빈 입력과 계약 밖 입력(`findings`/`counts` 누락 — 배선 오류로 다른 단계 출력이 직결된 경우)을 거부해 파이프(`score|decide|stall`)가 앞단 실패를 통과로 둔갑시키지 못하게 한다.
 - **종료는 점수 합산이 아니라 severity 게이트.** BLOCKER 0 AND CRITICAL 0 → PASS.
 - 정체 점수는 **가중 합 버리고** 등급 개수 벡터 사전식 + best-ever floor("직전 대비" 아님)라
   MINOR 희석·토글 왕복 게이밍을 코어만으로 차단.
@@ -119,4 +119,4 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 - **`/loop-lessons`** — 종료 후 lesson 수확. `lessons.sh` 출력 + 사람·PR 지적을 loop-lesson-synthesizer 가 ANTIPATTERNS 후보 초안으로 만들고, 사람 승인분만 반영.
 - **케이스2(Sentry 무인)** — agent 봇이 `runLoopFix` 로 수정 worktree 에서 헤드리스로 `/loop-run` 을 띄워 같은 엔진을 돈다(케이스2 = 케이스3, 헤드리스 위임). brake 집행도 그 스킬이 한다.
 
-런타임 상태(`history.jsonl` producer·`stall.json` state·`started.epoch`)는 `/loop-run` 스킬이 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 에 사이클마다 append·갱신하고, 종료 시(lesson 종합 후) 폐기한다. `.loop/run/` 은 gitignore.
+런타임 상태(`history.jsonl` producer·`stall.json` state·`started.epoch`·재유도 스냅숏 `params.env`·게이트 실패 카운터 `gate.fail`·checker findings/scored + 브랜치별 포인터 `.active-{브랜치}`)는 `/loop-run` 스킬이 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 에 사이클마다 append·갱신하고, 종료 시(lesson 종합 후) 폐기한다. `.loop/run/` 은 gitignore.
