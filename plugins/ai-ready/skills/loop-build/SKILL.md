@@ -15,7 +15,7 @@ description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/ste
 |---|---|---|
 | 목적 | 하나의 변경을 PASS 까지 수렴 | 설계를 여러 phase 로 나눠 무인 빌드아웃 |
 | 오케스트레이터 | 메인 세션(= maker 겸임) | 메인 세션(= 순수 오케스트레이터, 코딩 안 함) |
-| maker | 메인 세션 자신 | **phase 마다 새 서브에이전트**(SendMessage 로 사이클 이어감) |
+| maker | 메인 세션 자신 | **phase 마다 새 `loop-maker` 서브에이전트**(SendMessage 로 사이클 이어감) |
 | checker | 매 사이클 새 `loop-checker` 서브에이전트 | **동일** (재사용) |
 | 채점 | `_loop-engine` 셸(score/decide/stall) + BASE/LOCAL rubric | **동일** (재사용) |
 | 범위 | `origin/main...HEAD + uncommitted` | phase 별 diff, 누적은 워크트리 |
@@ -131,7 +131,9 @@ echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 ${BUDGET_MIN_
 
 **phase 진입 — maker 서브에이전트 1명 스핀:**
 
-`Agent`(general-purpose) 로 maker 를 **하나** 띄운다. 프롬프트에 (1) 그 phase 의 step 들(goal·layer·signature·ac_cmd)과 `design_ref`(구현할 설계 구역), (2) **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄 요약**(진행 맥락 — 코드는 워크트리에 있지만 요약을 주면 재파악이 빠르다), (3) 프로젝트 컨벤션 문서 경로(`$LOOP_CONVENTION_DOCS` 값 — 환경변수는 서브에이전트에 전달되지 않으니 값 자체를 텍스트로)를 준다. "이 phase 의 step 만, `design_ref` 의 설계대로 구현하라. 다른 phase 에 의존하지 마라. 코드를 고치면 대응 테스트도 함께 작성하라. **설계대로 구현이 불가능하거나 설계에 결함이 보이면 임의로 바꾸지 말고 그 사실을 보고하라**(→ 사람 판단). **완료 보고는 5줄 이내 요약**(변경 파일 목록·테스트 결과·특이사항)으로 하고 코드 본문·diff 를 보고에 붙여넣지 마라." maker 의 `agentId` 를 보관한다(사이클 이어가기용).
+`Agent` 로 `loop-maker` 를 **하나** 띄운다 — 행동 규칙(이 phase 만·테스트 동반·설계 결함 시 보고·5줄 보고·커밋 금지)은 그 에이전트 정의가 담당하므로 프롬프트에 반복하지 않는다. 프롬프트에는 phase 별 가변 정보만: (1) 그 phase 의 step 들(goal·layer·signature·ac_cmd)과 `design_ref`(구현할 설계 구역), (2) **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄 요약**(진행 맥락 — 코드는 워크트리에 있지만 요약을 주면 재파악이 빠르다), (3) 프로젝트 컨벤션 문서 경로(`$LOOP_CONVENTION_DOCS` 값 — 환경변수는 서브에이전트에 전달되지 않으니 값 자체를 텍스트로). maker 의 `agentId` 를 보관한다(사이클 이어가기용).
+
+> 모델: loop-maker 는 frontmatter 기본값이 `opus` 다(v0.8.5) — 구현은 생산 작업이라 세션 모델보다 아래 급을 기본으로 두고, 검증은 세션 모델을 상속하는 checker 가 맡는 비대칭이 전제다. phase 난도 판단에 따라 이 `Agent` 호출에 `model` 파라미터를 지정해 상향·하향할 수 있다 — 호출 파라미터가 frontmatter 를 이긴다.
 
 **phase 스코프 상태 — history·stall·게이트 카운터를 phase 별로 분리:**
 
