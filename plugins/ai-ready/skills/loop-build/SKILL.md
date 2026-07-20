@@ -168,7 +168,7 @@ loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므�
    - `AWAIT_USER`(비가역/force_await) → **멈춤, 사람 호출.**
    - brake 도달(phase iter + 게이트 실패 ≥ MAX_ITER 또는 전체 경과 ≥ BUDGET_MIN — loop-run Step 1 과 동일 합산) → **멈춤, 사람 호출.**
    - `STALLED`/`REGRESS_ESCALATE` → **멈춤, 사람 호출.**
-   - `PASS` → 이 phase `status=done`, maker 서브에이전트 종료, **다음 phase 로**.
+   - `PASS` → 이 phase `status=done`, **maker 종료 통지**, **다음 phase 로**. maker 는 백그라운드 팀메이트라 통지 없이는 대기 상태로 남는다 — `SendMessage({to: <agentId>})` 로 "phase 완료 — 종료. 새 작업을 시작하지 말고 한 줄 확인으로 턴을 끝내라" 를 보내고 응답을 기다리지 않는다. 이후 이 maker 에는 재진입하지 않으며, 다음 phase 는 새 maker 를 띄운다.
    - `RETRY`/`RETRY_SOFT` → 5번(maker 재진입).
 5. **maker 재진입 — `SendMessage` 로 같은 maker 를 이어감(불변 6):** `SendMessage({to: <agentId>})` 에는 **counts 요약 한 줄 + scored 파일 경로(`$LOOP_DIR/scored-{phase}.json`)만** 담아 "이 파일을 읽고 CRITICAL→MAJOR 순으로 고쳐라. 고친 코드에 대응 테스트도" 라고 이어 지시한다. finding 전문(evidence 산문)을 메시지에 붙여넣지 않는다 — SendMessage 도구 결과가 보낸 텍스트를 그대로 에코해 오케스트레이터 창에 같은 내용이 두 벌씩 쌓이고, maker 는 어차피 파일을 직접 읽는 쪽이 정확하다. **새 Task 를 띄우지 않는다** — 그래야 그 phase 의 수정 맥락이 유지된다. 고쳐지면 1번(게이트)부터 이 사이클을 다시 연다.
    - 게이트가 깨진 경우도 같은 maker 에게 `SendMessage` 로 "빌드/테스트가 깨졌다. 고쳐라"를 넘긴다.
