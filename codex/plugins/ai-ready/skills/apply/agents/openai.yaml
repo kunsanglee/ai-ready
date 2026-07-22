@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-Ready Apply"
+  short_description: "감사 결과를 검토하고 승인된 문서 개선만 적용합니다"
+  default_prompt: "Use $apply to plan and safely apply approved AI-readiness improvements."

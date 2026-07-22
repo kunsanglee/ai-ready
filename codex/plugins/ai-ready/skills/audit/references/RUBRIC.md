@@ -1,0 +1,110 @@
+# AI-Ready Codebase Rubric (100 points)
+
+Each category lists detection rules with point values. Total = 100.
+Grade bands: 0–39 AI-blind, 40–59 AI-aware, 60–79 AI-enabled, 80–89 AI-maximalist, 90–100 Agentic-ready.
+
+---
+
+## Layout-aware scoring
+
+This rubric scores **two layouts** with parallel rules. The audit script auto-detects layout from build manifests:
+
+- **Multi-module**: ≥1 build manifest in non-root directories (e.g. `core/build.gradle.kts`, `app/build.gradle.kts`).
+- **Single-module**: build manifest only at repo root. Packages (directories under the base source path) are treated as **logical modules**, and a single `docs/PACKAGES.md` catalog substitutes for per-module `CLAUDE.md`.
+
+Rules below show both forms where they differ.
+
+## 1. Navigation (15)
+
+> Can an AI agent find the right module/file in 1–2 hops?
+
+| Rule | Points |
+|------|--------|
+| Root `CLAUDE.md` (or `AGENTS.md`) exists | 3 |
+| (Multi) Root doc references at least 3 module-level docs / paths<br>(Single) Root doc references the package catalog or ≥3 package paths | 4 |
+| (Multi) Module-level CLAUDE.md coverage<br>(Single) Package catalog (`docs/PACKAGES.md` etc.) exists with ≥3 package sections | 5 |
+| Index/MOC file exists (`docs/INDEX.md` preferred; `INDEX.md`, `wiki/index.md` accepted) | 3 |
+
+## 2. Context Document Quality (20)
+
+> Are the docs **concise, structured, and useful** rather than dump-style?
+
+| Rule | Points |
+|------|--------|
+| Root `CLAUDE.md` ≤ 200 lines | 5 |
+| (Multi) Module docs average ≤ 50 lines<br>(Single) Package catalog 50–300 lines (not too short, not too bloated for lazy-load) | 5 |
+| At least one doc has explicit "DO NOT" / "절대" / "금지" / "MUST NOT" section | 5 |
+| At least one doc has explicit usage / "when to use" guidance | 5 |
+
+## 3. Tribal Knowledge & Anti-patterns (15)
+
+> Is the implicit knowledge captured anywhere AI can read?
+
+| Rule | Points |
+|------|--------|
+| `ANTIPATTERNS.md` (or `wiki/anti-patterns/`) exists | 5 |
+| Architecture decisions captured (`ADR/`, `docs/decisions/`, `wiki/decisions/`; config `rubric.decision_records.dir_hints` adds dirs, e.g. a consolidated `docs/design/` that absorbs ADRs) | 5 |
+| Naming conventions documented in CLAUDE.md or NAMING.md | 5 |
+
+## 4. Cross-module Dependency Tracking (15)
+
+> Can AI trace change impact across modules?
+
+| Rule | Points |
+|------|--------|
+| Module dependency map / diagram (`ARCHITECTURE.md`, `dependencies.md`) | 5 |
+| (Multi) Build manifests parseable for static dep graph (gradle/maven/npm/cargo)<br>(Single) Package catalog with ≥3 sections **AND** ≥60% of domain packages follow standard layout (`controller/ service/ domain/ repository/` — at least 3 of 4) | 5 |
+| Cross-module API contracts documented (OpenAPI, proto, contracts/; config `rubric.api_contracts.build_deps` accepts code-gen deps, e.g. springdoc/springfox that emit OpenAPI at runtime) | 5 |
+
+> **Why the multi vs single asymmetry is intentional**: this rule rewards a *machine-extractable dependency graph*. In a multi-module repo, ≥2 build manifests (gradle/maven/npm/cargo) **already encode inter-module dependencies natively** — the manifest *is* the graph, so its presence is the signal and no extra structural check is needed. A single-module repo has no such graph, so the equivalent signal must come from *structural consistency across packages*: when domain packages share the same shape (1) AI adds a new domain by mimicking the pattern, and (2) explicit package boundaries leave less room for cyclic dependencies. Hence single-module requires catalog + ≥60% standard layout to earn the same 5 points the manifest grants automatically — same signal, measured where it actually lives.
+
+## 5. Verification Quality Gates (10)
+
+> Are there mechanical checks that catch AI hallucinations?
+
+| Rule | Points |
+|------|--------|
+| Mechanical verification hook present — git pre-commit (`.husky/`, `.git/hooks/pre-commit`, lefthook) **or** project-level AI-agent hook (`.claude/settings.json` PostToolUse/PreToolUse/Stop running lint/test/format/check; doc-freshness hooks excluded) | 3 |
+| CI config present and references tests | 3 |
+| Test convention documented (location, naming, assertion style) | 4 |
+
+> **Why count AI-agent hooks**: in an AI-coding workflow the code's entry point is the agent's edit, so a `.claude/settings.json` hook that runs ktlint/test right there is the same kind of mechanical guard a git pre-commit gives — it catches AI hallucinations before they land. Only **project-level** settings (committed to the repo) count; user-global `~/.claude` hooks don't, since a teammate or CI cloning the repo won't have them.
+
+## 6. Freshness Auto-Maintenance (10)
+
+> Does the doc layer self-maintain?
+
+| Rule | Points |
+|------|--------|
+| Any hook or scheduled job touches CLAUDE.md / docs (`.claude/hooks/`, `.claude/settings.json` Stop hook, cron) | 5 |
+| CLAUDE.md update protocol documented (e.g., "갱신 트리거" section, "Maintenance" section) | 5 |
+
+## 7. Outcome Metrics (15)
+
+> Is AI's effectiveness actually measured?
+
+| Rule | Points |
+|------|--------|
+| Metrics doc / dashboard for AI usage (`metrics/`, `analytics/`, `.claude/metrics`) | 7 |
+| PR review time, AI-PR merge rate, or token usage tracking exists | 8 |
+
+**Partial credit (since v0.1.2)**: outcome metrics often live outside the repo (Notion, Confluence, Datadog, Grafana). The audit awards partial points (3/7 or 3/8) when:
+- Root `README.md` / `CLAUDE.md` / `docs/INDEX.md` references an external dashboard URL (Notion, Atlassian, Datadog, Grafana, Metabase, Mixpanel, Redash, Looker, Tableau), **or**
+- The same docs mention tracking keywords (`ccusage`, `token usage`, `PR review time`, `AI PR merge rate`, `주간 보고`, `AI 사용량`)
+
+The full credit still requires an in-repo artifact so it can be re-verified next run.
+
+> **Scope note (cost is not measured here)**: this category checks whether AI effectiveness / usage is *tracked at all* (an in-repo metrics doc, or a pointer to an external dashboard). It does **not** measure token/cache cost itself — there is no session-log parser or cache-hit scorer in this plugin. Per-session cost/cache analysis is a separate concern (e.g. `ccusage`, RTK `gain`); this rubric only rewards that such tracking *exists*. Don't expect a token/cache dashboard from `/ai-ready:audit`.
+
+---
+
+## Scoring Notes
+
+- **Coverage-proportional credit**: module-doc coverage scores `round(coverage_ratio × 5)`, capped at the rule max of 5 — e.g. 60% coverage → `round(0.6 × 5)` = 3 points. The score is proportional to coverage and never exceeds the rule max (no bonus above max). (This matches `audit.py` rule 1.3; the earlier "60% → 6" example was impossible since 5 is the cap.)
+- **Minimum-content gate**: existence-based rules (ANTIPATTERNS, NAMING, ARCHITECTURE, TESTING) require the file to carry actual content (≥3 non-blank lines) for full credit. An empty / stub file scores partial (2/5 or 2/4) with a note — presence alone is not enough. A domain glossary (`docs/glossary.md`, `GLOSSARY.md`) is also credited under the naming rule (3.3).
+- **Partial-credit shape is intentional, not an oversight**: partial credit differs by rule *type* because the underlying signal differs, and this variety is the policy — do not collapse it into a single formula. Coverage-type rules (continuous signal, e.g. module-doc coverage) scale proportionally (`round(ratio × max)`). Existence-type rules (discrete signal, e.g. ANTIPATTERNS / NAMING / ARCHITECTURE / TESTING) give a fixed partial (2/5, 2/4) for a present-but-stub file. External-reference rules (cat 7 outcome metrics) give a fixed partial (3/7, 3/8) for an out-of-repo dashboard/keyword pointer, reserving full credit for an in-repo artifact. Collapsing these into one formula would erase the distinction between a continuous, a discrete, and an external-pointer signal.
+- **Evidence required**: every awarded point must reference a file path or measurement that can be re-verified next run. `Rule.award` emits a stderr warning if points are granted with neither evidence nor a note (invariant guard).
+- **Don't count root README** as an AI-ready doc unless it's structured for agents (has explicit "for AI" / "agent guidelines" section).
+- **One source per rule**: if `wiki/decisions/` has 12 ADRs, that still scores 5 points for rule 3.2, not 60.
+- **Self-output excluded**: `.ai-ready/` (the audit's own output directory) is excluded from scans. Module-CLAUDE.md scaffolds in `.ai-ready/scaffolds/` do NOT count toward coverage — they only count once moved to the actual module.
+- **Thin-index recognition**: rule 1.2 also accepts `docs/*.md` and `wiki/*.md` references (not only module paths) so thin-index style root CLAUDE.md (lazy-load trigger tables) is properly credited.
