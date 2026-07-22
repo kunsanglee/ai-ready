@@ -36,9 +36,14 @@ Repeat until PASS, brake, or AWAIT_USER:
    - `AWAIT_USER`: stop and hand to a human — do not continue.
 6. **Brake.** Stop and report if you have run more than the allowed iterations (default 5) or the elapsed budget is exhausted. Never loop unbounded.
 
-## Model note
+## Model and effort
 
-Delegated subagents run on the Codex session's model by default, which is the intended behavior (the checker inheriting the session model matches the Claude loop). To run maker and checker on different model tiers, launch the orchestrator with an explicit `-m <model>` and use registered per-agent model pins; a default launch runs every subagent on the account default model.
+Model and reasoning effort are set at the session level, not hardcoded in this skill. Delegated maker and checker subagents inherit the session's model and effort — the checker inheriting the session matches the Claude loop, and effort inheritance to subagents is confirmed (a session launched at `high` runs its delegates at `high`).
+
+- **Interactive**: the model and effort chosen in the Codex session are what the loop uses. No extra setup.
+- **Headless / automated**: launch through `loop-launch.sh`, which reads `loop-profile.env` (`LOOP_MODEL`, `LOOP_EFFORT`) and starts the session with `-m <model> -c model_reasoning_effort=<effort>`. Change the model or effort in that one profile file — never in this skill.
+- **Effort values** follow the neutral ladder (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`); Codex accepts these tokens directly, and `xhigh` is model-dependent. See the shared effort ladder for the cross-host contract.
+- This is a **uniform profile**: maker and checker share the session's model and effort. Running them on different tiers (a cheaper maker, a more thorough checker) needs registered per-agent pins and an explicit launch, which is a later step.
 
 ## Boundaries
 
