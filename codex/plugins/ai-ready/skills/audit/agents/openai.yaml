@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-Ready Audit"
+  short_description: "코드베이스의 에이전트 준비도를 진단하고 개선안을 만듭니다"
+  default_prompt: "Use $audit to assess this repository for AI-agent readiness."

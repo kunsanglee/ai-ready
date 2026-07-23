@@ -1,0 +1,29 @@
+{
+  "name": "ai-ready",
+  "version": "0.8.6+codex.2",
+  "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (loop-run/build/lessons) in Codex.",
+  "author": {
+    "name": "kunsanglee",
+    "url": "https://github.com/kunsanglee"
+  },
+  "homepage": "https://github.com/kunsanglee/ai-ready",
+  "repository": "https://github.com/kunsanglee/ai-ready",
+  "license": "MIT",
+  "keywords": ["ai-readiness", "audit", "guidance", "documentation", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AI-Ready",
+    "shortDescription": "Audit and safely improve AI-agent guidance.",
+    "longDescription": "Assess a repository's AI-agent readiness, prepare reviewed guidance improvements, and check documentation freshness without Claude-only hooks.",
+    "developerName": "kunsanglee",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Audit this repository for AI-agent readiness.",
+      "Plan the approved improvements from the latest AI-Ready audit.",
+      "Check whether this repository's guidance documents are stale.",
+      "Use loop-run to converge this change to a PASS verdict.",
+      "Use loop-build to build out this approved design across phases."
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-Ready Loop Build"
+  short_description: "확정된 설계를 여러 phase 에 걸쳐 무인 루프로 빌드아웃합니다"
+  default_prompt: "Use $loop-build to build out an approved design across phases with an unattended maker/checker loop."
