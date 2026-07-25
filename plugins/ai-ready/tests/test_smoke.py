@@ -23,6 +23,7 @@ SCRIPTS = PLUGIN_ROOT / "skills" / "audit" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import audit  # noqa: E402
+import inject_lazy_load_index  # noqa: E402
 import config_loader  # noqa: E402
 import dashboard  # noqa: E402
 import extract_antipatterns  # noqa: E402
@@ -351,6 +352,70 @@ class TestFreshnessHookStandalone(unittest.TestCase):
                              f"advisory 훅은 항상 exit 0 이어야 함 — stderr: {proc.stderr}")
             self.assertNotIn("missing", proc.stderr,
                              ".py 동반 복사로 missing 경고가 없어야 함")
+
+
+class TestLazyLoadUserDedupe(unittest.TestCase):
+    """user-section 이 이미 가리키는 문서는 auto 표에서 빠져야 한다.
+
+    루트 CLAUDE.md 는 always-loaded 라, 같은 문서를 수동 표와 자동 표가 각각 가리키면
+    그 중복분이 매 세션 컨텍스트를 먹는다.
+    """
+
+    ROWS = [
+        ("[`docs/CONVENTIONS.md`](docs/CONVENTIONS.md)", "코드 작성 detail"),
+        ("[`docs/INDEX.md`](docs/INDEX.md)", "처음 진입"),
+        ("[`docs/design/`](docs/design/)", "도메인 설계 문서"),
+    ]
+
+    def _doc(self, user_rows: str) -> str:
+        return (
+            "# CLAUDE.md\n\n## Lazy-load docs\n\n"
+            + inject_lazy_load_index.USER_BEGIN + "\n\n" + user_rows + "\n\n"
+            + inject_lazy_load_index.USER_END + "\n\n"
+            + inject_lazy_load_index.AUTO_BEGIN + "\n\n(구)\n\n"
+            + inject_lazy_load_index.AUTO_END + "\n"
+        )
+
+    def test_drops_row_already_in_user_section(self):
+        text = self._doc("| 내 트리거 | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |")
+        new_text, changed, mode, dropped = inject_lazy_load_index.update_root(text, self.ROWS)
+        self.assertEqual(mode, "updated-auto")
+        self.assertTrue(changed)
+        self.assertEqual(dropped, 1, "user 가 가리키는 CONVENTIONS 행만 빠져야 함")
+        auto = new_text.split(inject_lazy_load_index.AUTO_BEGIN)[1]
+        self.assertNotIn("](docs/CONVENTIONS.md)", auto)
+        self.assertIn("](docs/INDEX.md)", auto)
+
+    def test_trailing_slash_normalized(self):
+        # user 는 `docs/design`, auto 룰은 `docs/design/` — 후행 슬래시 유무로 갈리지 않아야 함
+        text = self._doc("| 내 트리거 | [`docs/design`](docs/design) |")
+        _, _, _, dropped = inject_lazy_load_index.update_root(text, self.ROWS)
+        self.assertEqual(dropped, 1)
+
+    def test_empty_user_section_drops_nothing(self):
+        text = self._doc("(아직 없음)")
+        new_text, _, _, dropped = inject_lazy_load_index.update_root(text, self.ROWS)
+        self.assertEqual(dropped, 0)
+        auto = new_text.split(inject_lazy_load_index.AUTO_BEGIN)[1]
+        for label, _trigger in self.ROWS:
+            self.assertIn(label, auto)
+
+    def test_all_covered_renders_note_not_empty_table(self):
+        rows_md = "\n".join(f"| t | {label} |" for label, _ in self.ROWS)
+        text = self._doc(rows_md)
+        new_text, _, _, dropped = inject_lazy_load_index.update_root(text, self.ROWS)
+        self.assertEqual(dropped, len(self.ROWS))
+        auto = new_text.split(inject_lazy_load_index.AUTO_BEGIN)[1].split(
+            inject_lazy_load_index.AUTO_END)[0]
+        self.assertNotIn("|---|---|", auto, "빈 표 대신 안내 문장이어야 함")
+        self.assertIn("이미 등재", auto)
+
+    def test_idempotent(self):
+        text = self._doc("| 내 트리거 | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |")
+        once, _, _, _ = inject_lazy_load_index.update_root(text, self.ROWS)
+        twice, changed2, _, _ = inject_lazy_load_index.update_root(once, self.ROWS)
+        self.assertEqual(once, twice)
+        self.assertFalse(changed2, "두 번째 실행은 변경 없음이어야 함")
 
 
 if __name__ == "__main__":
