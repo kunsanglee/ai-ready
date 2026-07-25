@@ -23,6 +23,7 @@ SCRIPTS = PLUGIN_ROOT / "skills" / "audit" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import audit  # noqa: E402
+import inject_module_map  # noqa: E402
 import inject_lazy_load_index  # noqa: E402
 import config_loader  # noqa: E402
 import dashboard  # noqa: E402
@@ -416,6 +417,72 @@ class TestLazyLoadUserDedupe(unittest.TestCase):
         twice, changed2, _, _ = inject_lazy_load_index.update_root(once, self.ROWS)
         self.assertEqual(once, twice)
         self.assertFalse(changed2, "두 번째 실행은 변경 없음이어야 함")
+
+
+class TestModuleMapRootStubLimit(unittest.TestCase):
+    """루트 stub 의 모듈 나열 분량은 config 로 정한다. 0 이면 카탈로그 링크만.
+
+    루트 문서는 always-loaded 라 모듈 발췌가 중복인 레포가 있다. 다만 audit 의 모듈
+    경로 참조 규칙이 그 나열에 의존하는 레포도 있어 기본값은 기존 10 을 유지한다.
+    """
+
+    def _repo(self, td, config=None):
+        target = Path(td)
+        (target / "settings.gradle.kts").write_text(
+            'rootProject.name="x"\ninclude("moda","modb")\n', encoding="utf-8")
+        for m in ("moda", "modb"):
+            (target / m).mkdir(parents=True, exist_ok=True)
+            (target / m / "build.gradle.kts").write_text("plugins { }\n", encoding="utf-8")
+            (target / m / "CLAUDE.md").write_text(f"# {m}\n\n{m} 요약.\n", encoding="utf-8")
+        (target / "CLAUDE.md").write_text("# CLAUDE.md\n\n## 모듈 맵\n", encoding="utf-8")
+        if config is not None:
+            (target / ".ai-ready").mkdir(exist_ok=True)
+            (target / ".ai-ready" / "config.json").write_text(
+                json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        return target
+
+    def test_default_keeps_listing(self):
+        with tempfile.TemporaryDirectory() as td:
+            t = self._repo(td)
+            stub = inject_module_map.build_root_stub(t, inject_module_map.find_modules(t))
+            self.assertIn("가이드가 작성된 핵심 모듈", stub)
+            self.assertIn("](moda/CLAUDE.md)", stub)
+
+    def test_limit_zero_drops_listing_but_keeps_catalog_link(self):
+        with tempfile.TemporaryDirectory() as td:
+            t = self._repo(td)
+            stub = inject_module_map.build_root_stub(t, inject_module_map.find_modules(t), 0)
+            self.assertNotIn("가이드가 작성된 핵심 모듈", stub)
+            self.assertNotIn("](moda/CLAUDE.md)", stub)
+            self.assertIn(inject_module_map.MODULE_MAP_FILE, stub,
+                          "카탈로그 링크는 남아야 함")
+
+    def test_limit_truncates(self):
+        with tempfile.TemporaryDirectory() as td:
+            t = self._repo(td)
+            stub = inject_module_map.build_root_stub(t, inject_module_map.find_modules(t), 1)
+            self.assertIn("](moda/CLAUDE.md)", stub)
+            self.assertNotIn("](modb/CLAUDE.md)", stub)
+
+    def test_config_drives_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            t = self._repo(td, {"version": 1, "module_map": {"root_stub_limit": 0}})
+            self.assertEqual(config_loader.module_map_root_stub_limit(
+                config_loader.load_config(t)), 0)
+
+    def test_bad_config_falls_back_to_default(self):
+        for bad in (-1, True, "0", None, {}):
+            with tempfile.TemporaryDirectory() as td:
+                t = self._repo(td, {"version": 1, "module_map": {"root_stub_limit": bad}})
+                self.assertEqual(config_loader.module_map_root_stub_limit(
+                    config_loader.load_config(t)), 10, f"잘못된 값 {bad!r} 은 기본값으로")
+
+    def test_full_catalog_unaffected_by_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            t = self._repo(td)
+            full = inject_module_map.build_full_map_doc(t, inject_module_map.find_modules(t))
+            self.assertIn("`moda`", full)
+            self.assertIn("`modb`", full)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
 from gen_index import ensure_gitattributes_union  # noqa: E402
+from config_loader import load_config, module_map_root_stub_limit  # noqa: E402
 
 DOC_NAMES = ("CLAUDE.md", "AGENTS.md")
 BUILD_MANIFESTS = {
@@ -56,7 +57,7 @@ SECTION_END = "<!-- module-map:end -->"
 
 MODULE_MAP_FILE = "docs/MODULE_MAP.md"
 
-STUB_DOCUMENTED_LIMIT = 10  # 루트 stub 에 노출할 documented 모듈 최대 수
+STUB_DOCUMENTED_LIMIT = 10  # 루트 stub 에 노출할 documented 모듈 최대 수 (config 의 module_map.root_stub_limit 로 재정의, 0 이면 나열 없음)
 
 
 def walk(target: Path):
@@ -151,22 +152,26 @@ def build_full_map_doc(target: Path, modules: list[Path]) -> str:
     return "\n".join(lines)
 
 
-def build_root_stub(target: Path, modules: list[Path]) -> str:
+def build_root_stub(target: Path, modules: list[Path],
+                    stub_limit: int = STUB_DOCUMENTED_LIMIT) -> str:
     """루트 CLAUDE.md 의 `## 모듈 맵` stub.
 
     audit 의 모듈 경로 참조 검사를 통과하기 위해 documented 모듈을 일부 노출.
+    `stub_limit == 0` 이면 그 나열을 생략하고 카탈로그 링크만 남긴다 — 루트 문서는 매 세션
+    always-loaded 이고 모듈 요약은 그 모듈 CLAUDE.md 에 이미 있어 발췌가 중복인 레포용
+    (config 의 `module_map.root_stub_limit`). 그 경우 경로 참조는 다른 곳에서 나와야 한다.
     """
     documented = [m for m in modules if has_module_doc(target, m)]
     documented_count = len(documented)
     total = len(modules)
-    sample = documented[:STUB_DOCUMENTED_LIMIT]
+    sample = documented[:stub_limit] if stub_limit > 0 else []
 
     lines = [SECTION_HEADER, "", SECTION_BEGIN, ""]
     lines.append("> 자동 생성됩니다. 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
     lines.append("> 갱신: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"모듈 맵 갱신해줘\" 라고 말하세요.")
     lines.append("")
     lines.append(f"전체 모듈 카탈로그 ({total}개): [`{MODULE_MAP_FILE}`]({MODULE_MAP_FILE})")
-    if documented_count:
+    if documented_count and sample:
         lines.append("")
         lines.append(f"가이드가 작성된 핵심 모듈 ({documented_count}개 중 상위 {len(sample)}개):")
         lines.append("")
@@ -246,8 +251,16 @@ def main():
         sys.exit(3)
 
     modules = find_modules(target)
+    cfg = load_config(target)
+    stub_limit = module_map_root_stub_limit(cfg)
     full_doc_text = build_full_map_doc(target, modules)
-    stub = build_root_stub(target, modules)
+    stub = build_root_stub(target, modules, stub_limit)
+    if stub_limit == 0:
+        # 나열을 끄면 루트 문서의 모듈 경로 참조가 줄어든다 — audit 의 "루트 문서가 3개 이상의
+        # 모듈 경로/문서 참조" 규칙이 이 나열에만 의존하는 레포는 점수가 내려간다. 조용히
+        # 깎이지 않게 알린다.
+        print("module_map.root_stub_limit=0 — 루트 stub 의 모듈 나열을 생략합니다. "
+              "audit 의 모듈 경로 참조 규칙은 lazy-load 표 등 다른 경로 참조로 충족돼야 합니다.")
     full_path = target / MODULE_MAP_FILE
     original_root = root_doc.read_text(encoding="utf-8")
     new_root = inject(original_root, stub)
