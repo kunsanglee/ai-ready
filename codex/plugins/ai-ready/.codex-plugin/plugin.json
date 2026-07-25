@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
-  "version": "0.8.6+codex.2",
-  "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (loop-run/build/lessons) in Codex.",
+  "version": "0.8.7+codex.2",
+  "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (loop-run/build/lessons) in Codex. v0.8.7+: inject_lazy_load_index drops auto-table rows whose document is already linked from the user section — the root CLAUDE.md is always-loaded, so a doc listed in both the hand-written and the generated table costs its duplicate every session (12 rows / ~1,558 chars in one repo). Link targets are compared with trailing slashes normalized, only a row whose every target is already covered is dropped, and when all detected docs are covered the auto block renders a one-line note instead of an empty table — automating what previously needed hand-maintained config.override_hardcoded entries.",
   "author": {
     "name": "kunsanglee",
     "url": "https://github.com/kunsanglee"
