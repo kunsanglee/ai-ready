@@ -17,6 +17,10 @@ ROI 액션 매핑: "'사용 시점' 가이드 존재" + "lazy-load 인덱스" (R
     `<!-- lazy-load:auto-begin -->` ~ `<!-- lazy-load:auto-end -->` 만 자동 갱신.
   + (선택) `.ai-ready/config.json` 의 `lazy_load_triggers.detect` 추가 룰 적용,
     `override_hardcoded` 로 기본 룰 일부 제거 가능.
+- v0.8.7+: **수동 영역과 중복되는 auto 행 자동 제거** — user-section 이 이미 가리키는 문서는
+  auto 표에서 뺀다. 루트 CLAUDE.md 는 always-loaded 라 같은 문서를 두 표가 각각 가리키면
+  그 중복분이 매 세션 컨텍스트를 먹는다 (c8c-api 에서 12행·약 1,558자 이중 등재).
+  `override_hardcoded` 로 손수 지정해야 했던 일을 링크 대상 비교로 자동화한 것.
 
 # 마이그레이션
 기존 단일 마커 (`lazy-load:begin`/`lazy-load:end`) 또는 마커 없이 `## Lazy-load docs`
@@ -155,6 +159,45 @@ def detect_present(target: Path, cfg: dict | None = None) -> list[tuple[str, str
     return found
 
 
+_LINK_TARGET_RE = re.compile(r"\]\(([^)\s]+)\)")
+
+
+def _link_targets(s: str) -> set[str]:
+    """마크다운 링크 대상 경로 집합. 후행 슬래시는 정규화해 `docs/design/` 과 `docs/design` 을 같게 본다."""
+    return {m.group(1).strip().rstrip("/") for m in _LINK_TARGET_RE.finditer(s or "") if m.group(1).strip()}
+
+
+def _user_section_text(text: str) -> str:
+    """user-section 마커 사이 본문. 마커가 온전하지 않으면 빈 문자열."""
+    i = text.find(USER_BEGIN)
+    j = text.find(USER_END)
+    if i < 0 or j < 0 or j < i:
+        return ""
+    return text[i + len(USER_BEGIN):j]
+
+
+def _drop_rows_covered_by_user(
+    rows: list[tuple[str, str]], user_text: str
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """user-section 이 이미 가리키는 문서를 auto 표에서 뺀다. 반환: (남길 행, 뺀 행)
+
+    루트 CLAUDE.md 는 매 세션 always-loaded 라, 같은 문서를 수동 표와 자동 표가 각각
+    가리키면 그 중복분이 세션마다 컨텍스트를 먹는다. c8c-api 에서 12행(약 1,558자)이
+    이렇게 이중 등재돼 있었다. user 행은 사용자가 그 레포 맥락에 맞춰 손으로 쓴 것이라
+    트리거 설명이 더 구체적이므로 그쪽을 정본으로 두고 자동 행을 뺀다.
+    """
+    covered = _link_targets(user_text)
+    if not covered:
+        return list(rows), []
+    kept: list[tuple[str, str]] = []
+    dropped: list[tuple[str, str]] = []
+    for label, trigger in rows:
+        paths = _link_targets(label)
+        # label 의 링크 대상이 전부 user 쪽에 이미 있을 때만 뺀다 — 일부만 겹치면 남긴다.
+        (dropped if paths and paths <= covered else kept).append((label, trigger))
+    return kept, dropped
+
+
 def _strip_marker_lines(s: str) -> str:
     """문자열에서 lazy-load 마커 라인을 제거.
 
@@ -177,13 +220,16 @@ def _render_auto_block(rows: list[tuple[str, str]]) -> str:
     lines.append("> **읽기 강제 시점**: 작업 영역이 트리거에 해당하면 사용자 추가 지시 없이도 즉시 read.")
     lines.append("> **모듈 단위**: 모듈 CLAUDE.md 는 그 모듈 파일을 Read/Edit 할 때 Claude Code 가 자동 로드.")
     lines.append("")
-    lines.append("| 트리거 (대화·작업 맥락) | 문서 |")
-    lines.append("|---|---|")
-    for label, trigger in rows:
-        # 셀 안 '|' 는 테이블 컬럼 구분자로 오인돼 행이 깨진다 — 이스케이프하고 개행은 공백으로.
-        safe_trigger = trigger.replace("|", "\\|").replace("\n", " ")
-        safe_label = label.replace("|", "\\|").replace("\n", " ")
-        lines.append(f"| {safe_trigger} | {safe_label} |")
+    if rows:
+        lines.append("| 트리거 (대화·작업 맥락) | 문서 |")
+        lines.append("|---|---|")
+        for label, trigger in rows:
+            # 셀 안 '|' 는 테이블 컬럼 구분자로 오인돼 행이 깨진다 — 이스케이프하고 개행은 공백으로.
+            safe_trigger = trigger.replace("|", "\\|").replace("\n", " ")
+            safe_label = label.replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {safe_trigger} | {safe_label} |")
+    else:
+        lines.append("자동 감지된 문서가 모두 위 수동 영역에 이미 등재돼 있어 자동 행이 없습니다.")
     lines.append("")
     lines.append(AUTO_END)
     return "\n".join(lines)
@@ -236,27 +282,31 @@ def _build_full_section(user_block: str, auto_block: str) -> str:
     return "\n".join(lines)
 
 
-def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]:
+def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str, int]:
     """루트 CLAUDE.md 의 lazy-load 섹션을 갱신.
 
-    반환: (new_text, changed, mode)
+    반환: (new_text, changed, mode, dropped_as_duplicate)
       mode ∈ {"updated-auto", "migrated-legacy", "migrated-unmarked", "inserted-new", "no-rows"}
+      dropped_as_duplicate = user-section 에 이미 등재돼 auto 표에서 뺀 행 수
 
     동작 분기:
     - case A (정상 v0.2.0): user/auto 마커 둘 다 존재 — auto-block 만 교체
     - case B (legacy 단일 마커): lazy-load:begin/end 존재 — auto 로 격하, user 는 빈 마커 신설
     - case C (마커 없는 표): SECTION_HEADING 존재하지만 마커 없음 — 기존 표를 user-section 으로 흡수, auto 별도 생성
     - case D: 없음 — 신규 삽입 (## 모듈 맵 직전 또는 EOF)
+
+    case A / C 는 user-section 이 이미 가리키는 문서를 auto 표에서 뺀다 (`_drop_rows_covered_by_user`).
+    case B / D 는 user-section 이 비어 있어 뺄 대상이 없다.
     """
     if not rows:
-        return text, False, "no-rows"
-
-    auto_block = _render_auto_block(rows)
+        return text, False, "no-rows", 0
 
     # case A: user/auto 마커 둘 다 존재
     has_auto = AUTO_BEGIN in text and AUTO_END in text
     has_user = USER_BEGIN in text and USER_END in text
     if has_auto:
+        kept, dropped = _drop_rows_covered_by_user(rows, _user_section_text(text))
+        auto_block = _render_auto_block(kept)
         # auto 블록만 교체
         new_text = re.sub(
             re.escape(AUTO_BEGIN) + r".*?" + re.escape(AUTO_END),
@@ -269,11 +319,12 @@ def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]
             # auto 만 있고 user 가 없는 비정상 케이스 — user 마커도 신설
             user_block = _render_empty_user_block()
             new_text = new_text.replace(auto_block, user_block + "\n\n" + auto_block, 1)
-            return new_text, new_text != text, "updated-auto+user-inserted"
-        return new_text, new_text != text, "updated-auto"
+            return new_text, new_text != text, "updated-auto+user-inserted", len(dropped)
+        return new_text, new_text != text, "updated-auto", len(dropped)
 
     # case B: legacy 단일 마커
     if LEGACY_BEGIN in text and LEGACY_END in text:
+        auto_block = _render_auto_block(rows)
         # 기존 LEGACY 블록의 표 내용은 *모두 자동 생성된 것* 이므로 사용자 행 흡수 불필요.
         # SECTION_HEADING 부터 LEGACY_END 까지 통째로 새 user(empty) + auto 로 교체.
         idx_heading = text.find(SECTION_HEADING)
@@ -286,7 +337,7 @@ def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]
         user_block = _render_empty_user_block()
         full = _build_full_section(user_block, auto_block)
         new_text = text[:start] + full + text[end:]
-        return new_text, True, "migrated-legacy"
+        return new_text, True, "migrated-legacy", 0
 
     # case C: SECTION_HEADING 만 존재 (마커 없는 수동 표) — 사용자 수동 행 흡수
     if SECTION_HEADING in text:
@@ -301,24 +352,26 @@ def update_root(text: str, rows: list[tuple[str, str]]) -> tuple[str, bool, str]
         existing_body = text[body_start:body_end]
         # 손상돼 잔존한 마커가 섞여 있으면, 흡수 후 다음 실행에서 case A 가 user 를 파괴한다 — 제거.
         existing_body = _strip_marker_lines(existing_body)
+        # 흡수될 기존 표가 곧 user-section 이 되므로, 그것이 이미 가리키는 문서는 auto 에서 뺀다.
+        kept, dropped = _drop_rows_covered_by_user(rows, existing_body)
         # 사용자 수동 표를 user-section 으로 흡수
         user_block = _render_user_block_with_rows(existing_body)
-        full = _build_full_section(user_block, auto_block)
+        full = _build_full_section(user_block, _render_auto_block(kept))
         new_text = text[:idx_heading] + full + text[body_end:]
-        return new_text, True, "migrated-unmarked"
+        return new_text, True, "migrated-unmarked", len(dropped)
 
     # case D: 신규 삽입 — `## 모듈 맵` 직전, 또는 EOF
     user_block = _render_empty_user_block()
-    full = _build_full_section(user_block, auto_block)
+    full = _build_full_section(user_block, _render_auto_block(rows))
     target_heading = "## 모듈 맵"
     idx = text.find(target_heading)
     if idx >= 0:
         # full 은 이미 끝에 빈 줄 1개를 포함하므로 추가 "\n\n" 을 넣지 않는다.
         new_text = text[:idx] + full + text[idx:]
-        return new_text, True, "inserted-new"
+        return new_text, True, "inserted-new", 0
     # EOF append
     base = text if text.endswith("\n") else text + "\n"
-    return base + "\n" + full + "\n", True, "inserted-new"
+    return base + "\n" + full + "\n", True, "inserted-new", 0
 
 
 def collect_facts(target: Path, cfg: dict | None = None) -> dict:
@@ -359,12 +412,14 @@ def main():
         sys.exit(0)
 
     text = root.read_text(encoding="utf-8")
-    new_text, changed, mode = update_root(text, rows)
+    new_text, changed, mode, dropped = update_root(text, rows)
 
     if args.dry_run:
         print("=== dry-run 결과 ===")
         print(f"_모드: {mode}_")
         print(f"_변경 여부: {'있음' if changed else '없음'}_")
+        if dropped:
+            print(f"_수동 영역 중복으로 auto 표에서 뺀 행: {dropped}개_")
         print()
         # 고정 placeholder 가 아니라 실제 갱신 결과(new_text)를 그대로 보여줘
         # 마이그레이션 결과를 미리보기로 검증할 수 있게 한다.
@@ -378,6 +433,8 @@ def main():
     print(f"lazy-load 인덱스 갱신: {root}")
     print(f"  모드: {mode}")
     print(f"  자동 감지 detail 문서 {len(rows)}개")
+    if dropped:
+        print(f"  수동 영역에 이미 등재돼 auto 표에서 뺀 행 {dropped}개 (always-loaded 중복 제거)")
     if cfg is not None:
         print(f"  config 추가 룰 {len(lazy_load_detect_rules(cfg))}개, override {len(lazy_load_override_hardcoded(cfg))}개 적용")
 
