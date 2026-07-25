@@ -37,6 +37,9 @@ config.json 표준 스키마 (v1):
   "rubric": {
     "decision_records": { "dir_hints": ["docs/design"] },
     "api_contracts":    { "build_deps": ["springdoc", "springfox"] }
+  },
+  "module_map": {
+    "root_stub_limit": 0
   }
 }
 
@@ -72,6 +75,7 @@ __all__ = [
     "load_config", "CONFIG_FILE_NAME", "CONFIG_VERSION",
     "rubric_section", "decision_record_hints", "api_contract_build_deps",
     "antipattern_doc_hints", "naming_doc_hints",
+    "module_map_section", "module_map_root_stub_limit",
 ]
 
 
@@ -202,6 +206,32 @@ def naming_doc_hints(cfg: dict | None) -> list[str]:
     nm = _as_dict(rubric_section(cfg).get("naming"))
     return [h.strip("/").replace("\\", "/")
             for h in _as_list(nm.get("doc_hints")) if isinstance(h, str)]
+
+
+# ---- module_map 루트 stub 분량 (v0.8.8+) ----
+
+def module_map_section(cfg: dict | None) -> dict:
+    if cfg is None:
+        return {}
+    return _as_dict(cfg.get("module_map"))
+
+
+def module_map_root_stub_limit(cfg: dict | None, default: int = 10) -> int:
+    """루트 문서의 `## 모듈 맵` stub 에 나열할 documented 모듈 수. 0 이면 카탈로그 링크만.
+
+    루트 문서는 매 세션 always-loaded 다. 모듈 한 줄 요약은 그 모듈의 CLAUDE.md 에
+    이미 있고 그 파일은 해당 모듈을 열 때 자동 로드되므로, 루트의 발췌 나열은 중복이다
+    (c8c-api 에서 10개 나열이 약 1,800자). 다만 audit 의 "루트 문서가 3개 이상의 모듈
+    경로/문서 참조" 규칙이 이 나열을 참조원으로 쓰는 레포도 있어 기본값은 기존 10 을
+    유지하고, 다른 경로 참조가 충분한 레포만 0 으로 끌 수 있게 한다.
+
+    잘못된 값(음수·bool·비정수)은 조용히 default 로 fallback — config 오타 때문에
+    모듈 맵 생성 자체가 멈추면 안 된다.
+    """
+    v = module_map_section(cfg).get("root_stub_limit")
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        return default
+    return v
 
 
 # CLI 진단 — config 가 정상 로드되는지 확인
