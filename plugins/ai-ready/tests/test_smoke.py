@@ -711,21 +711,33 @@ class TestStubGate(unittest.TestCase):
             self.assertEqual(rule["points"], 2)
             self.assertIn("미만", rule["note"])
 
-    def test_donot_guide_needs_three_lines(self):
-        # 한 줄짜리 "절대 금지: 없음" 으로 만점을 받던 자리.
-        def points(body: str) -> int:
-            with tempfile.TemporaryDirectory() as td:
-                root = Path(td)
-                # 게이트(400바이트 + 비공백 8줄)를 넉넉히 넘기는 실질 문서로 둔다 —
-                # 여기서 재려는 것은 게이트가 아니라 DO-NOT 줄 수 계단이다.
-                (root / "CLAUDE.md").write_text(
-                    "# proj\n" + "이 줄은 게이트를 넘기기 위한 실질 문장입니다.\n" * 12 + body,
-                    encoding="utf-8")
-                result = audit.run(root, root / ".ai-ready")
-                return next(r["points"] for c in result["categories"] for r in c["rules"]
-                            if r["name"] == "명시적 안티패턴 / 절대 금지 가이드 존재")
-        self.assertEqual(points("절대 금지: 없음\n"), 3)
-        self.assertEqual(points("- 절대 금지: A\n- 절대 금지: B\n- 절대 금지: C\n"), 5)
+    def _donot_points(self, body: str) -> int:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # 게이트(400바이트 + 비공백 8줄)를 넉넉히 넘기는 실질 문서로 둔다 —
+            # 여기서 재려는 것은 게이트가 아니라 DO-NOT 줄 수 계단이다.
+            (root / "CLAUDE.md").write_text(
+                "# proj\n" + "이 줄은 게이트를 넘기기 위한 실질 문장입니다.\n" * 12 + body,
+                encoding="utf-8")
+            result = audit.run(root, root / ".ai-ready")
+            return next(r["points"] for c in result["categories"] for r in c["rules"]
+                        if r["name"] == "명시적 안티패턴 / 절대 금지 가이드 존재")
+
+    def test_donot_guide_needs_three_specific_lines(self):
+        # 한 줄짜리 "절대 금지: 없음" 으로 만점을 받던 자리 + 만점은 구체 지시 3줄 (v0.9.3).
+        self.assertEqual(self._donot_points("절대 금지: 없음\n"), 3)
+        self.assertEqual(self._donot_points(
+            "- 절대 금지: `EventStore` 를 우회한 직접 INSERT\n"
+            "- 금지: `docs/INDEX.md` 를 손으로 수정\n"
+            "- MUST NOT bypass RateLimiter in login paths\n"), 5)
+
+    def test_donot_keyword_farming_scores_partial_only(self):
+        # 2회차 적대 검토 실증: "금지" 단어 세 줄이면 만점이었다 — 구체 지시가 없으면 부분점수까지만.
+        self.assertEqual(self._donot_points("금지 1\n금지 2\n금지 3\n"), 3)
+
+    def test_vague_but_real_donot_lines_keep_partial(self):
+        # 식별자 없는 정당한 규칙이 0점으로 떨어지지 않는다 — 구체성은 만점 조건이지 인정 조건이 아니다.
+        self.assertEqual(self._donot_points("- 금요일 오후에는 프로덕션 배포를 하지 마세요\n"), 3)
 
     def test_count_guide_lines_does_not_double_count_one_line(self):
         # "절대 금지" 는 두 패턴에 동시에 걸린다 — 줄 단위로 세지 않으면 부풀려진다.
