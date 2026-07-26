@@ -21,7 +21,7 @@ Rules below show both forms where they differ.
 | Rule | Points |
 |------|--------|
 | Root `CLAUDE.md` (or `AGENTS.md`) exists | 3 |
-| (Multi) Root doc references at least 3 module-level docs / paths<br>(Single) Root doc references the package catalog or ≥3 package paths | 4 |
+| (Multi) Root doc references at least 3 module-level docs / paths<br>(Single) Root doc references the package catalog or ≥3 package paths<br>(since v0.9.1) referenced paths must exist, and a referenced *file* must be non-stub — broken or stub-pointing links don't count and are listed in the note | 4 |
 | (Multi) Module-level CLAUDE.md coverage<br>(Single) Package catalog (`docs/PACKAGES.md` etc.) exists with ≥3 package sections | 5 |
 | Index/MOC file exists (`docs/INDEX.md` preferred; `INDEX.md`, `wiki/index.md` accepted) | 3 |
 
@@ -54,7 +54,7 @@ Rules below show both forms where they differ.
 |------|--------|
 | Module dependency map / diagram (`ARCHITECTURE.md`, `dependencies.md`) | 5 |
 | (Multi) Build manifests parseable for static dep graph (gradle/maven/npm/cargo)<br>(Single) Package catalog with ≥3 sections **AND** ≥60% of domain packages follow standard layout (`controller/ service/ domain/ repository/` — at least 3 of 4) | 5 |
-| Cross-module API contracts documented (OpenAPI, proto, contracts/; config `rubric.api_contracts.build_deps` accepts code-gen deps, e.g. springdoc/springfox that emit OpenAPI at runtime) | 5 |
+| Cross-module API contracts documented (OpenAPI, proto, contracts/; config `rubric.api_contracts.build_deps` accepts code-gen deps, e.g. springdoc/springfox that emit OpenAPI at runtime — since v0.9.1 the declared string must be ≥4 chars and appear on a *dependency-declaration line*, not anywhere in the manifest) | 5 |
 
 > **Why the multi vs single asymmetry is intentional**: this rule rewards a *machine-extractable dependency graph*. In a multi-module repo, ≥2 build manifests (gradle/maven/npm/cargo) **already encode inter-module dependencies natively** — the manifest *is* the graph, so its presence is the signal and no extra structural check is needed. A single-module repo has no such graph, so the equivalent signal must come from *structural consistency across packages*: when domain packages share the same shape (1) AI adds a new domain by mimicking the pattern, and (2) explicit package boundaries leave less room for cyclic dependencies. Hence single-module requires catalog + ≥60% standard layout to earn the same 5 points the manifest grants automatically — same signal, measured where it actually lives.
 
@@ -64,7 +64,7 @@ Rules below show both forms where they differ.
 
 | Rule | Points |
 |------|--------|
-| Mechanical verification hook present — git pre-commit (`.husky/`, `.git/hooks/pre-commit`, lefthook) **or** project-level AI-agent hook (`.claude/settings.json` PostToolUse/PreToolUse/Stop running lint/test/format/check; doc-freshness hooks excluded) | 3 |
+| Mechanical verification hook present — git pre-commit (`.husky/`, `.git/hooks/pre-commit`, lefthook) **or** project-level AI-agent hook (`.claude/settings.json` PostToolUse/PreToolUse/Stop running lint/test/format/check; doc-freshness hooks excluded). Since v0.9.1 a settings hook whose command points at repo-relative scripts that don't exist (`./gradlew` with no wrapper, a missing `.py`/`.sh`) scores partial (1/3) — a dead config is not a gate. PATH commands are not checked (execution env unknown) | 3 |
 | CI config present and references tests | 3 |
 | Test convention documented (location, naming, assertion style) | 4 |
 
@@ -76,8 +76,8 @@ Rules below show both forms where they differ.
 
 | Rule | Points |
 |------|--------|
-| Any hook or scheduled job touches CLAUDE.md / docs (`.claude/hooks/`, `.claude/settings.json` Stop hook, cron) | 5 |
-| CLAUDE.md update protocol documented (e.g., "갱신 트리거" section, "Maintenance" section) | 5 |
+| Any hook or scheduled job touches CLAUDE.md / docs (`.claude/hooks/`, `.claude/settings.json` Stop hook, cron). Since v0.9.1 a settings freshness hook whose commands all point at missing repo-relative scripts scores partial (2/5) | 5 |
+| CLAUDE.md update protocol documented (e.g., "갱신 트리거" section, "Maintenance" section) — since v0.9.1 the keyword must live in a non-stub doc, matching the two category-2 keyword rules | 5 |
 
 ## 7. Outcome Metrics (15)
 
@@ -101,7 +101,8 @@ The full credit still requires an in-repo artifact so it can be re-verified next
 ## Scoring Notes
 
 - **Coverage-proportional credit**: module-doc coverage scores `round(coverage_ratio × 5)`, capped at the rule max of 5 — e.g. 60% coverage → `round(0.6 × 5)` = 3 points. The score is proportional to coverage and never exceeds the rule max (no bonus above max). (This matches `audit.py`'s "Module-level CLAUDE.md coverage" rule; the earlier "60% → 6" example was impossible since 5 is the cap. Since v0.9.0 stub module docs are excluded from the covered count.)
-- **Minimum-content gate (widened in v0.9.0)**: existence-based rules require the file to carry actual content — **≥ 400 bytes AND ≥ 8 non-blank lines**, both conditions, since either one alone is trivially gamed (one very long line, or many one-character lines). An empty / stub file scores partial (2/5, 2/4, or 1/3) with a note — presence alone is not enough. The gate now covers ANTIPATTERNS, NAMING, ARCHITECTURE, TESTING, COMMANDS, the index/MOC file, ADR directories, API-contract files, per-module CLAUDE.md coverage, and the two category-2 keyword rules; before v0.9.0 the threshold was 3 non-blank lines and several of those rules bypassed the gate entirely, which let a repo of 21 three-line stubs score 100/100. A domain glossary (`docs/glossary.md`, `GLOSSARY.md`) is also credited under "Naming conventions documented".
+- **Minimum-content gate (widened in v0.9.0, hardened in v0.9.1)**: existence-based rules require the file to carry actual content — **≥ 400 bytes AND ≥ 8 non-blank lines**, both conditions, since either one alone is trivially gamed (one very long line, or many one-character lines). An empty / stub file scores partial (2/5, 2/4, or 1/3) with a note — presence alone is not enough. The gate now covers ANTIPATTERNS, NAMING, ARCHITECTURE, TESTING, COMMANDS, the index/MOC file, ADR directories, API-contract files, per-module CLAUDE.md coverage, the two category-2 keyword rules, and (since v0.9.1) root-doc path references, the update-protocol keyword rule, and hook/CI command targets; before v0.9.0 the threshold was 3 non-blank lines and several of those rules bypassed the gate entirely, which let a repo of 21 three-line stubs score 100/100. v0.9.1 also closes two bypasses found by a second adversarial review: binary files no longer pass the gate (a NUL byte in the first 8 KB disqualifies — random bytes read with `errors="replace"` used to clear the line count), and the *directory* gate counts only text-doc extensions (`.md .txt .rst .adoc .yaml .yml .json .proto`), so a stray image next to stub ADRs no longer satisfies it. A domain glossary (`docs/glossary.md`, `GLOSSARY.md`) is also credited under "Naming conventions documented".
+- **Self-reported config credit is disclosed (v0.9.1)**: `.ai-ready/config.json` is written by the repo being scored, yet it feeds scoring (`dir_hints`, `doc_hints`, `build_deps`). Measured attack before the fix: a stub repo plus one aggressive config and a single 450-byte junk file climbed 52 → 63 and crossed a grade band. The report now prints a "config 자기신고 인정" summary line (rule count + points) whenever config-declared signals earned points, so a reviewer sees the self-reported share at a glance; every config-credited rule carries "config" in its note (that token is the marker — don't use it in other positive-score notes).
 - **Partial-credit shape is intentional, not an oversight**: partial credit differs by rule *type* because the underlying signal differs, and this variety is the policy — do not collapse it into a single formula. Coverage-type rules (continuous signal, e.g. module-doc coverage) scale proportionally (`round(ratio × max)`). Existence-type rules (discrete signal, e.g. ANTIPATTERNS / NAMING / ARCHITECTURE / TESTING) give a fixed partial (2/5, 2/4) for a present-but-stub file. External-reference rules (cat 7 outcome metrics) give a fixed partial (3/7, 3/8) for an out-of-repo dashboard/keyword pointer, reserving full credit for an in-repo artifact. Collapsing these into one formula would erase the distinction between a continuous, a discrete, and an external-pointer signal.
 - **Evidence required**: every awarded point must reference a file path or measurement that can be re-verified next run. `Rule.award` emits a stderr warning if points are granted with neither evidence nor a note (invariant guard).
 - **Don't count root README** as an AI-ready doc unless it's structured for agents (has explicit "for AI" / "agent guidelines" section).

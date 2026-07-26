@@ -187,9 +187,14 @@ def decision_record_hints(cfg: dict | None) -> list[str]:
 
 
 def api_contract_build_deps(cfg: dict | None) -> list[str]:
-    """규칙 "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)" 에서 인정할 빌드 의존성 문자열 (예: springdoc)."""
+    """규칙 "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)" 에서 인정할 빌드 의존성 문자열 (예: springdoc).
+
+    4자 미만 선언은 버린다 — "api" 같은 초단문 선언은 매니페스트의 구조 키워드에 우연히
+    올라타 자기신고 우회가 되기 쉽다(2회차 적대 검토 발견 1). 실재 의존성 이름은 4자 이상이다.
+    """
     ac = _as_dict(rubric_section(cfg).get("api_contracts"))
-    return [d.lower() for d in _as_list(ac.get("build_deps")) if isinstance(d, str)]
+    return [d.lower() for d in _as_list(ac.get("build_deps"))
+            if isinstance(d, str) and len(d.strip()) >= 4]
 
 
 def antipattern_doc_hints(cfg: dict | None) -> list[str]:
