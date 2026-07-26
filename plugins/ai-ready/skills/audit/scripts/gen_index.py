@@ -10,7 +10,8 @@ INDEX.md 자동 생성기.
 각 항목은 wikilink + 1줄 요약 형태이며, 요약은 문서의 첫 비-블랭크·비-헤딩·비-frontmatter
 라인에서 추출합니다.
 
-ROI 액션 매핑: "docs/INDEX.md (권장) 또는 wiki/index.md 생성" (Rule 1.4, +3점).
+ROI 규칙 (audit 의 규칙 이름 그대로 — 번호가 아니라 이름으로 가리킨다):
+  - "인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md)" (+3점)
 
 확장 동작 (v0.2.0+):
   대상에 `.ai-ready/config.json` 이 존재하면 *config-driven 그룹화* 활성화 —
