@@ -485,5 +485,106 @@ class TestModuleMapRootStubLimit(unittest.TestCase):
             self.assertIn("`modb`", full)
 
 
+class TestRootDocSizeRule(unittest.TestCase):
+    """루트 CLAUDE.md 상주 분량은 줄 수가 아니라 바이트로 잰다 (v0.8.9).
+
+    한국어 마크다운은 한 줄이 표 한 행이거나 문단 하나라 줄 수가 비용을 대변하지 못한다.
+    실측 사례로 46줄짜리 루트 문서가 12,029바이트(한 불릿이 2,002자)였는데 옛 200줄 규칙에서
+    만점을 받으며 계속 부풀었다. 그 구멍이 다시 열리지 않게 고정한다.
+    """
+
+    def _rule(self, root_text: str) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "CLAUDE.md").write_text(root_text, encoding="utf-8")
+            result = audit.run(root, root / ".ai-ready")
+            for cat in result["categories"]:
+                for rule in cat["rules"]:
+                    if rule["name"] == audit.ROOT_DOC_SIZE_RULE:
+                        return rule
+        self.fail(f"규칙 '{audit.ROOT_DOC_SIZE_RULE}' 이 결과에 없음")
+
+    @staticmethod
+    def _doc_of_bytes(n: int) -> str:
+        """대략 n 바이트짜리 한 줄 문서. 한글 1자 = UTF-8 3바이트."""
+        head = "# proj\n- "
+        filler = "가" * max(0, (n - len(head.encode()) - 1) // 3)
+        return head + filler + "\n"
+
+    def test_short_doc_scores_full(self):
+        self.assertEqual(self._rule("# proj\n모듈 지도만 담은 얇은 루트 문서\n")["points"], 5)
+
+    def test_one_long_line_penalised_despite_tiny_line_count(self):
+        # 2줄뿐인데 12,000바이트 초과 — 옛 200줄 규칙에서는 만점이던 자리다.
+        rule = self._rule(self._doc_of_bytes(12_600))
+        self.assertEqual(rule["points"], 0)
+        self.assertTrue(rule["evidence"],
+                        "0점이어도 바이트 근거는 남아야 history 에서 추이가 보인다")
+
+    def test_mid_size_scores_partial(self):
+        self.assertEqual(self._rule(self._doc_of_bytes(9_000))["points"], 2)
+
+    def test_evidence_carries_both_bytes_and_lines(self):
+        # 다이어트 방향이 갈리므로(긴 표인가 많은 문단인가) 둘 다 남긴다.
+        self.assertRegex(self._rule("# proj\n지도\n")["evidence"][0], r"[\d,]+바이트 / \d+줄")
+
+    def test_action_hint_registered_for_renamed_rule(self):
+        # 규칙 이름을 바꾸면 ACTION_HINTS 키가 어긋나 리포트에서 개선 안내가 사라진다.
+        self.assertIn(audit.ROOT_DOC_SIZE_RULE, audit.ACTION_HINTS)
+
+
+class TestLazyLoadSelfEvident(unittest.TestCase):
+    """파일명이 곧 트리거인 문서는 표 행 대신 링크 한 줄로 묶는다 (v0.8.9).
+
+    0.8.7 이 지운 것은 '중복' 행뿐이라, 중복이 아니면서 디렉토리 목록이 이미 말해 주는
+    것 이상을 담지 않은 행은 그대로 남아 매 세션 비용만 냈다.
+    """
+
+    SELF_EVIDENT = ("[`docs/NAMING.md`](docs/NAMING.md)", "클래스/패키지/메서드/DTO 명명")
+    DETAILED = ("[`docs/CONVENTIONS.md`](docs/CONVENTIONS.md)", "코드 작성 detail")
+
+    def _auto(self, rows):
+        text = (
+            "# CLAUDE.md\n\n## Lazy-load docs\n\n"
+            + inject_lazy_load_index.USER_BEGIN + "\n\n(아직 없음)\n\n"
+            + inject_lazy_load_index.USER_END + "\n\n"
+            + inject_lazy_load_index.AUTO_BEGIN + "\n\n(구)\n\n"
+            + inject_lazy_load_index.AUTO_END + "\n"
+        )
+        new_text, _, _, _ = inject_lazy_load_index.update_root(text, rows)
+        return new_text.split(inject_lazy_load_index.AUTO_BEGIN)[1].split(
+            inject_lazy_load_index.AUTO_END)[0]
+
+    def test_self_evident_row_leaves_table_but_detailed_stays(self):
+        auto = self._auto([self.SELF_EVIDENT, self.DETAILED])
+        self.assertIn("| 코드 작성 detail |", auto)
+        self.assertNotIn("| 클래스/패키지/메서드/DTO 명명 |", auto)
+
+    def test_link_survives_so_path_reference_count_holds(self):
+        # audit 규칙 1.2 는 루트 문서의 경로 참조 수를 센다 — 묶어도 링크는 남아야 한다.
+        self.assertIn("](docs/NAMING.md)", self._auto([self.SELF_EVIDENT, self.DETAILED]))
+
+    def test_only_self_evident_rows_render_no_table(self):
+        auto = self._auto([self.SELF_EVIDENT])
+        self.assertNotIn("|---|---|", auto, "행이 하나도 안 남으면 빈 표를 만들지 않는다")
+        self.assertIn("](docs/NAMING.md)", auto)
+
+    def test_unknown_document_stays_a_table_row(self):
+        # config 로 추가된 룰은 그 레포 맥락으로 쓴 문구라 파일명이 대신하지 못한다.
+        auto = self._auto([("[`docs/MY_GUIDE.md`](docs/MY_GUIDE.md)", "우리 팀 배포 절차")])
+        self.assertIn("| 우리 팀 배포 절차 |", auto)
+
+    def test_facts_expose_self_evident_flag(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "docs").mkdir()
+            (root / "docs" / "NAMING.md").write_text("# n", encoding="utf-8")
+            (root / "docs" / "CONVENTIONS.md").write_text("# c", encoding="utf-8")
+            flags = {t["label"]: t["self_evident"]
+                     for t in inject_lazy_load_index.collect_facts(root, None)["triggers"]}
+            self.assertTrue(any(v for k, v in flags.items() if "NAMING" in k))
+            self.assertTrue(any(not v for k, v in flags.items() if "CONVENTIONS" in k))
+
+
 if __name__ == "__main__":
     unittest.main()

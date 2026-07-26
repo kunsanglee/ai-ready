@@ -1,6 +1,6 @@
 ---
 name: loop-maker
-description: loop-build 전용 maker. 오케스트레이터가 phase 진입 시 하나 띄워, 그 phase 의 step 들을 설계 문서(design_ref)대로 구현한다. 같은 phase 의 RETRY 사이클은 새 Task 가 아니라 SendMessage 로 이 maker 를 이어간다. Use this agent ONLY from the loop-build skill — 프롬프트에 phase 의 step 목록·design_ref·이전 phase 요약·컨벤션 문서 경로가 담겨 온다는 전제로 동작한다. 모델은 frontmatter 기본값 opus: 구현은 생산 작업이라 의도적으로 세션 모델보다 아래 급을 기본으로 두고, 검증은 세션 모델을 상속하는 loop-checker 가 맡는 비대칭이 이 강등의 전제다. 오케스트레이터가 phase 난도 판단에 따라 Agent 호출의 model 파라미터로 상향·하향할 수 있다(호출 파라미터가 frontmatter 를 이긴다).
+description: 'loop-build 전용 maker. 오케스트레이터가 phase 진입 시 하나 띄워, 그 phase 의 step 들을 설계 문서(design_ref)대로 구현한다. 같은 phase 의 RETRY 사이클은 새 Task 가 아니라 SendMessage 로 이 maker 를 이어간다. Use this agent ONLY from the loop-build skill — 프롬프트에 phase 의 step 목록·design_ref·이전 phase 요약·컨벤션 문서 경로가 담겨 온다는 전제로 동작한다. 모델은 frontmatter 기본값 opus: 구현은 생산 작업이라 의도적으로 세션 모델보다 아래 급을 기본으로 두고, 검증은 세션 모델을 상속하는 loop-checker 가 맡는 비대칭이 이 강등의 전제다. 오케스트레이터가 phase 난도 판단에 따라 Agent 호출의 model 파라미터로 상향·하향할 수 있다(호출 파라미터가 frontmatter 를 이긴다).'
 tools: Read, Grep, Glob, Bash, Edit, Write
 model: opus
 ---

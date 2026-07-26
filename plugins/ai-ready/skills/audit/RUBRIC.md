@@ -31,7 +31,7 @@ Rules below show both forms where they differ.
 
 | Rule | Points |
 |------|--------|
-| Root `CLAUDE.md` ≤ 200 lines | 5 |
+| Root `CLAUDE.md` ≤ 8,000 bytes (≤ 12,000 scores partial) | 5 |
 | (Multi) Module docs average ≤ 50 lines<br>(Single) Package catalog 50–300 lines (not too short, not too bloated for lazy-load) | 5 |
 | At least one doc has explicit "DO NOT" / "절대" / "금지" / "MUST NOT" section | 5 |
 | At least one doc has explicit usage / "when to use" guidance | 5 |
@@ -108,3 +108,5 @@ The full credit still requires an in-repo artifact so it can be re-verified next
 - **One source per rule**: if `wiki/decisions/` has 12 ADRs, that still scores 5 points for rule 3.2, not 60.
 - **Self-output excluded**: `.ai-ready/` (the audit's own output directory) is excluded from scans. Module-CLAUDE.md scaffolds in `.ai-ready/scaffolds/` do NOT count toward coverage — they only count once moved to the actual module.
 - **Thin-index recognition**: rule 1.2 also accepts `docs/*.md` and `wiki/*.md` references (not only module paths) so thin-index style root CLAUDE.md (lazy-load trigger tables) is properly credited.
+- **Rule 1.2 saturates at 3 references**: three valid module/doc paths already score the full 4 points, and further references add nothing. A long trigger table is therefore *not* rewarded by this rubric — rows beyond the third cost always-loaded context for zero score. Trim the table for readability, not for points.
+- **Root size is measured in bytes, not lines (changed in v0.8.9)**: a Korean markdown root doc packs a whole table row or paragraph into one line, so line count stops tracking cost — a real 46-line root doc weighed 12,029 bytes (one bullet alone was 2,002 characters) and scored full marks under the old ≤200-line rule while it kept growing. Bytes weight Hangul 3:1 against ASCII, which is closer to token share. **Score continuity note**: repos that passed the line rule may now score lower on rule 2.1; that is the intended correction, so treat the v0.8.9 boundary as a break in the trend line rather than a regression.

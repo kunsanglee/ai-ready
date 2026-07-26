@@ -116,6 +116,16 @@ USAGE_PATTERNS = [
 # M-2: freshness rule 6.1 — 좁은 키워드만 인정
 FRESHNESS_KEYWORDS = ("claude.md", "agents.md", "freshness_check", "ai-ready")
 
+# 루트 CLAUDE.md 상주 분량 임계값 (rule 2.1).
+# v0.8.9 이전에는 줄 수로 쟀는데(200줄 이하 만점), 한국어 마크다운에서는 한 줄이 곧 표 한 행이거나
+# 문단 하나라 줄 수가 비용의 대리 지표가 되지 못한다. 실측 사례: 46줄인데 12,029바이트인 루트 문서
+# (한 불릿이 2,002자) 가 200줄 규칙에서 만점을 받으면서 계속 부풀었다. 바이트는 한글 3 / 영문 1 이라
+# 토큰 비중에 더 가까워 always-loaded 비용의 근사로 쓴다.
+# 8,000 기준은 정리를 마친 실제 레포(7,058바이트)가 통과하고 그 직전 상태(9,781)는 감점되는 자리다.
+ROOT_DOC_MAX_BYTES = 8_000
+ROOT_DOC_WARN_BYTES = 12_000
+ROOT_DOC_SIZE_RULE = f"루트 CLAUDE.md {ROOT_DOC_MAX_BYTES:,}바이트 이하"
+
 
 # --- Helpers --------------------------------------------------------------
 
@@ -123,6 +133,13 @@ def line_count(path: Path) -> int:
     try:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+def byte_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
     except OSError:
         return 0
 
@@ -552,17 +569,22 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
     single_module = is_single_module(scan["modules"], target)
     catalog_doc = find_package_catalog(target) if single_module else None
 
-    # 2.1 루트 CLAUDE.md 200줄 이하
-    r = Rule("루트 CLAUDE.md 200줄 이하", 5)
+    # 2.1 루트 CLAUDE.md 상주 분량 (바이트 — 근거는 ROOT_DOC_MAX_BYTES 주석)
+    r = Rule(ROOT_DOC_SIZE_RULE, 5)
     if root_doc:
-        lc = line_count(root_doc)
-        if lc <= 200:
-            r.award(5, [f"{root_doc.relative_to(target)} ({lc}줄)"])
-        elif lc <= 300:
-            r.award(2, [f"{root_doc.relative_to(target)} ({lc}줄)"],
-                    note="200줄 초과 ~ 300줄 이하 — 다이어트 권장")
+        size = byte_size(root_doc)
+        # 줄 수도 함께 남긴다. 점수 근거는 바이트지만, 줄당 분량을 보면 표 행이 긴 것인지
+        # 문단이 많은 것인지 갈려 다이어트 방향이 달라진다.
+        ev = [f"{root_doc.relative_to(target)} ({size:,}바이트 / {line_count(root_doc)}줄)"]
+        if size <= ROOT_DOC_MAX_BYTES:
+            r.award(5, ev)
+        elif size <= ROOT_DOC_WARN_BYTES:
+            r.award(2, ev,
+                    note=f"{ROOT_DOC_MAX_BYTES:,}바이트 초과 ~ {ROOT_DOC_WARN_BYTES:,}바이트 이하 — 다이어트 권장")
         else:
-            r.note = f"{lc}줄 — 너무 길어 매 세션 컨텍스트가 부풉니다"
+            # 0점이어도 근거는 남긴다 — history 에 바이트가 쌓여야 추이가 보인다.
+            r.evidence.extend(ev)
+            r.note = f"{size:,}바이트 — 너무 길어 매 세션 컨텍스트가 부풉니다"
     else:
         r.note = "루트 CLAUDE.md 없음"
     rules.append(r)
@@ -1030,7 +1052,7 @@ def grade_for(score: int) -> str:
 # 액션 권고 - rule name을 키로 사용. 항목: (소요 분, 임팩트 1-5, 메시지)
 ACTION_HINTS = {
     "루트 CLAUDE.md 또는 AGENTS.md 존재": (15, 5,
-        "저장소 루트에 CLAUDE.md를 만드세요. 200줄 이하로 유지하고, 백과사전이 아닌 모듈 문서로의 지도 역할로 사용하세요."),
+        f"저장소 루트에 CLAUDE.md를 만드세요. {ROOT_DOC_MAX_BYTES:,}바이트 이하로 유지하고, 백과사전이 아닌 모듈 문서로의 지도 역할로 사용하세요."),
     "루트 문서가 3개 이상의 모듈 경로/문서 참조": (15, 4,
         "루트 CLAUDE.md에 '모듈 맵' 섹션을 추가해 각 모듈의 디렉토리와 1줄 목적을 나열하세요."),
     "모듈별 CLAUDE.md 커버리지": (60, 5,
@@ -1043,8 +1065,9 @@ ACTION_HINTS = {
         "패키지 카탈로그를 50~300줄 범위로 유지하세요. 너무 짧으면 정보 부족, 너무 길면 lazy-load 비용이 큽니다."),
     "인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md)": (10, 2,
         "docs/INDEX.md(권장) 또는 wiki/index.md를 만들어 모든 문서를 잇는 단일 진입점을 제공하세요."),
-    "루트 CLAUDE.md 200줄 이하": (30, 4,
-        "루트 CLAUDE.md를 다이어트하세요. 컨벤션은 CONVENTIONS.md, 안티패턴은 ANTIPATTERNS.md로 분리하고 루트에는 지도만 남기세요."),
+    ROOT_DOC_SIZE_RULE: (30, 4,
+        "루트 CLAUDE.md를 다이어트하세요. 컨벤션은 CONVENTIONS.md, 안티패턴은 ANTIPATTERNS.md로 분리하고 루트에는 지도만 남기세요. "
+        "줄 수가 적어도 한 줄이 길면 상주 비용은 그대로입니다 — 긴 불릿 하나가 표 열 행보다 무거울 수 있습니다."),
     "모듈 문서 평균 50줄 이하": (30, 3,
         "모듈 문서 점검 — 60줄을 넘는 문서는 DESIGN.md, ANTIPATTERNS.md 등으로 분리하세요."),
     "명시적 안티패턴 / 절대 금지 가이드 존재": (20, 5,
