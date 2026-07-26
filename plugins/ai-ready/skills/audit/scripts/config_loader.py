@@ -46,10 +46,12 @@ config.json 표준 스키마 (v1):
 각 섹션은 *선택적* — 누락된 섹션은 빈 / 비활성으로 취급.
 
 `rubric` 섹션 (v0.3.0+) — audit.py 채점 로직이 프로젝트 현실을 존중하도록 하는 선언:
-  - decision_records.dir_hints: 의사결정 기록(ADR rule 3.2)으로 인정할 *추가* 디렉토리.
+  - decision_records.dir_hints: 규칙 "아키텍처 의사결정 기록 (ADR / wiki/decisions)" 으로
+    인정할 *추가* 디렉토리.
     하드코딩된 docs/adr·docs/decisions 외에, design 통합 문서 (PRD/ADR/api-doc 흡수) 를
     docs/design/ 에 두는 프로젝트가 그 디렉토리를 결정 기록 신호로 선언할 때 사용.
-  - api_contracts.build_deps: API 계약(rule 4.3)으로 인정할 빌드 의존성 문자열.
+  - api_contracts.build_deps: 규칙 "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)" 로
+    인정할 빌드 의존성 문자열.
     정적 openapi.yaml 대신 springdoc/springfox 처럼 *코드에서 OpenAPI 를 런타임 생성* 하는
     의존성을 빌드 매니페스트에서 감지하면 계약 문서화로 인정.
 
@@ -178,20 +180,20 @@ def rubric_section(cfg: dict | None) -> dict:
 
 
 def decision_record_hints(cfg: dict | None) -> list[str]:
-    """ADR rule(3.2) 에서 의사결정 기록으로 인정할 *추가* 디렉토리 (예: docs/design)."""
+    """규칙 "아키텍처 의사결정 기록 (ADR / wiki/decisions)" 에서 인정할 *추가* 디렉토리 (예: docs/design)."""
     dr = _as_dict(rubric_section(cfg).get("decision_records"))
     return [h.strip("/").lower().replace("\\", "/")
             for h in _as_list(dr.get("dir_hints")) if isinstance(h, str)]
 
 
 def api_contract_build_deps(cfg: dict | None) -> list[str]:
-    """API 계약 rule(4.3) 에서 인정할 빌드 의존성 문자열 (예: springdoc)."""
+    """규칙 "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)" 에서 인정할 빌드 의존성 문자열 (예: springdoc)."""
     ac = _as_dict(rubric_section(cfg).get("api_contracts"))
     return [d.lower() for d in _as_list(ac.get("build_deps")) if isinstance(d, str)]
 
 
 def antipattern_doc_hints(cfg: dict | None) -> list[str]:
-    """안티패턴 rule(3.1) 에서 인정할 *추가* 문서 경로 (예: 통합 문서 docs/CONVENTIONS.md).
+    """규칙 "ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재" 에서 인정할 *추가* 문서 경로 (예: 통합 문서 docs/CONVENTIONS.md).
 
     파일명 정확 매칭(ANTIPATTERNS.md) 밖에서, 안티패턴을 통합 문서에 두는 프로젝트가
     그 경로를 선언할 때. 값은 target 기준 상대 파일 경로. 파일 존재 + 최소 내용만 보고
@@ -202,7 +204,7 @@ def antipattern_doc_hints(cfg: dict | None) -> list[str]:
 
 
 def naming_doc_hints(cfg: dict | None) -> list[str]:
-    """네이밍 rule(3.3) 에서 인정할 *추가* 문서 경로 (예: 통합 문서 docs/CONVENTIONS.md)."""
+    """규칙 "네이밍 컨벤션 문서화" 에서 인정할 *추가* 문서 경로 (예: 통합 문서 docs/CONVENTIONS.md)."""
     nm = _as_dict(rubric_section(cfg).get("naming"))
     return [h.strip("/").replace("\\", "/")
             for h in _as_list(nm.get("doc_hints")) if isinstance(h, str)]

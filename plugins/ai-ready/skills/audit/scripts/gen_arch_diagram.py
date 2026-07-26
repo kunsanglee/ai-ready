@@ -7,7 +7,8 @@
   - npm workspaces (package.json): `dependencies` 중 workspace 패키지 참조
   - Swift Package Manager (Package.swift): `.package(path: "...")` path-based 워크스페이스 의존성 파싱
 
-ROI 액션 매핑: "ARCHITECTURE.md + Mermaid 다이어그램" (Rule 4.1, +5점).
+ROI 규칙 (audit 의 규칙 이름 그대로 — 번호가 아니라 이름으로 가리킨다):
+  - "모듈 의존성 맵 / 다이어그램 존재" (+5점)
 
 실행:
   python3 gen_arch_diagram.py --target /path/to/repo --out /path/to/repo/docs/ARCHITECTURE.md
