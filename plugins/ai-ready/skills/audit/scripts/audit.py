@@ -1525,12 +1525,20 @@ def render_report(audit: dict) -> str:
     return "\n".join(lines)
 
 
-def render_readme(audit: dict) -> str:
+def render_readme(audit: dict, out_dir: Path | None = None) -> str:
     """`.ai-ready/README.md` — 산출물 안내 + 플러그인 설치·사용 가이드.
 
     팀원·신규 합류자·외부 컨트리뷰터가 `.ai-ready/` 폴더를 처음 봤을 때
     무엇이 들어 있고 어떻게 갱신·활용하는지 자족적으로 알 수 있도록 한다.
+
+    산출물 표는 out_dir 의 실물 기준으로 쓴다 — audit 은 dashboard.html 과 scaffolds/ 를
+    만들지 않는데(각각 dashboard.py·apply 의 몫) 종전 README 가 무조건 표에 넣고
+    "매 실행 시 갱신"이라 적어, audit 만 재실행한 독자가 낡은 dashboard 점수를 갱신된
+    것으로 믿게 했다(2회차 적대 검토 발견 8). out_dir=None 이면 없는 것으로 취급한다.
     """
+    def _exists(rel: str) -> bool:
+        return out_dir is not None and (out_dir / rel).exists()
+
     lines = []
     lines.append("# .ai-ready — AI 준비도 감사 산출물")
     lines.append("")
@@ -1547,12 +1555,23 @@ def render_readme(audit: dict) -> str:
     lines.append("|---|---|")
     lines.append("| `audit-report.md` | 카테고리별 점수·규칙별 통과 여부·ROI 우선순위 액션. 사람이 먼저 읽는 리포트 |")
     lines.append("| `audit.json` | 동일 결과의 기계 판독용 (스크립트·대시보드 입력) |")
-    lines.append("| `dashboard.html` | 점수·카테고리 시각화 + 추이 sparkline (브라우저로 직접 열기) |")
     lines.append("| `history/{ts}.json` | 매 실행마다 archive — dashboard 추이 차트의 입력 |")
-    lines.append("| `scaffolds/<module>/CLAUDE.md` | 핫 모듈용 CLAUDE.md 초안. 검토 후 실제 모듈 디렉토리로 이동 |")
-    lines.append("| `scaffolds/ANTIPATTERNS.md` | 180일 git 핫스팟 기반 안티패턴 시드. 클러스터링된 후보 — 검토 후 채택 |")
-    lines.append("| `hooks/freshness_check.sh` | (선택) Claude Code Stop hook — 소스 변경에 비해 CLAUDE.md가 오래된 경우 경고 |")
+    if _exists("dashboard.html"):
+        lines.append("| `dashboard.html` | 점수·카테고리 시각화 + 추이 sparkline (브라우저로 직접 열기). "
+                     "audit 재실행으로는 갱신되지 않음 — dashboard.py 를 다시 실행 |")
+    if _exists("scaffolds"):
+        lines.append("| `scaffolds/<module>/CLAUDE.md` | 핫 모듈용 CLAUDE.md 초안. 검토 후 실제 모듈 디렉토리로 이동 |")
+        lines.append("| `scaffolds/ANTIPATTERNS.md` | 180일 git 핫스팟 기반 안티패턴 시드. 클러스터링된 후보 — 검토 후 채택 |")
+    if _exists("hooks/freshness_check.sh"):
+        lines.append("| `hooks/freshness_check.sh` | (선택) Claude Code Stop hook — 소스 변경에 비해 CLAUDE.md가 오래된 경우 경고 |")
     lines.append("")
+    if not _exists("dashboard.html"):
+        lines.append("`dashboard.html` 은 아직 없습니다 — audit 은 만들지 않으므로 "
+                     "`python3 <플러그인>/skills/audit/scripts/dashboard.py --audit audit.json --out dashboard.html` 로 생성하세요.")
+        lines.append("")
+    if not _exists("scaffolds"):
+        lines.append("`scaffolds/` 초안(모듈 CLAUDE.md·ANTIPATTERNS 시드)은 `/ai-ready:apply` 의 해당 액션이 만듭니다.")
+        lines.append("")
     lines.append("## 플러그인 설치 (처음 사용)")
     lines.append("")
     lines.append("Claude Code CLI에서:")
@@ -1608,7 +1627,8 @@ def render_readme(audit: dict) -> str:
     lines.append("- **scaffold/는 초안**: `scaffolds/` 하위 산출물은 그대로 쓰지 말고 검토·이동·정리 후 실제 위치에 둔다.")
     lines.append("  - `scaffolds/<module>/CLAUDE.md` → 검토 후 `<module>/CLAUDE.md` 로 `git mv`")
     lines.append("  - `scaffolds/ANTIPATTERNS.md` → 검토 후 `docs/ANTIPATTERNS.md` 로 채택. 시드와 운영본이 공존할 때는 `docs/` 가 권위")
-    lines.append("- **재실행 시 덮어쓰기**: `audit.json` / `audit-report.md` / `dashboard.html` / 본 README는 매 실행 시 갱신된다. 직접 수정한 내용은 사라진다.")
+    lines.append("- **재실행 시 덮어쓰기**: `audit.json` / `audit-report.md` / 본 README는 audit 매 실행 시 갱신된다. 직접 수정한 내용은 사라진다.")
+    lines.append("- **dashboard 는 별도 갱신**: `dashboard.html` 은 audit 재실행으로 갱신되지 않는다 — dashboard.py 를 다시 실행해야 최신 점수를 보여준다.")
     lines.append("- **history/ 는 누적**: 이전 실행 결과를 보존하므로 dashboard 가 추이 차트를 그릴 수 있다. 손대지 마세요.")
     lines.append("")
     lines.append("---")
@@ -1708,9 +1728,10 @@ def run(target: Path, out_dir: Path) -> dict:
     }
     (out_dir / "audit.json").write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
     (out_dir / "audit-report.md").write_text(render_report(audit), encoding="utf-8")
-    (out_dir / "README.md").write_text(render_readme(audit), encoding="utf-8")
     _archive_history(out_dir, audit)
+    # README 는 훅 복사 뒤에 쓴다 — 산출물 표가 out_dir 실물 기준이라 순서가 내용을 정한다.
     _copy_freshness_hook(out_dir)
+    (out_dir / "README.md").write_text(render_readme(audit, out_dir), encoding="utf-8")
     return audit
 
 

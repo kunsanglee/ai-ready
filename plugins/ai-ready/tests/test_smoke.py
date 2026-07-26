@@ -881,6 +881,25 @@ class TestRound2Gates(unittest.TestCase):
             result = audit.run(root, root / ".ai-ready" / "out")
             self.assertNotIn("config 자기신고 인정", audit.render_report(result))
 
+    def test_readme_artifact_table_reflects_out_dir_reality(self):
+        # audit 은 dashboard.html·scaffolds/ 를 만들지 않는다 — 없는 산출물을 표에 넣고
+        # "매 실행 시 갱신" 이라 적으면 audit 만 재실행한 독자가 낡은 dashboard 를 믿는다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            out = root / ".ai-ready" / "out"
+            result = audit.run(root, out)
+            readme = (out / "README.md").read_text(encoding="utf-8")
+            self.assertNotIn("| `dashboard.html`", readme)
+            self.assertIn("dashboard.py", readme)  # 생성 방법 안내는 있어야 한다
+            self.assertNotIn("| `scaffolds/", readme)
+            self.assertIn("| `hooks/freshness_check.sh`", readme)  # audit 이 실제로 복사하는 산출물
+            # dashboard.html 이 생기면 표에 실리되, audit 재실행으로 갱신되지 않음을 함께 말한다.
+            (out / "dashboard.html").write_text("<html></html>", encoding="utf-8")
+            readme2 = audit.render_readme(result, out)
+            self.assertIn("| `dashboard.html`", readme2)
+            self.assertIn("갱신되지 않음", readme2)
+
 
 class TestRuleNameReferences(unittest.TestCase):
     """스크립트가 규칙을 번호가 아니라 이름으로 가리키는지 (v0.9.0).
