@@ -42,7 +42,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
 | Rule name (audit.json 기준) | 처리 방법 | 명령 |
 |----------------------------|----------|------|
-| 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 50~150줄 짜리 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장 |
+| 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장. 분량 목표는 "루트 CLAUDE.md 상주 분량 (800~8,000바이트)" 규칙과 같은 **바이트 기준 800~8,000** — 채점이 0.8.9 부터 바이트라, 줄 수로 짓으면 한국어 문서는 줄이 적어도 초과할 수 있다 |
 | 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **maintain** | `inject_module_map.py --target <T> --json` 로 모듈 사실(경로·요약·가이드 존재) 수집 → AI 가 루트 CLAUDE.md '모듈 맵'·MODULE_MAP.md 에 새 모듈만 추가·바뀐 요약만 수정. 마커(`<!-- module-map -->`) 안 자동 영역만, 사용자 영역 보존 |
 | 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
 | 루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조 | **judgment** *(단일 모듈)* | Claude 가 루트 `CLAUDE.md` 의 '모듈 맵' 섹션에서 `docs/PACKAGES.md` lazy-load 진입 안내를 박는다 |
@@ -59,7 +59,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 네이밍 컨벤션 문서화 | **maintain** | `extract_section.py --target <T> --kind naming --json` 로 흩어진 네이밍 섹션 사실 수집 → AI 가 docs/NAMING.md 에 새 섹션만 추가·바뀐 것만 수정(사람이 다듬은 산문 보존). 부재 시에만 통째 생성 |
 | 모듈 의존성 맵 / 다이어그램 존재 | **maintain** | `gen_arch_diagram.py --target <T> --json` 로 정확한 의존 엣지·노드 사실 수집 → AI 가 그 엣지로 docs/ARCHITECTURE.md 의 Mermaid 를 갱신(엣지를 지어내지 않음, 스크립트가 준 것만). 사람이 더한 설명 산문 보존 |
 | 빌드 매니페스트로 의존 그래프 추출 가능 | **skip** | 빌드 시스템이 이미 커버 |
-| 모듈 간 API 계약 문서화 (OpenAPI/proto/contracts) | **judgment (대) ** | 큰 작업 — 추천만 하고 본격 도입은 별도 세션. *springdoc/springfox 처럼 코드에서 OpenAPI 를 런타임 생성 중이면* `.ai-ready/config.json` 의 `rubric.api_contracts.build_deps` 에 선언해 인정시키는 게 우선 |
+| 모듈 간 API 계약 문서화 (OpenAPI/proto/contracts) | **judgment (대)** | 큰 작업 — 추천만 하고 본격 도입은 별도 세션. *springdoc/springfox 처럼 코드에서 OpenAPI 를 런타임 생성 중이면* `.ai-ready/config.json` 의 `rubric.api_contracts.build_deps` 에 선언해 인정시키는 게 우선 |
 | 기계적 검증 훅 (pre-commit / AI 에이전트 hook) | **judgment** | AI 코딩 환경이면 `.claude/settings.json` PostToolUse(편집 후 ktlint/format)·PreToolUse(커밋 전 test/check) hook 을 먼저 제안. 추가 안전망으로 lefthook pre-commit / CI. 글로벌(~/.claude) 말고 *프로젝트* 설정에 둘 것 |
 | CI 설정 존재 + 테스트 참조 | **judgment** | CI provider 에 따라 다름 — Claude 가 추천 |
 | 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **maintain** | `extract_section.py --target <T> --kind testing --json` 로 흩어진 테스트 섹션 사실 수집 → AI 가 docs/TESTING.md 에 새 섹션만 추가·바뀐 것만 수정(사람이 다듬은 산문 보존). 부재 시에만 통째 생성 |
