@@ -16,7 +16,7 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 ## 🔌 plugin / 프로젝트 구조
 
 - 이 스킬은 `ai-ready` plugin 의 일부다(과거 별도 loop-engine plugin 이었으나 v0.6.0 에서 통합). **도구 본체는 유저 레벨**(plugin), **프로젝트별 차이는 런타임 감지**가 채운다 — 별도 어댑터 파일을 만들지 않는다.
-- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param` + `detect_build.py` 감지기), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace).
+- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param` + `detect_build.py` 감지기 + `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace).
 - 프로젝트 사실(빌드·테스트·린트 명령·티켓 패턴·베이스 브랜치·컨벤션 docs·지식층)은 Step 0 에서 `detect_build.py` 가 매니페스트·브랜치를 *읽어* 감지한다(읽기 전용 — 커밋되는 어댑터 파일은 만들지 않는다. 감지 결과는 루프 한정 휘발 스냅숏 `params.env` 로만 남고 종료 시 폐기된다).
 - 프로젝트 델타(레포에 커밋, 선택): `.loop/rubric.md`(LOCAL rubric — 그 스택 특유 kind. BASE 와 병합 채점). 없어도 BASE 만으로 돈다. 스택 특유 종류(예: ddl-safety)는 사람이 `/loop-lessons` 로 덧붙여 키운다 — 자동 생성하지 않는다.
 - 지식층은 프로젝트의 `docs/ANTIPATTERNS.md`(ai-ready audit/apply 가 만들고 가꾸는 문서). checker 가 판정 기준으로 읽고, `/loop-lessons` 가 잡힌 실수를 거기에 덧붙인다. loop 은 그 문서를 *읽고 보탤* 뿐 따로 생성하지 않는다 — ai-ready 와 loop 이 같은 지식층을 공동 저작한다.
@@ -161,12 +161,27 @@ if [ "${CHANGED:-0}" -eq 0 ] && [ "${DIRTY:-0}" -eq 0 ]; then
   # 조용히 통과 금지 — Step 5 사람 호출로.
 fi
 # 게이트: 컴파일 먼저(빠름), 통과하면 변경 모듈 테스트(또는 전체).
-# 컴파일 게이트(빠름). 명령은 Step 0 감지가 준다. 빈 값이면 스킵하되 시끄럽게 알린다(silent skip 금지).
-if [ -n "${LOOP_BUILD_CMD:-}" ]; then eval "$LOOP_BUILD_CMD"   # 실패 → 즉시 maker 재진입, checker 안 부름
-else echo "loop: LOOP_BUILD_CMD 비어있음 — 빌드 시스템 미인식. 컴파일 게이트 스킵(셋업에서 LOOP_BUILD_CMD 직접 지정 가능)" >&2; fi
-# 테스트 게이트. 감지 명령이 변경 모듈 한정이면 그게 게이트를 좁힌다.
-if [ -n "${LOOP_TEST_CMD:-}" ]; then eval "$LOOP_TEST_CMD"
-else echo "loop: LOOP_TEST_CMD 비어있음 — 테스트 게이트 스킵(셋업에서 LOOP_TEST_CMD 직접 지정 가능)" >&2; fi
+# 출력은 창이 아니라 파일로 받는다. 실패하면 파서가 항목 큐로 바꾸고, 창에는 한 줄 목록만 낸다.
+# (전문을 창에 쏟으면 매 회차 같은 잡음이 컨텍스트를 먹는다 — Step 3 의 findings 위생과 같은 규율.)
+GQ="$LOOP_DIR/gate-queue.jsonl"
+: > "$GQ"   # 매 사이클 새로 채운다. 앞 회차에 고쳐진 항목이 남으면 maker 가 이미 없는 오류를 쫓는다.
+GATE_FAILED=0
+run_gate() {   # run_gate <단계라벨> <명령>
+  [ -n "$2" ] || { echo "loop: $1 게이트 명령 비어있음 — 스킵(셋업에서 LOOP_${1}_CMD 직접 지정 가능)" >&2; return 0; }
+  local out="$LOOP_DIR/gate-$1.out"
+  if eval "$2" > "$out" 2>&1; then echo "게이트 $1 통과"; return 0; fi
+  python3 "$ENG/gate_parse.py" --stage "$1" "$out" >> "$GQ"   # 아는 형식 0건이면 꼬리를 항목 하나로 — 빈 큐를 내지 않는다
+  GATE_FAILED=1
+  return 1
+}
+# 컴파일 먼저. 깨지면 테스트는 돌리지 않는다(깨진 컴파일 위의 테스트 실패는 정보가 없다).
+run_gate BUILD "${LOOP_BUILD_CMD:-}" && run_gate TEST "${LOOP_TEST_CMD:-}"
+if [ "$GATE_FAILED" -eq 1 ]; then
+  TOTAL=$(wc -l < "$GQ" | tr -d ' ')
+  echo "게이트 실패 — 항목 $TOTAL 건이 $GQ 에 쌓였다. Step 6 이 여기부터 처리한다."
+  jq -r '"\(.stage)\t\(.kind)\t\(.file // "-"):\(.line_number // "-")\t\((.message // .test // "")[0:80])"' "$GQ" | head -20
+  [ "$TOTAL" -gt 20 ] && echo "(위 20건만 표시 — 나머지 $((TOTAL - 20)) 건은 $GQ 에 있다. 잘라낸 것을 통과로 읽지 말 것)"
+fi
 ```
 
 - 컴파일·테스트 **실패** = 게이트 층 RETRY. 먼저 아래 자기완결 증가를 실행해 실패 횟수를 영속한다(위 brake 가 회차와 합산해 세는 값 — 게이트만 계속 깨져도 시간 상한까지 공회전하지 않게). 별도 Bash 호출에서 실행되므로 `$GFAIL` 셸 변수에 기대면 안 된다 — 미정의 변수는 산술에서 0 이라 카운터가 항상 1 로 리셋된다. 그 뒤 checker 를 부르지 않고 **Step 6(maker 재진입)** 으로 가서 고친 뒤 이 사이클을 다시 연다. 단, 깨진 게 maker 가 못 고치는 운영 비가역(예: 마이그레이션 충돌)이면 사람 대기.
@@ -178,8 +193,12 @@ else echo "loop: LOOP_TEST_CMD 비어있음 — 테스트 게이트 스킵(셋�
   LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR")"
   G="$LOOP_DIR/gate.fail"; echo $(( $(cat "$G" 2>/dev/null || echo 0) + 1 )) > "$G"; cat "$G"
   ```
+- **게이트 실패의 산출물은 버리지 않는다 — `$LOOP_DIR/gate-queue.jsonl` 이 그 사이클 maker 의 입력이다.** 위 블록의 `run_gate` 가 게이트 출력을 파일로 받고 `gate_parse.py` 로 한 줄 하나의 JSON 항목(`kind`·`file`·`line_number`·`message`·`raw`)으로 바꿔 큐에 쌓는다. 채점 경로의 `scored.json` 이 checker finding 을 담는 자리와 같다. 창에는 한 줄 목록만 나가고 원문은 `$LOOP_DIR/gate-<단계>.out` 에 남아, 필요한 항목만 maker 가 열어 본다.
+  - **큐는 매 사이클 비우고 새로 채운다.** 게이트를 매 사이클 다시 돌리므로 그 출력이 유일한 정본이다. 앞 회차 항목을 남기면 이미 고쳐진 오류를 maker 가 계속 쫓는다.
+  - **아는 형식이 하나도 없어도 큐가 비지 않는다.** 파서가 출력 꼬리를 `gate-output-unparsed` 항목 하나로 남긴다. 조용히 버리면 큐가 비어 게이트가 통과한 것처럼 보이고, 그 오독이 이 큐가 막는 실패다.
+  - 형식은 실제 출력에서 뜬 것이다. Kotlin 2.x 는 **열 번호 뒤에 콜론이 없다**(`...:17:31 Unresolved reference`). 형식 회귀는 `_loop-engine/test_gate_parse.py` 가 잡는다.
 - 게이트 통과면 Step 2 로.
-- 린트 게이트가 필요하면 Step 0 감지가 준 `$LOOP_LINT_CMD`(예: `./gradlew ktlintCheck`·`eslint .`·`ruff check`)를 게이트에 추가한다(빈 값이면 스킵).
+- 린트 게이트가 필요하면 Step 0 감지가 준 `$LOOP_LINT_CMD`(예: `./gradlew ktlintCheck`·`eslint .`·`ruff check`)를 위 `run_gate LINT "${LOOP_LINT_CMD:-}"` 형태로 게이트 사슬에 덧붙인다(빈 값이면 스킵). 파서는 린트 위반도 `lint-violation` 항목으로 낸다.
 
 ### Step 2. checker 1회 호출 (독립·적대 시선)
 
@@ -268,7 +287,7 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 
 ### Step 5-1. 종료 정리 (런타임 상태 폐기)
 
-`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
+`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문 `gate-*.out`)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
 
 ```bash
 rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
@@ -282,7 +301,22 @@ rm -f "$PROJECT_ROOT/.loop/run/.active-$BR"   # 이 브랜치의 재유도 포�
 
 ### Step 6. maker 재진입 (고침)
 
-이 세션이 maker 다. Step 3 이 남긴 `$LOOP_DIR/scored.json` 을 finding 단위로 열어(등급·종류·위치 목록은 Step 3 출력에 이미 있다 — 전문을 통째로 cat 하지 말 것) **CRITICAL → MAJOR 순으로 실제 코드를 고친다**. 고치고 나면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시). 매 회차 코드가 바뀌어야 루프가 의미 있다 — 같은 결과를 N번 내지 않는다.
+이 세션이 maker 다. 고치고 나면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시). 매 회차 코드가 바뀌어야 루프가 의미 있다 — 같은 결과를 N번 내지 않는다.
+
+**입력이 두 갈래다. 게이트 큐가 먼저다.**
+
+```bash
+# 재유도 프리앰블(Step 1 과 동일) 뒤에:
+GQ="$LOOP_DIR/gate-queue.jsonl"
+if [ -s "$GQ" ]; then echo "입력: 게이트 큐 $(wc -l < "$GQ" | tr -d ' ')건"
+else echo "입력: 채점 큐 scored.json"; fi
+```
+
+1. **`gate-queue.jsonl` 이 비어 있지 않으면 그것부터.** 게이트가 깨진 사이클이라는 뜻이고, 이때 `scored.json` 은 **이번 사이클 것이 아니다** — 게이트가 깨지면 checker 를 부르지 않아 Step 3 이 돌지 않았고, 그 파일은 앞 사이클에서 남은 값이다. 그걸 먼저 고치면 없는 문제를 쫓는다. 컴파일이 깨진 상태의 판정은 신뢰할 수 없다는 핵심 불변 3(게이트가 checker 보다 먼저)의 연장이다.
+   - 항목 순서는 `compile-error` → `test-failure` → `lint-violation` 이다. 컴파일이 안 되면 테스트 실패는 정보가 없고, 린트는 동작에 영향이 없다.
+   - 항목의 `file`·`line_number` 로 그 자리만 연다. `raw` 는 파서가 잘못 쪼갰을 때 돌아갈 원문이고, 더 필요하면 `$LOOP_DIR/gate-<단계>.out` 을 **그 항목 주변만** 본다. 전문을 창에 끌어오지 않는다. 항목이 수천 개가 될 수 있어 채점 큐보다 이 규율이 더 중요하다.
+   - `gate-output-unparsed` 항목이면 파서가 형식을 모른 것이다. 그 꼬리를 읽고 고치되, 같은 형식이 반복되면 `_loop-engine/gate_parse.py` 에 패턴을 더할 후보로 사람에게 보고한다.
+2. **비어 있으면 `scored.json`.** Step 3 이 남긴 것을 finding 단위로 열어(등급·종류·위치 목록은 Step 3 출력에 이미 있다 — 전문을 통째로 cat 하지 말 것) **CRITICAL → MAJOR 순으로 실제 코드를 고친다**.
 
 - **코드를 작성·수정하면 그 변경분에 대응하는 테스트도 함께 작성한다.** 이 강제는 rubric 의 KINDS 표에 `test-missing`(convention, CRITICAL) 이 있어야 작동하는데, **현재 BASE rubric 에 등록돼 있어 LOCAL rubric 없이도 프로젝트 무관하게 작동한다**(checker 가 변경분에 대응 테스트 누락을 잡으면 셸이 CRITICAL→RETRY). 테스트 규약·도구가 다른 프로젝트는 LOCAL rubric 의 같은 kind 로 override 하거나 끈다 — 스킬 본문이 아니라 rubric 이 결정한다. 작성 직전에 Step 0 감지가 준 `$LOOP_CONVENTION_DOCS`(공백 구분 경로 목록 — 테스트 규약·네이밍·에러 처리 등 ai-ready 가 만든 문서) 중 변경 표면에 닿는 문서를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다. 목록이 비었거나 파일이 없으면 그 단계를 건너뛴다. 작성한 테스트는 Step 1 의 테스트 게이트(`$LOOP_TEST_CMD`)에 포함돼 실제로 실행·검증된다.
 - MINOR 만 남았으면 보통 PASS 라 여기 오지 않는다. RETRY_SOFT(MAJOR)는 고치되, 정체로 멈추면 사람 승인으로 통과 가능.
@@ -303,6 +337,9 @@ rm -f "$PROJECT_ROOT/.loop/run/.active-$BR"   # 이 브랜치의 재유도 포�
 | 정체 감지가 매번 INIT | 사이클 간 `stall.json` 이 사라짐(셸 종료마다 리셋한 경우) | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history.jsonl` append 누락 | Step 3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
 | 무한 같은 finding | maker 가 안 고치고 재진입 | Step 6 에서 실제 코드를 바꿨는지 확인. 못 고치는 finding 은 AWAIT_USER |
+| 게이트 큐가 `gate-output-unparsed` 한 건뿐 | `gate_parse.py` 가 그 도구의 오류 형식을 모름 | 그 항목의 꼬리로 고치되, 같은 형식이 반복되면 파서에 패턴 추가 후보로 보고. **큐가 비는 것보다 이게 낫다** — 빈 큐는 통과로 오독된다 |
+| 게이트 큐에 이미 고친 오류가 남음 | Step 1 의 `: > "$GQ"` 초기화를 건너뜀 | 게이트 블록을 통째로 실행한다. 큐는 사이클마다 새로 채우는 것이 정본 |
+| 게이트 실패인데 창에 원문이 안 보임 | 설계다 — 출력은 `$LOOP_DIR/gate-<단계>.out` 으로 간다 | 창의 한 줄 목록으로 판단하고, 필요한 항목 주변만 그 파일에서 읽는다 |
 | 모든 finding 이 CRITICAL | checker 가 dimension 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker dimension 값 점검 |
 
 ## Non-Goals

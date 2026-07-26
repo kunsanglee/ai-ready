@@ -131,6 +131,18 @@ else
   echo "SKIP  detect_build 테스트 — python3 미설치"
 fi
 
+# ── 9. gate_parse.py 파서 (게이트 실패 출력 → 항목 큐) ──
+# 형식 회귀가 조용히 나면 큐가 빈 채로 통과처럼 보인다 — 그래서 이 테스트가 게이트에 붙는다.
+if command -v python3 >/dev/null 2>&1; then
+  if gp_out="$(python3 "$DIR/test_gate_parse.py" 2>&1)"; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); printf 'FAIL  gate_parse 파서 테스트\n%s\n' "$gp_out"
+  fi
+else
+  echo "SKIP  gate_parse 테스트 — python3 미설치"
+fi
+
 # ── 결과 ─────────────────────────────────────────────────────────
 echo "────────────────────────"
 echo "통과 $pass / 실패 $fail"
