@@ -21,6 +21,10 @@ ROI 액션 매핑: "'사용 시점' 가이드 존재" + "lazy-load 인덱스" (R
   auto 표에서 뺀다. 루트 CLAUDE.md 는 always-loaded 라 같은 문서를 두 표가 각각 가리키면
   그 중복분이 매 세션 컨텍스트를 먹는다 (c8c-api 에서 12행·약 1,558자 이중 등재).
   `override_hardcoded` 로 손수 지정해야 했던 일을 링크 대상 비교로 자동화한 것.
+- v0.8.9+: **파일명이 곧 트리거인 문서는 표 행 대신 링크 한 줄로 묶음** — 0.8.7 이 지운 것은
+  '중복' 행뿐이라, 중복이 아니면서 새 정보도 없는 행(NAMING·TESTING·ARCHITECTURE 등)은 그대로
+  남아 있었다. 링크는 묶음 줄에 유지되므로 audit 규칙 1.2 의 경로 참조 수는 줄지 않는다.
+  자세한 선별 기준은 `SELF_EVIDENT_PATHS` 주석 참조.
 
 # 마이그레이션
 기존 단일 마커 (`lazy-load:begin`/`lazy-load:end`) 또는 마커 없이 `## Lazy-load docs`
@@ -111,6 +115,27 @@ DETECTION_RULES = [
         "AI 준비도 점수·추이 확인"),
 ]
 
+# 파일명이 곧 트리거인 문서. 표에 한 행씩 두지 않고 블록 끝에 링크 한 줄로 묶는다.
+#
+# 루트 CLAUDE.md 는 매 세션 always-loaded 라 그 안의 모든 글자가 상시 비용이다.
+# "docs/NAMING.md → 클래스/패키지/메서드/DTO 명명" 같은 행은 파일명을 한국어로 옮긴 것에
+# 가까워, 그 비용을 내면서 새 정보를 주지 않는다. 파일 목록만 봐도 어디를 열지 알 수 있다.
+# 반대로 CONVENTIONS·API_COMPATIBILITY·ERROR_HANDLING·DDL_DML 처럼 파일명만으로 적용 범위가
+# 잡히지 않는 문서는 트리거 문구가 값어치를 하므로 표 행으로 남긴다.
+#
+# 링크 자체는 묶음 줄에 그대로 남으므로 audit 규칙 1.2(루트 문서의 모듈/문서 경로 참조 수)
+# 점수는 줄지 않는다.
+SELF_EVIDENT_PATHS = {
+    "docs/COMMANDS.md",
+    "docs/NAMING.md", "NAMING.md",
+    "docs/TESTING.md", "TESTING.md",
+    "docs/ARCHITECTURE.md", "ARCHITECTURE.md",
+    "docs/ANTIPATTERNS.md", "ANTIPATTERNS.md",
+    "docs/INDEX.md",
+}
+
+SELF_EVIDENT_LEAD = "파일명이 곧 트리거인 문서 (그 주제를 다룰 때 read)"
+
 
 def find_root_doc(target: Path) -> Path | None:
     for name in CLAUDE_DOC_NAMES:
@@ -198,6 +223,26 @@ def _drop_rows_covered_by_user(
     return kept, dropped
 
 
+def _is_self_evident(label: str) -> bool:
+    """이 행의 문서가 '파일명이 곧 트리거' 부류인가.
+
+    label 의 링크 대상이 전부 SELF_EVIDENT_PATHS 안에 있을 때만 참. config 로 추가된
+    룰은 그 집합에 없으므로 항상 표 행으로 남는다 (사용자가 자기 레포 맥락으로 쓴 문구라
+    파일명이 대신해 주지 못한다).
+    """
+    paths = _link_targets(label)
+    return bool(paths) and paths <= SELF_EVIDENT_PATHS
+
+
+def _split_self_evident(
+    rows: list[tuple[str, str]]
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """(표 행으로 남길 것, 링크 한 줄로 묶을 것) 으로 가른다."""
+    detailed = [row for row in rows if not _is_self_evident(row[0])]
+    evident = [row for row in rows if _is_self_evident(row[0])]
+    return detailed, evident
+
+
 def _strip_marker_lines(s: str) -> str:
     """문자열에서 lazy-load 마커 라인을 제거.
 
@@ -220,15 +265,20 @@ def _render_auto_block(rows: list[tuple[str, str]]) -> str:
     lines.append("> **읽기 강제 시점**: 작업 영역이 트리거에 해당하면 사용자 추가 지시 없이도 즉시 read.")
     lines.append("> **모듈 단위**: 모듈 CLAUDE.md 는 그 모듈 파일을 Read/Edit 할 때 Claude Code 가 자동 로드.")
     lines.append("")
-    if rows:
+    detailed, evident = _split_self_evident(rows)
+    if detailed:
         lines.append("| 트리거 (대화·작업 맥락) | 문서 |")
         lines.append("|---|---|")
-        for label, trigger in rows:
+        for label, trigger in detailed:
             # 셀 안 '|' 는 테이블 컬럼 구분자로 오인돼 행이 깨진다 — 이스케이프하고 개행은 공백으로.
             safe_trigger = trigger.replace("|", "\\|").replace("\n", " ")
             safe_label = label.replace("|", "\\|").replace("\n", " ")
             lines.append(f"| {safe_trigger} | {safe_label} |")
-    else:
+    if evident:
+        if detailed:
+            lines.append("")
+        lines.append(f"{SELF_EVIDENT_LEAD}: " + " · ".join(label for label, _ in evident))
+    if not rows:
         lines.append("자동 감지된 문서가 모두 위 수동 영역에 이미 등재돼 있어 자동 행이 없습니다.")
     lines.append("")
     lines.append(AUTO_END)
@@ -381,8 +431,13 @@ def collect_facts(target: Path, cfg: dict | None = None) -> dict:
     사용자가 손본 행은 보존한다.
     """
     rows = detect_present(target, cfg)
+    # self_evident 는 "파일명이 곧 트리거라 표 행을 낼 값어치가 없다" 는 표시다. 쓰기 모드가
+    # 그런 행을 링크 한 줄로 묶는 것과 같은 기준을 AI 유지보수 경로에도 넘겨, 손으로 갱신할 때
+    # 자동 렌더와 다른 판단이 나오지 않게 한다.
     return {"target": str(target),
-            "triggers": [{"label": label, "trigger": trigger} for label, trigger in rows]}
+            "triggers": [{"label": label, "trigger": trigger,
+                          "self_evident": _is_self_evident(label)}
+                         for label, trigger in rows]}
 
 
 def main():
