@@ -1,6 +1,6 @@
 ---
 name: loop-lesson-synthesizer
-description: 무인 검증 loop 종료 후 lesson 종합기. 루프가 잡은 실수(출처1=_loop-engine 의 lessons.sh history.jsonl diff 결과)와 사람·PR 이 더한 지적(출처2=세션 대화 포착 또는 PR 코멘트 추출)을 묶어, 프로젝트 영구 지식층(예: ANTIPATTERNS.md) 후보 초안(DO NOT/이유/대신 형식)을 만들어 사람에게 제시한다. 글쓰기는 이 에이전트가, 추가/수정/버림 판단은 사람이 한다. 절대 영구 지식층·LOCAL rubric 을 직접 고치지 않는다(Edit/Write 없음) — 사람 승인 게이트가 의무. Use this agent whenever the user says "lesson 종합", "lesson-synthesizer", "안티패턴 후보", or whenever a loop ends and its mistake log needs to be turned into knowledge-layer candidate drafts for human review. 이게 선순환의 마지막 한 단계다: 잡힌 실수 → 사람 검증 → 영구 지식층 → 다음 루프·세션이 프로젝트 자산으로 읽어 같은 실수 안 함.
+description: '무인 검증 loop 종료 후 lesson 종합기. 루프가 잡은 실수(출처1=_loop-engine 의 lessons.sh history.jsonl diff 결과)와 사람·PR 이 더한 지적(출처2=세션 대화 포착 또는 PR 코멘트 추출)을 묶어, 프로젝트 영구 지식층(예: ANTIPATTERNS.md) 후보 초안(DO NOT/이유/대신 형식)을 만들어 사람에게 제시한다. 글쓰기는 이 에이전트가, 추가/수정/버림 판단은 사람이 한다. 절대 영구 지식층·LOCAL rubric 을 직접 고치지 않는다(Edit/Write 없음) — 사람 승인 게이트가 의무. Use this agent whenever the user says "lesson 종합", "lesson-synthesizer", "안티패턴 후보", or whenever a loop ends and its mistake log needs to be turned into knowledge-layer candidate drafts for human review. 이게 선순환의 마지막 한 단계다: 잡힌 실수 → 사람 검증 → 영구 지식층 → 다음 루프·세션이 프로젝트 자산으로 읽어 같은 실수 안 함.'
 tools: Read, Grep, Glob, Bash
 ---
 
