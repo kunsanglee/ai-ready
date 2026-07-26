@@ -733,7 +733,12 @@ class TestRuleNameReferences(unittest.TestCase):
     이름은 코드의 Rule 리터럴과 같은 문자열이라 어긋나면 이 테스트가 잡는다.
     """
 
-    RUBRIC = PLUGIN_ROOT / "skills" / "audit" / "RUBRIC.md"
+    # 검사 범위: 채점 스크립트 + 배점표 + 두 스킬 문서. 규칙을 가리키는 산문이 사는 곳 전부다.
+    PROSE = [
+        PLUGIN_ROOT / "skills" / "audit" / "RUBRIC.md",
+        PLUGIN_ROOT / "skills" / "audit" / "SKILL.md",
+        PLUGIN_ROOT / "skills" / "apply" / "SKILL.md",
+    ]
 
     @staticmethod
     def _all_rule_names() -> set[str]:
@@ -773,10 +778,11 @@ class TestRuleNameReferences(unittest.TestCase):
         self.assertGreater(referenced, 0, "ROI 규칙 블록을 하나도 못 찾음 — 마커가 바뀌었나")
 
     def test_no_numeric_rule_references_remain(self):
+        # 괄호형(`rule(3.2)`)까지 잡는다 — 공백만 전제한 첫 정규식이 네 건을 놓쳤다.
         import re
-        pattern = re.compile(r"rule\s+\d+\.\d+", re.IGNORECASE)
+        pattern = re.compile(r"rule\s*\(?\s*\d+\.\d+", re.IGNORECASE)
         offenders = []
-        for path in list(SCRIPTS.glob("*.py")) + [self.RUBRIC]:
+        for path in list(SCRIPTS.glob("*.py")) + self.PROSE:
             for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if pattern.search(line):
                     offenders.append(f"{path.name}:{i}")
