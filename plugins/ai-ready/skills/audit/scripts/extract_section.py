@@ -5,9 +5,9 @@ CLAUDE.md / AGENTS.md의 헤딩 섹션 중 키워드 매칭되는 것을 별도 
 testing / naming 등 흩어진 컨벤션을 전용 파일로 분리하는 데 사용합니다.
 원본 CLAUDE.md는 수정하지 않습니다 — 사용자가 직접 정리하세요.
 
-ROI 액션 매핑:
-  - "TESTING.md 분리" (Rule 5.3, +4점)
-  - "NAMING.md 분리" (Rule 3.3, +5점)
+ROI 규칙 (audit 의 규칙 이름 그대로 — 번호가 아니라 이름으로 가리킨다):
+  - "테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md)" (+4점)
+  - "네이밍 컨벤션 문서화" (+5점)
 
 실행:
   python3 extract_section.py --target /path --out TESTING.md --kind testing

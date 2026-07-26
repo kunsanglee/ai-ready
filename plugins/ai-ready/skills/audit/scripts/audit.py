@@ -113,18 +113,36 @@ USAGE_PATTERNS = [
     r"사용\s*시점", r"언제\s*사용", r"적용\s*시점",
 ]
 
-# M-2: freshness rule 6.1 — 좁은 키워드만 인정
+# M-2: 규칙 "CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재" — 좁은 키워드만 인정
 FRESHNESS_KEYWORDS = ("claude.md", "agents.md", "freshness_check", "ai-ready")
 
-# 루트 CLAUDE.md 상주 분량 임계값 (rule 2.1).
+# 루트 CLAUDE.md 상주 분량 임계값 (규칙 이름은 아래 ROOT_DOC_SIZE_RULE).
 # v0.8.9 이전에는 줄 수로 쟀는데(200줄 이하 만점), 한국어 마크다운에서는 한 줄이 곧 표 한 행이거나
 # 문단 하나라 줄 수가 비용의 대리 지표가 되지 못한다. 실측 사례: 46줄인데 12,029바이트인 루트 문서
 # (한 불릿이 2,002자) 가 200줄 규칙에서 만점을 받으면서 계속 부풀었다. 바이트는 한글 3 / 영문 1 이라
 # 토큰 비중에 더 가까워 always-loaded 비용의 근사로 쓴다.
 # 8,000 기준은 정리를 마친 실제 레포(7,058바이트)가 통과하고 그 직전 상태(9,781)는 감점되는 자리다.
+# 하한 800 은 v0.9.0 추가 — 상한만 있으면 0바이트짜리 루트 문서가 만점을 받는다. 실측한
+# 실제 프로젝트 문서 최소가 887바이트라 그 바로 아래에 두어 스텁만 걸리고 얇은 지도는 통과한다.
+ROOT_DOC_MIN_BYTES = 800
 ROOT_DOC_MAX_BYTES = 8_000
 ROOT_DOC_WARN_BYTES = 12_000
-ROOT_DOC_SIZE_RULE = f"루트 CLAUDE.md {ROOT_DOC_MAX_BYTES:,}바이트 이하"
+ROOT_DOC_SIZE_RULE = f"루트 CLAUDE.md 상주 분량 ({ROOT_DOC_MIN_BYTES:,}~{ROOT_DOC_MAX_BYTES:,}바이트)"
+
+# 모듈 문서 평균 길이 범위 (v0.9.0). 상한 50 은 종전 규칙 그대로고 하한 10 이 새로 붙었다.
+# 종전에는 "평균 50줄 이하" 라 세 줄짜리 스텁 묶음이 가장 좋은 점수를 받았다. 같은 규칙의
+# 단일 모듈 버전이 이미 50~300줄 *범위* 를 요구하므로 그 비대칭을 없앤 것이기도 하다.
+MODULE_DOC_MIN_LINES = 10
+MODULE_DOC_MAX_LINES = 50
+MODULE_DOC_LEN_RULE = f"모듈 문서 평균 길이 ({MODULE_DOC_MIN_LINES}~{MODULE_DOC_MAX_LINES}줄)"
+
+# 문서 스텁 판정 하한 (v0.9.0). 실측: 실제 프로젝트 문서 최소가 887바이트 / 비공백 16줄이고
+# 껍데기 스텁은 8바이트 / 3줄이었다. 400바이트 + 비공백 8줄은 그 사이를 가르는 자리다.
+# 두 조건을 AND 로 요구하는 이유는 어느 한쪽만 보면 우회되기 때문이다 — 바이트만 보면 아주 긴
+# 한 줄로, 줄 수만 보면 한 글자짜리 줄 여럿으로 넘길 수 있다. 둘 다 넘기려면 줄당 평균
+# 50바이트의 실제 문장이 필요하다.
+DOC_MIN_BYTES = 400
+DOC_MIN_LINES = 8
 
 
 # --- Helpers --------------------------------------------------------------
@@ -151,12 +169,17 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def _has_min_content(path: Path, min_lines: int = 3) -> bool:
-    """파일이 실질 내용을 가졌는지(0바이트·스텁 문서 구분). 비-공백 줄 수가 min_lines 이상이면 True.
+def _has_min_content(path: Path, min_lines: int = DOC_MIN_LINES,
+                     min_bytes: int = DOC_MIN_BYTES) -> bool:
+    """파일이 실질 내용을 가졌는지(0바이트·스텁 문서 구분).
 
-    존재만으로 만점을 주던 규칙(ANTIPATTERNS/NAMING/ARCHITECTURE/TESTING)이 빈 껍데기 문서에
-    점수를 주지 않게 하는 최소 품질 게이트. BOM 은 utf-8-sig 로 투명 제거.
+    비-공백 줄 수가 min_lines 이상이고 **동시에** 파일 크기가 min_bytes 이상이어야 True.
+    존재만으로 만점을 주던 규칙(ANTIPATTERNS/NAMING/ARCHITECTURE/TESTING/ADR/INDEX 등)이
+    빈 껍데기 문서에 점수를 주지 않게 하는 최소 품질 게이트다. 임계값 근거는
+    DOC_MIN_BYTES 주석 참조. BOM 은 utf-8-sig 로 투명 제거.
     """
+    if byte_size(path) < min_bytes:
+        return False
     try:
         with path.open("r", encoding="utf-8-sig", errors="replace") as f:
             return sum(1 for ln in f if ln.strip()) >= min_lines
@@ -164,7 +187,30 @@ def _has_min_content(path: Path, min_lines: int = 3) -> bool:
         return False
 
 
-# 도메인 용어집(glossary) 후보 — 네이밍/용어 컨벤션 자산으로 인정(rule 3.3).
+def _has_substantive_content(path: Path) -> bool:
+    """파일이면 _has_min_content, 디렉토리면 그 안에 실질 내용을 가진 파일이 하나라도 있는지.
+
+    ADR 디렉토리·contracts 디렉토리처럼 "존재하면 만점" 이던 대상에 같은 스텁 게이트를 걸기 위한 것.
+    """
+    if path.is_dir():
+        try:
+            return any(p.is_file() and _has_min_content(p) for p in path.rglob("*"))
+        except OSError:
+            return False
+    return _has_min_content(path)
+
+
+def count_guide_lines(text: str, patterns: list[str]) -> int:
+    """patterns 중 하나라도 걸리는 줄의 개수. 한 줄에 여러 패턴이 걸려도 1로 센다.
+
+    "절대 금지" 처럼 한 표현이 두 패턴에 동시에 매칭되는 경우가 있어 매칭 횟수를 그대로 세면
+    부풀려진다. 가이드는 한 줄에 규칙 하나가 권장 형태이므로 줄을 세는 것이 실제 분량에 가깝다.
+    """
+    return sum(1 for ln in text.splitlines()
+               if any(re.search(p, ln, re.IGNORECASE) for p in patterns))
+
+
+# 도메인 용어집(glossary) 후보 — 규칙 "네이밍 컨벤션 문서화" 의 자산으로 인정.
 GLOSSARY_CANDIDATES = ["docs/glossary.md", "docs/GLOSSARY.md", "GLOSSARY.md", "wiki/glossary.md"]
 
 
@@ -223,7 +269,7 @@ def count_package_sections(catalog_text: str) -> int:
     """
     # 백틱으로 감싼 코드형 패키지명만 신뢰한다. em-dash 패턴(`## 이름 —`)은
     # `## 개요 —`·`## Architecture —` 같은 산문 헤더까지 패키지 섹션으로 오인해
-    # 섹션 수를 부풀렸다(rule 1.3·4.2 점수 인플레) — 제거.
+    # 섹션 수를 부풀렸다(카탈로그 섹션 수를 보는 두 규칙의 점수 인플레) — 제거.
     patterns = [
         r"^#{2,4}\s+`[\w\-]+/`",       # ### `enrollment/`
         r"^#{2,4}\s+`[\w\-]+`",        # ### `enrollment`
@@ -529,18 +575,27 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
                       "카탈로그 문서를 만들어 각 패키지의 목적·진입점·흐름·함정을 정리하세요.")
     else:
         r = Rule("모듈별 CLAUDE.md 커버리지", 5)
-        covered = []
+        # 스텁은 커버리지로 세지 않는다 — 세 줄짜리 CLAUDE.md 를 모듈마다 뿌리면 커버리지 100%
+        # 가 되던 구멍을 막는다. 스텁 개수는 note 로 따로 알려 무엇을 채우면 되는지 보이게 한다.
+        covered, stubs = [], []
         for m in modules:
             if m == Path("."):
                 continue
-            if any((target / m / name).exists() for name in CLAUDE_DOC_NAMES):
-                covered.append(str(m))
+            doc = next((target / m / name for name in sorted(CLAUDE_DOC_NAMES)
+                        if (target / m / name).is_file()), None)
+            if doc is None:
+                continue
+            (covered if _has_min_content(doc) else stubs).append(str(m))
         non_root_modules = [m for m in modules if m != Path(".")]
         pct = (len(covered) / len(non_root_modules)) if non_root_modules else 0
         pts = round(pct * 5)
+        stub_note = f" · 스텁 {len(stubs)}개는 미집계" if stubs else ""
         if pts > 0:
             r.award(pts, covered[:8],
-                    note=f"{len(covered)}/{len(non_root_modules)} 모듈 ({pct*100:.0f}%) 에 CLAUDE.md 존재")
+                    note=f"{len(covered)}/{len(non_root_modules)} 모듈 ({pct*100:.0f}%) 에 실질 CLAUDE.md 존재{stub_note}")
+        elif stubs:
+            r.evidence.extend(stubs[:8])
+            r.note = f"{len(stubs)}개 모듈의 CLAUDE.md 가 스텁 — 진입점·흐름·함정을 채우면 집계됩니다"
         else:
             r.note = f"0/{len(non_root_modules)} 모듈에 CLAUDE.md 없음"
     rules.append(r)
@@ -549,8 +604,10 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
     r = Rule("인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md)", 3)
     candidates = ["docs/INDEX.md", "docs/index.md", "INDEX.md", "wiki/index.md"]
     found = has_any_path(target, candidates)
-    if found:
+    if any(_has_min_content(target / c) for c in found):
         r.award(3, found)
+    elif found:
+        r.award(1, found, note="인덱스가 비어/스텁 — 문서 목록과 1줄 요약을 채우면 만점")
     rules.append(r)
 
     return {
@@ -576,7 +633,10 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
         # 줄 수도 함께 남긴다. 점수 근거는 바이트지만, 줄당 분량을 보면 표 행이 긴 것인지
         # 문단이 많은 것인지 갈려 다이어트 방향이 달라진다.
         ev = [f"{root_doc.relative_to(target)} ({size:,}바이트 / {line_count(root_doc)}줄)"]
-        if size <= ROOT_DOC_MAX_BYTES:
+        if size < ROOT_DOC_MIN_BYTES:
+            r.award(2, ev,
+                    note=f"{ROOT_DOC_MIN_BYTES:,}바이트 미만 — 너무 얇아 모듈 문서로의 지도 역할을 못 합니다")
+        elif size <= ROOT_DOC_MAX_BYTES:
             r.award(5, ev)
         elif size <= ROOT_DOC_WARN_BYTES:
             r.award(2, ev,
@@ -608,37 +668,56 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
         else:
             r.note = "패키지 카탈로그 문서 없음"
     else:
-        r = Rule("모듈 문서 평균 50줄 이하", 5)
+        r = Rule(MODULE_DOC_LEN_RULE, 5)
         if module_docs:
             counts = [line_count(d) for d in module_docs]
             avg = sum(counts) / len(counts)
-            if avg <= 50:
-                r.award(5, [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"])
+            ev = [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"]
+            if avg < MODULE_DOC_MIN_LINES:
+                r.award(2, ev,
+                        note=f"평균 {MODULE_DOC_MIN_LINES}줄 미만 — 스텁에 가깝습니다. "
+                             "각 모듈의 진입점·흐름·함정을 채우세요")
+            elif avg <= MODULE_DOC_MAX_LINES:
+                r.award(5, ev)
             elif avg <= 80:
-                r.award(3, [f"모듈 문서 {len(module_docs)}개, 평균 {avg:.0f}줄"],
-                        note="25~35줄 범위로 줄이세요")
+                r.award(3, ev, note="25~35줄 범위로 줄이세요")
             else:
+                r.evidence.extend(ev)
                 r.note = f"모듈 문서 {len(module_docs)}개 / 평균 {avg:.0f}줄 — 너무 장황"
         else:
             r.note = "모듈 단위 문서 없음"
     rules.append(r)
 
     # 2.3 명시적 DO NOT / 절대 금지 섹션 존재
+    # 스텁 게이트를 통과한 문서만 세고, 가이드 줄 수로 계단화한다 — 종전에는 스텁 문서에
+    # "절대 금지: 없음" 한 줄만 있어도 만점이었다. 문서 개수가 아니라 줄 수로 세는 이유는
+    # 루트 문서 하나뿐인 단일 모듈 레포가 구조적으로 만점에 닿지 못하는 것을 피하기 위함이다.
     r = Rule("명시적 안티패턴 / 절대 금지 가이드 존재", 5)
-    hits = [str(d.relative_to(target)) for d in claude_docs
+    gated = [d for d in claude_docs if _has_min_content(d)]
+    hits = [str(d.relative_to(target)) for d in gated
             if regex_any(doc_text.get(d, ""), DONOT_PATTERNS)]
-    if hits:
-        r.award(5, hits[:5], note=f"{len(hits)}개 문서에 명시적 DO-NOT 표현 포함")
+    guide_lines = sum(count_guide_lines(doc_text.get(d, ""), DONOT_PATTERNS) for d in gated)
+    if guide_lines >= 3:
+        r.award(5, hits[:5], note=f"{len(hits)}개 문서 / {guide_lines}줄의 명시적 DO-NOT 가이드")
+    elif guide_lines >= 1:
+        r.award(3, hits[:5],
+                note=f"DO-NOT 가이드가 {guide_lines}줄뿐 — 한 줄에 규칙 하나로 3줄 이상 채우면 만점")
+    elif any(regex_any(doc_text.get(d, ""), DONOT_PATTERNS) for d in claude_docs):
+        r.note = "DO-NOT 표현이 스텁 문서에만 있음 — 그 문서를 실질 내용으로 채우면 집계됩니다"
     else:
         r.note = "어떤 CLAUDE.md/AGENTS.md에도 'DO NOT / 절대 / MUST NOT' 표현 없음"
     rules.append(r)
 
     # 2.4 사용 시점 가이드
+    # 2.3 과 달리 줄 수 계단은 두지 않는다 — 사용 시점은 한 문서에 규약 하나로 적는 것이 정상이라
+    # 줄 수를 요구하면 같은 표현을 반복해 적게 만드는 잘못된 유인이 생긴다. 스텁 게이트만 건다.
     r = Rule("'사용 시점' 가이드 존재", 5)
     hits = [str(d.relative_to(target)) for d in claude_docs
-            if regex_any(doc_text.get(d, ""), USAGE_PATTERNS)]
+            if _has_min_content(d) and regex_any(doc_text.get(d, ""), USAGE_PATTERNS)]
     if hits:
         r.award(5, hits[:5])
+    elif any(regex_any(doc_text.get(d, ""), USAGE_PATTERNS) for d in claude_docs):
+        r.note = "'사용 시점' 표현이 스텁 문서에만 있음 — 그 문서를 실질 내용으로 채우면 집계됩니다"
     else:
         r.note = "'언제 사용/사용 시점' 표현이 발견되지 않음"
     rules.append(r)
@@ -664,7 +743,11 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict, cfg: dict |
     else:
         wiki_ap = target / "wiki" / "anti-patterns"
         if wiki_ap.is_dir() and any(wiki_ap.iterdir()):
-            r.award(5, [str(wiki_ap.relative_to(target))])
+            if _has_substantive_content(wiki_ap):
+                r.award(5, [str(wiki_ap.relative_to(target))])
+            else:
+                r.award(2, [str(wiki_ap.relative_to(target))],
+                        note="디렉토리는 있으나 문서가 비어/스텁 — DO-NOT 항목을 채우면 만점")
     # config 선언 통합 문서(예: docs/CONVENTIONS.md)에 안티패턴을 두는 프로젝트 인정 (D1).
     # 파일 존재 + 최소 내용 게이트만 본다 — 섹션 헤더 스캔은 거짓양성이라 안 함.
     if r.points == 0:
@@ -679,7 +762,13 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict, cfg: dict |
 
     r = Rule("아키텍처 의사결정 기록 (ADR / wiki/decisions)", 5)
     if scan["adr_dirs"]:
-        r.award(5, scan["adr_dirs"][:3])
+        # 디렉토리 존재만으로 만점을 주면 빈 ADR 파일 하나로 통과한다 — 스텁 게이트를 건다.
+        substantive = [d for d in scan["adr_dirs"] if _has_substantive_content(target / d)]
+        if substantive:
+            r.award(5, substantive[:3])
+        else:
+            r.award(2, scan["adr_dirs"][:3],
+                    note="ADR 디렉토리는 있으나 문서가 비어/스텁 — 결정 배경과 거부된 대안을 채우면 만점")
     else:
         r.note = ("ADR/decisions 디렉토리 미발견 — 결정을 docs/adr 또는 docs/decisions 에 두거나, "
                   "docs/design 등 통합 디렉토리에 둔다면 .ai-ready/config.json 의 "
@@ -782,19 +871,27 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
         rules.append(r)
 
     r = Rule("모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)", 5)
-    contract_signals = []
+    # 빈 openapi.yaml 이나 빈 contracts/ 디렉토리가 만점을 받지 않도록 스텁 게이트를 건다.
+    # 빌드 의존성 신호는 게이트할 파일이 없으므로 종전대로 그대로 인정한다.
+    contract_signals, stub_signals = [], []
     for hint in ("openapi.yaml", "openapi.yml", "openapi.json", "swagger.yaml",
                  "swagger.yml", "swagger.json", "contracts", "proto", "protos"):
-        if (target / hint).exists():
-            contract_signals.append(hint)
+        p = target / hint
+        if not p.exists():
+            continue
+        (contract_signals if _has_substantive_content(p) else stub_signals).append(hint)
     if scan["proto_files"]:
-        contract_signals.append(str(scan["proto_files"][0].relative_to(target)))
+        pf = scan["proto_files"][0]
+        label = str(pf.relative_to(target))
+        (contract_signals if _has_min_content(pf) else stub_signals).append(label)
     # config 선언 빌드 의존성 (springdoc 등 코드 기반 OpenAPI 생성) 도 계약 신호로 인정 (v0.3.0+)
     if scan.get("api_build_deps"):
         contract_signals.extend(f"{d} (빌드 의존성)" for d in scan["api_build_deps"])
         r.note = "springdoc 등 코드 기반 OpenAPI 생성 의존성 인정 (config rubric.api_contracts.build_deps)"
     if contract_signals:
         r.award(5, contract_signals[:4])
+    elif stub_signals:
+        r.award(2, stub_signals[:4], note="계약 파일은 있으나 비어/스텁 — 실제 스키마를 채우면 만점")
     rules.append(r)
 
     return {
@@ -999,8 +1096,12 @@ def score_outcomes(target: Path, scan: dict) -> dict:
     r = Rule("매트릭스 문서 / 대시보드 존재", 7)
     candidates = ["metrics", "analytics", ".claude/metrics", "dashboards", "metrics.md"]
     found = has_any_path(target, candidates)
-    if found:
+    # 빈 metrics/ 디렉토리나 스텁 metrics.md 는 외부 대시보드 포인터보다 나을 게 없으므로
+    # 같은 3점 부분점수에 둔다 (v0.9.0). 종전에는 존재만으로 만점이었다.
+    if any(_has_substantive_content(target / c) for c in found):
         r.award(7, found)
+    elif found:
+        r.award(3, found, note="metrics 산출물이 비어/스텁 — 실제 추이 수치를 채우면 만점")
     else:
         # T-9: 외부 dashboard URL 발견 시 부분 점수 (3/7)
         ext_hits = _scan_root_docs_for_patterns(target, EXTERNAL_DASHBOARD_PATTERNS)
@@ -1012,8 +1113,12 @@ def score_outcomes(target: Path, scan: dict) -> dict:
 
     # 7.2: 정확 이름 매칭 + 추적 키워드 부분점수
     r = Rule("PR 리뷰 시간 / AI 사용량 / 토큰 추적", 8)
-    if scan["outcome_paths"]:
-        r.award(8, scan["outcome_paths"][:3])
+    substantive_outcomes = [p for p in scan["outcome_paths"] if _has_substantive_content(target / p)]
+    if substantive_outcomes:
+        r.award(8, substantive_outcomes[:3])
+    elif scan["outcome_paths"]:
+        r.award(3, scan["outcome_paths"][:3],
+                note="추적 산출물이 비어/스텁 — 실제 측정치를 채우면 만점")
     else:
         # T-9: 추적 인프라 키워드 발견 시 부분 점수 (3/8)
         tr_hits = _scan_root_docs_for_patterns(target, EXTERNAL_TRACKING_PATTERNS)
@@ -1067,9 +1172,11 @@ ACTION_HINTS = {
         "docs/INDEX.md(권장) 또는 wiki/index.md를 만들어 모든 문서를 잇는 단일 진입점을 제공하세요."),
     ROOT_DOC_SIZE_RULE: (30, 4,
         "루트 CLAUDE.md를 다이어트하세요. 컨벤션은 CONVENTIONS.md, 안티패턴은 ANTIPATTERNS.md로 분리하고 루트에는 지도만 남기세요. "
-        "줄 수가 적어도 한 줄이 길면 상주 비용은 그대로입니다 — 긴 불릿 하나가 표 열 행보다 무거울 수 있습니다."),
-    "모듈 문서 평균 50줄 이하": (30, 3,
-        "모듈 문서 점검 — 60줄을 넘는 문서는 DESIGN.md, ANTIPATTERNS.md 등으로 분리하세요."),
+        "줄 수가 적어도 한 줄이 길면 상주 비용은 그대로입니다 — 긴 불릿 하나가 표 열 행보다 무거울 수 있습니다. "
+        f"반대로 {ROOT_DOC_MIN_BYTES:,}바이트 미만이면 너무 얇아 지도 역할을 못 하니, 모듈 문서로 가는 트리거를 채우세요."),
+    MODULE_DOC_LEN_RULE: (30, 3,
+        f"모듈 문서 점검 — {MODULE_DOC_MAX_LINES}줄을 넘는 문서는 DESIGN.md, ANTIPATTERNS.md 등으로 분리하고, "
+        f"{MODULE_DOC_MIN_LINES}줄에 못 미치는 스텁은 진입점·흐름·함정으로 채우세요."),
     "명시적 안티패턴 / 절대 금지 가이드 존재": (20, 5,
         "가장 자주 편집되는 CLAUDE.md에 'DO NOT / 절대 금지' 섹션을 추가하세요. 한 줄에 하나의 구체적인 규칙을 적습니다."),
     "'사용 시점' 가이드 존재": (15, 3,
