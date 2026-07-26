@@ -265,6 +265,27 @@ def count_guide_lines(text: str, patterns: list[str]) -> int:
                if any(re.search(p, ln, re.IGNORECASE) for p in patterns))
 
 
+# DO-NOT 줄의 "구체성" 신호 — 백틱 코드 참조, 경로 꼴, CamelCase·snake_case 식별자.
+# 금지 줄을 줄 수로만 세면 "금지" 라는 단어를 세 번 적는 것이 최적 전략이 된다(2회차 적대
+# 검토 실증). 모델이 따를 수 있는 금지는 무엇을 하지 말라는지 대상을 가리키는 줄이므로,
+# 만점은 레포 특정 지시어를 담은 줄로만 센다. 실측(2026-07): agent 92→50줄,
+# c8c-api 378→242줄로 두 실레포 모두 만점 기준(3줄)을 크게 웃돌아 점수 무변동이고,
+# 탈락분은 섹션 제목("## 불변식 (DO NOT)")과 막연한 문장뿐이다.
+SPECIFIC_GUIDE_PATTERNS = [
+    r"`[^`]+`",                      # 백틱 코드 참조
+    r"\b[\w.\-]+/[\w.\-/]+\b",       # 경로 꼴 (a/b)
+    r"\b[A-Z][a-z0-9]+[A-Z]\w*\b",   # CamelCase 식별자
+    r"\b\w+_\w+\b",                  # snake_case 식별자
+]
+
+
+def count_specific_guide_lines(text: str, patterns: list[str]) -> int:
+    """patterns 에 걸리는 줄 중 SPECIFIC_GUIDE_PATTERNS 구체성 신호도 담은 줄의 개수."""
+    return sum(1 for ln in text.splitlines()
+               if any(re.search(p, ln, re.IGNORECASE) for p in patterns)
+               and any(re.search(sp, ln) for sp in SPECIFIC_GUIDE_PATTERNS))
+
+
 # 도메인 용어집(glossary) 후보 — 규칙 "네이밍 컨벤션 문서화" 의 자산으로 인정.
 GLOSSARY_CANDIDATES = ["docs/glossary.md", "docs/GLOSSARY.md", "GLOSSARY.md", "wiki/glossary.md"]
 
@@ -771,12 +792,18 @@ def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
     gated = [d for d in claude_docs if _has_min_content(d)]
     hits = [str(d.relative_to(target)) for d in gated
             if regex_any(doc_text.get(d, ""), DONOT_PATTERNS)]
-    guide_lines = sum(count_guide_lines(doc_text.get(d, ""), DONOT_PATTERNS) for d in gated)
-    if guide_lines >= 3:
-        r.award(5, hits[:5], note=f"{len(hits)}개 문서 / {guide_lines}줄의 명시적 DO-NOT 가이드")
-    elif guide_lines >= 1:
+    # 만점은 *구체* 금지 줄 3개 — 줄 수만 세면 "금지" 단어 반복이 최적 전략이 된다(키워드 농사,
+    # 2회차 적대 검토 실증). 막연한 금지 줄만 있으면 부분점수는 유지한다 — 식별자 없는 정당한
+    # 규칙("main 직접 push 금지" 류)을 0점으로 떨어뜨리지 않기 위해서다.
+    specific_lines = sum(count_specific_guide_lines(doc_text.get(d, ""), DONOT_PATTERNS) for d in gated)
+    total_lines = sum(count_guide_lines(doc_text.get(d, ""), DONOT_PATTERNS) for d in gated)
+    if specific_lines >= 3:
+        r.award(5, hits[:5],
+                note=f"{len(hits)}개 문서 / 구체 DO-NOT {specific_lines}줄 (전체 {total_lines}줄)")
+    elif total_lines >= 1:
         r.award(3, hits[:5],
-                note=f"DO-NOT 가이드가 {guide_lines}줄뿐 — 한 줄에 규칙 하나로 3줄 이상 채우면 만점")
+                note=(f"DO-NOT {total_lines}줄 중 구체 지시를 담은 줄이 {specific_lines}줄 — "
+                      "무엇을 하지 말라는지 백틱 코드 참조·경로·식별자로 가리키는 줄 3개 이상이면 만점"))
     elif any(regex_any(doc_text.get(d, ""), DONOT_PATTERNS) for d in claude_docs):
         r.note = "DO-NOT 표현이 스텁 문서에만 있음 — 그 문서를 실질 내용으로 채우면 집계됩니다"
     else:
