@@ -511,8 +511,15 @@ class TestRootDocSizeRule(unittest.TestCase):
         filler = "가" * max(0, (n - len(head.encode()) - 1) // 3)
         return head + filler + "\n"
 
-    def test_short_doc_scores_full(self):
-        self.assertEqual(self._rule("# proj\n모듈 지도만 담은 얇은 루트 문서\n")["points"], 5)
+    def test_thin_map_scores_full(self):
+        # 하한 800 과 상한 8,000 사이의 얇은 지도 문서가 만점 자리다.
+        self.assertEqual(self._rule(self._doc_of_bytes(2_000))["points"], 5)
+
+    def test_too_short_doc_scores_partial(self):
+        # v0.9.0 하한 — 상한만 있으면 0바이트 루트 문서가 만점을 받는다.
+        rule = self._rule("# proj\n모듈 지도만 담은 얇은 루트 문서\n")
+        self.assertEqual(rule["points"], 2)
+        self.assertIn("미만", rule["note"])
 
     def test_one_long_line_penalised_despite_tiny_line_count(self):
         # 2줄뿐인데 12,000바이트 초과 — 옛 200줄 규칙에서는 만점이던 자리다.
@@ -584,6 +591,197 @@ class TestLazyLoadSelfEvident(unittest.TestCase):
                      for t in inject_lazy_load_index.collect_facts(root, None)["triggers"]}
             self.assertTrue(any(v for k, v in flags.items() if "NAMING" in k))
             self.assertTrue(any(not v for k, v in flags.items() if "CONVENTIONS" in k))
+
+
+STUB = "# t\na\nb\n"
+
+
+def _build_stub_repo(root: Path) -> None:
+    """스텁만으로 채운 레포 — v0.9.0 이전에는 이 형태가 100/100 을 받았다.
+
+    3줄짜리 문서를 채점 대상 자리마다 하나씩 두고, 루트 문서에는 금지 한 줄과
+    사용 시점 한 줄만 적는다. 실질 정보는 어디에도 없다.
+    """
+    (root / "docs" / "adr").mkdir(parents=True)
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / "contracts").mkdir()
+    (root / "metrics").mkdir()
+    (root / ".claude").mkdir()
+    (root / "CLAUDE.md").write_text(
+        "# proj\n절대 금지: 없음\nWhen to use: 이 문서\n"
+        "- [`core/CLAUDE.md`](core/CLAUDE.md)\n"
+        "- [`app/CLAUDE.md`](app/CLAUDE.md)\n"
+        "- [`docs/INDEX.md`](docs/INDEX.md)\n"
+        "## 유지보수\n갱신 트리거: 아무때나\n", encoding="utf-8")
+    for mod in ("core", "app", "web"):
+        (root / mod).mkdir()
+        (root / mod / "build.gradle.kts").write_text("plugins {}", encoding="utf-8")
+        (root / mod / "CLAUDE.md").write_text(STUB, encoding="utf-8")
+    for rel in ("docs/INDEX.md", "docs/ANTIPATTERNS.md", "docs/NAMING.md",
+                "docs/TESTING.md", "docs/COMMANDS.md", "ARCHITECTURE.md",
+                "docs/adr/0001-x.md", "docs/adr/0002-y.md",
+                "metrics/metrics.md", "openapi.yaml", "contracts/x.md"):
+        (root / rel).write_text(STUB, encoding="utf-8")
+    (root / ".github" / "workflows" / "ci.yml").write_text(
+        "jobs:\n  t:\n    steps:\n      - run: ./gradlew test\n", encoding="utf-8")
+    (root / ".claude" / "settings.json").write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [{"hooks": [{"type": "command", "command": "./gradlew check"}]}],
+            "Stop": [{"hooks": [{"type": "command",
+                                 "command": "python3 freshness_check.py claude.md"}]}],
+        }
+    }), encoding="utf-8")
+
+
+class TestStubGate(unittest.TestCase):
+    """껍데기 문서만으로 최고 등급을 받던 구멍을 막는다 (v0.9.0).
+
+    적대 검토 실측: 3줄짜리 스텁 21개짜리 레포가 100/100 "에이전트 자율" 을 받았다.
+    원인은 두 가지였다 — 최소 내용 게이트가 비공백 3줄로 느슨했고, 여러 규칙이
+    그 게이트조차 거치지 않고 파일 존재나 정규식 매칭만 봤다.
+    """
+
+    def _audit_stub_repo(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            return audit.run(root, root / ".ai-ready")
+
+    def test_stub_repo_no_longer_reaches_top_grade(self):
+        result = self._audit_stub_repo()
+        self.assertLess(result["total_score"], 60,
+                        f"스텁만 있는 레포가 {result['total_score']}점 — 게이트가 뚫렸다")
+        self.assertNotIn("Agentic-ready", result["grade"])
+
+    def test_every_stub_backed_rule_scores_below_max(self):
+        # 스텁으로 만점이 나오는 규칙이 하나라도 있으면 그 자리가 다음 구멍이다.
+        result = self._audit_stub_repo()
+        gated = {
+            "모듈별 CLAUDE.md 커버리지",
+            "인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md)",
+            "명시적 안티패턴 / 절대 금지 가이드 존재",
+            "'사용 시점' 가이드 존재",
+            "ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재",
+            "아키텍처 의사결정 기록 (ADR / wiki/decisions)",
+            "네이밍 컨벤션 문서화",
+            "모듈 의존성 맵 / 다이어그램 존재",
+            "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)",
+            "테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md)",
+            "매트릭스 문서 / 대시보드 존재",
+            "PR 리뷰 시간 / AI 사용량 / 토큰 추적",
+        }
+        seen = set()
+        for cat in result["categories"]:
+            for rule in cat["rules"]:
+                if rule["name"] in gated:
+                    seen.add(rule["name"])
+                    self.assertLess(rule["points"], rule["max"],
+                                    f"'{rule['name']}' 이 스텁으로 만점")
+        self.assertEqual(seen, gated, "게이트 대상 규칙 이름이 코드와 어긋남")
+
+    def test_gate_needs_both_bytes_and_lines(self):
+        # 한쪽만 보면 우회된다 — 아주 긴 한 줄, 또는 한 글자짜리 줄 여럿.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            long_line = root / "long.md"
+            long_line.write_text("# t\n" + "가" * 500 + "\n", encoding="utf-8")
+            many_lines = root / "many.md"
+            many_lines.write_text("# t\n" + "a\n" * 30, encoding="utf-8")
+            real = root / "real.md"
+            real.write_text("# t\n" + "실제 문장을 담은 줄입니다.\n" * 12, encoding="utf-8")
+            self.assertFalse(audit._has_min_content(long_line), "줄 수 미달인데 통과")
+            self.assertFalse(audit._has_min_content(many_lines), "바이트 미달인데 통과")
+            self.assertTrue(audit._has_min_content(real))
+
+    def test_module_doc_average_has_a_floor(self):
+        # 종전 규칙은 "평균 50줄 이하" 라 세 줄짜리 묶음이 가장 좋은 점수를 받았다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            result = audit.run(root, root / ".ai-ready")
+            rule = next(r for c in result["categories"] for r in c["rules"]
+                        if r["name"] == audit.MODULE_DOC_LEN_RULE)
+            self.assertEqual(rule["points"], 2)
+            self.assertIn("미만", rule["note"])
+
+    def test_donot_guide_needs_three_lines(self):
+        # 한 줄짜리 "절대 금지: 없음" 으로 만점을 받던 자리.
+        def points(body: str) -> int:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                # 게이트(400바이트 + 비공백 8줄)를 넉넉히 넘기는 실질 문서로 둔다 —
+                # 여기서 재려는 것은 게이트가 아니라 DO-NOT 줄 수 계단이다.
+                (root / "CLAUDE.md").write_text(
+                    "# proj\n" + "이 줄은 게이트를 넘기기 위한 실질 문장입니다.\n" * 12 + body,
+                    encoding="utf-8")
+                result = audit.run(root, root / ".ai-ready")
+                return next(r["points"] for c in result["categories"] for r in c["rules"]
+                            if r["name"] == "명시적 안티패턴 / 절대 금지 가이드 존재")
+        self.assertEqual(points("절대 금지: 없음\n"), 3)
+        self.assertEqual(points("- 절대 금지: A\n- 절대 금지: B\n- 절대 금지: C\n"), 5)
+
+    def test_count_guide_lines_does_not_double_count_one_line(self):
+        # "절대 금지" 는 두 패턴에 동시에 걸린다 — 줄 단위로 세지 않으면 부풀려진다.
+        self.assertEqual(audit.count_guide_lines("절대 금지: A\n", audit.DONOT_PATTERNS), 1)
+
+
+class TestRuleNameReferences(unittest.TestCase):
+    """스크립트가 규칙을 번호가 아니라 이름으로 가리키는지 (v0.9.0).
+
+    배점표에 번호 컬럼이 없어 규칙 번호는 정의된 좌표계가 없었고, 실제로
+    `Rule 1.5` 는 카테고리 1 에 규칙이 넷뿐이라 이미 존재하지 않는 번호였다.
+    이름은 코드의 Rule 리터럴과 같은 문자열이라 어긋나면 이 테스트가 잡는다.
+    """
+
+    RUBRIC = PLUGIN_ROOT / "skills" / "audit" / "RUBRIC.md"
+
+    @staticmethod
+    def _all_rule_names() -> set[str]:
+        """단일 모듈 / 멀티 모듈 두 레이아웃의 규칙 이름 합집합."""
+        names = set()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            result = audit.run(root, root / ".ai-ready")
+            names |= {r["name"] for c in result["categories"] for r in c["rules"]}
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for mod in ("core", "app"):
+                (root / mod).mkdir()
+                (root / mod / "build.gradle.kts").write_text("plugins {}", encoding="utf-8")
+            result = audit.run(root, root / ".ai-ready")
+            names |= {r["name"] for c in result["categories"] for r in c["rules"]}
+        return names
+
+    def test_roi_docstrings_name_real_rules(self):
+        import re
+        known = self._all_rule_names()
+        referenced = 0
+        for script in sorted(SCRIPTS.glob("*.py")):
+            lines = script.read_text(encoding="utf-8").splitlines()
+            inside = False
+            for line in lines:
+                if line.startswith("ROI 규칙"):
+                    inside = True
+                    continue
+                if inside:
+                    if not line.strip():
+                        break
+                    for name in re.findall(r'"([^"]+)"', line):
+                        referenced += 1
+                        self.assertIn(name, known,
+                                      f"{script.name} 이 없는 규칙 이름을 가리킴: {name}")
+        self.assertGreater(referenced, 0, "ROI 규칙 블록을 하나도 못 찾음 — 마커가 바뀌었나")
+
+    def test_no_numeric_rule_references_remain(self):
+        import re
+        pattern = re.compile(r"rule\s+\d+\.\d+", re.IGNORECASE)
+        offenders = []
+        for path in list(SCRIPTS.glob("*.py")) + [self.RUBRIC]:
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if pattern.search(line):
+                    offenders.append(f"{path.name}:{i}")
+        self.assertEqual(offenders, [],
+                         "규칙을 번호로 가리키면 규칙이 늘거나 줄 때 조용히 밀린다")
 
 
 if __name__ == "__main__":

@@ -46,10 +46,12 @@ config.json 표준 스키마 (v1):
 각 섹션은 *선택적* — 누락된 섹션은 빈 / 비활성으로 취급.
 
 `rubric` 섹션 (v0.3.0+) — audit.py 채점 로직이 프로젝트 현실을 존중하도록 하는 선언:
-  - decision_records.dir_hints: 의사결정 기록(ADR rule 3.2)으로 인정할 *추가* 디렉토리.
+  - decision_records.dir_hints: 규칙 "아키텍처 의사결정 기록 (ADR / wiki/decisions)" 으로
+    인정할 *추가* 디렉토리.
     하드코딩된 docs/adr·docs/decisions 외에, design 통합 문서 (PRD/ADR/api-doc 흡수) 를
     docs/design/ 에 두는 프로젝트가 그 디렉토리를 결정 기록 신호로 선언할 때 사용.
-  - api_contracts.build_deps: API 계약(rule 4.3)으로 인정할 빌드 의존성 문자열.
+  - api_contracts.build_deps: 규칙 "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)" 로
+    인정할 빌드 의존성 문자열.
     정적 openapi.yaml 대신 springdoc/springfox 처럼 *코드에서 OpenAPI 를 런타임 생성* 하는
     의존성을 빌드 매니페스트에서 감지하면 계약 문서화로 인정.
 

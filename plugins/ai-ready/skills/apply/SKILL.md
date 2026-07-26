@@ -21,7 +21,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | `single_module_mode: true` | (a) `scaffold.py` 가 `scaffolds/PACKAGES.md` 한 파일을 생성 → 사용자 검토 후 `docs/PACKAGES.md` 로 이동. 패키지별 `CLAUDE.md` 분산 생성하지 않는다. (b) 도메인 패키지의 표준 레이아웃 (`controller/ service/ domain/ repository/` 4개 중 3개 이상) 일관성도 평가됨 — 부족 시 `audit-report.md` 의 권고대로 정렬 권장. |
 | `single_module_mode: false` | 멀티 모듈 기본 흐름 — 핫 모듈 top-N 의 `CLAUDE.md` 초안 생성. **점진 확장 정책**: 전 모듈 일괄 생성 금지 — 저빈도 모듈의 빈 스캐폴드 양산은 채움 비용과 검토일 안 갱신되는 썩는 문서만 늘린다. 대상은 핫 모듈 top-N + (대상 repo 가 living design 체계를 쓰면) `docs/design/domain_{name}.md` 가 있는 도메인의 연관 모듈. scaffold 는 모듈의 도메인 design 문서가 존재하면 "도메인 설계 문서" 포인터 한 줄을 자동 포함한다. |
 
-매핑 테이블의 일부 룰은 *룰 이름 자체가 모드에 따라 다르다*. apply 는 `rule.name` 의 정확한 문자열로 매핑하므로 audit.json 에 들어온 이름을 그대로 키로 사용하면 된다.
+매핑 테이블의 일부 룰은 *룰 이름 자체가 모드에 따라 다르다*. apply 는 `rule.name` 의 정확한 문자열로 매핑하므로 audit.json 에 들어온 이름을 그대로 키로 사용하면 된다. 아래 표의 첫 칸은 그 문자열 그대로이고, 모드 표시 같은 부기는 둘째 칸에 둔다.
 
 ## 적용 흐름
 
@@ -45,13 +45,13 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 50~150줄 짜리 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장 |
 | 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **maintain** | `inject_module_map.py --target <T> --json` 로 모듈 사실(경로·요약·가이드 존재) 수집 → AI 가 루트 CLAUDE.md '모듈 맵'·MODULE_MAP.md 에 새 모듈만 추가·바뀐 요약만 수정. 마커(`<!-- module-map -->`) 안 자동 영역만, 사용자 영역 보존 |
 | 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
-| 루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조 *(단일 모듈)* | **judgment** | Claude 가 루트 `CLAUDE.md` 의 '모듈 맵' 섹션에서 `docs/PACKAGES.md` lazy-load 진입 안내를 박는다 |
-| 패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션 *(단일 모듈)* | **mechanical+judgment** | `scaffold.py` 가 `scaffolds/PACKAGES.md` 초안 생성 → Claude 가 패키지별 TODO 라인을 패키지 코드 훑어 채움 → `docs/PACKAGES.md` 로 이동 |
-| 패키지 카탈로그 문서 적정 길이 (50~300줄) *(단일 모듈)* | **judgment** | Claude 가 카탈로그를 50~300줄 범위로 다이어트하거나 패키지별 항목을 보강 |
+| 루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조 | **judgment** *(단일 모듈)* | Claude 가 루트 `CLAUDE.md` 의 '모듈 맵' 섹션에서 `docs/PACKAGES.md` lazy-load 진입 안내를 박는다 |
+| 패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션 | **mechanical+judgment** *(단일 모듈)* | `scaffold.py` 가 `scaffolds/PACKAGES.md` 초안 생성 → Claude 가 패키지별 TODO 라인을 패키지 코드 훑어 채움 → `docs/PACKAGES.md` 로 이동 |
+| 패키지 카탈로그 문서 적정 길이 (50~300줄) | **judgment** *(단일 모듈)* | Claude 가 카탈로그를 50~300줄 범위로 다이어트하거나 패키지별 항목을 보강 |
 | 논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈) | **judgment** | (1) 카탈로그 섹션이 부족하면 위 룰 흐름. (2) 도메인 패키지 표준 레이아웃 부족 시 Claude 가 누락 디렉토리 (controller/service/domain/repository) 정렬 제안 — *코드 이동 동반* 이라 사용자 명시 승인 필수 |
 | 인덱스 / MOC 파일 (docs/INDEX.md 또는 wiki/index.md) | **maintain** | `gen_index.py --target <T> --json` 로 문서 목록·요약 사실 수집 → AI 가 docs/INDEX.md 에 새 문서만 추가·바뀐 요약만 수정(사람이 정리한 그룹·순서·메모 보존). **v0.2.0+**: `.ai-ready/config.json` 있으면 사실에 frontmatter 포함돼 그룹화 판단에 쓴다. 문서 부재 시에만 사실로 초안 통째 생성 |
-| 루트 CLAUDE.md 8,000바이트 이하 | **maintain+judgment** | thin index 패턴: `inject_lazy_load_index.py --target <T> --json` 로 존재하는 detail 문서·트리거 사실 수집 → AI 가 루트 CLAUDE.md 의 lazy-load 표(자동 마커 안)에 새 트리거만 추가, `lazy-load:user-begin/user-end` 사용자 행은 절대 안 건드림. **v0.8.7+**: 사용자 영역이 이미 가리키는 문서는 auto 표에 넣지 않는다 — 루트 문서는 always-loaded 라 같은 문서를 두 표가 각각 가리키면 그 중복분이 매 세션 컨텍스트를 먹는다 (스크립트 쓰기 모드는 자동으로 뺀다). **v0.8.9+**: 사실 JSON 의 `self_evident: true` 항목은 파일명이 곧 트리거라 표 행을 만들지 말고 링크 한 줄로 묶는다 (쓰기 모드와 같은 기준). 판정은 바이트 기준이라 **줄 수를 줄여도 한 줄이 길면 통과하지 못한다** — 긴 불릿을 쪼개는 게 아니라 문서로 내보내야 한다. 그 뒤 Claude 가 인라인 detail 을 `docs/CONVENTIONS.md` 등으로 분리(사용자 승인 후) |
-| 모듈 문서 평균 50줄 이하 | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트. **보존 가드**: "도메인 설계 문서" 포인터 줄 (`docs/design/domain_{name}.md` 참조) 은 다이어트 대상에서 제외 — design 문서가 있는 도메인의 모듈엔 반드시 포인터가 남아야 한다 (불변식) |
+| 루트 CLAUDE.md 상주 분량 (800~8,000바이트) | **maintain+judgment** | thin index 패턴: `inject_lazy_load_index.py --target <T> --json` 로 존재하는 detail 문서·트리거 사실 수집 → AI 가 루트 CLAUDE.md 의 lazy-load 표(자동 마커 안)에 새 트리거만 추가, `lazy-load:user-begin/user-end` 사용자 행은 절대 안 건드림. **v0.8.7+**: 사용자 영역이 이미 가리키는 문서는 auto 표에 넣지 않는다 — 루트 문서는 always-loaded 라 같은 문서를 두 표가 각각 가리키면 그 중복분이 매 세션 컨텍스트를 먹는다 (스크립트 쓰기 모드는 자동으로 뺀다). **v0.8.9+**: 사실 JSON 의 `self_evident: true` 항목은 파일명이 곧 트리거라 표 행을 만들지 말고 링크 한 줄로 묶는다 (쓰기 모드와 같은 기준). 판정은 바이트 기준이라 **줄 수를 줄여도 한 줄이 길면 통과하지 못한다** — 긴 불릿을 쪼개는 게 아니라 문서로 내보내야 한다. 그 뒤 Claude 가 인라인 detail 을 `docs/CONVENTIONS.md` 등으로 분리(사용자 승인 후). **v0.9.0+**: 하한 800바이트가 생겼다 — 다이어트를 과하게 해 루트가 지도 역할을 잃으면 감점이므로, 내보낸 문서로 가는 트리거는 반드시 루트에 남긴다 |
+| 모듈 문서 평균 길이 (10~50줄) | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트하고, 평균이 10줄 미만이면 반대로 스텁을 채운다 (**v0.9.0+** 하한). **보존 가드**: "도메인 설계 문서" 포인터 줄 (`docs/design/domain_{name}.md` 참조) 은 다이어트 대상에서 제외 — design 문서가 있는 도메인의 모듈엔 반드시 포인터가 남아야 한다 (불변식) |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
 | '사용 시점' 가이드 존재 | **maintain+judgment** | `inject_lazy_load_index.py --target <T> --json` 로 트리거 사실 수집 → AI 가 루트 CLAUDE.md lazy-load 표(자동 마커 안)에 새 트리거 추가(사용자 행 보존). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
 | ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |

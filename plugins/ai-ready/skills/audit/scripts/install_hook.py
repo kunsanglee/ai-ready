@@ -5,7 +5,8 @@ freshness Stop hook을 대상 프로젝트의 .claude/settings.json에 추가.
 기존 settings.json이 있으면 보존하면서 hooks.Stop 배열에 추가합니다 (idempotent).
 이미 설치되어 있으면 아무것도 하지 않습니다.
 
-ROI 액션 매핑: "freshness Stop hook 설치" (Rule 6.1, +5점).
+ROI 규칙 (audit 의 규칙 이름 그대로 — 번호가 아니라 이름으로 가리킨다):
+  - "CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재" (+5점)
 
 실행:
   python3 install_hook.py --target /path/to/repo
