@@ -13,7 +13,7 @@
 
 모듈 요약은 그 모듈의 CLAUDE.md/AGENTS.md 첫 줄에서 가져오며, 없으면 "(설명 없음)".
 
-ROI 액션 매핑: "루트 CLAUDE.md에 모듈 맵 섹션 추가" + "루트 CLAUDE.md 200줄 이하"
+ROI 액션 매핑: "루트 CLAUDE.md에 모듈 맵 섹션 추가" + "루트 CLAUDE.md 8,000바이트 이하"
 (Rule 1.2 + 2.1).
 
 실행:
