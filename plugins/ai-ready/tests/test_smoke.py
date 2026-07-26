@@ -216,6 +216,8 @@ class TestConfigAwareScoring(unittest.TestCase):
     def test_claude_hook_counts_as_verification_gate(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
+            # 훅이 가리키는 스크립트는 실재해야 신호로 인정된다(v0.9.1 죽은 훅 게이트).
+            self._write(root, "gradlew", "#!/bin/sh\nexec gradle \"$@\"\n")
             self._write(root, ".claude/settings.json", json.dumps(
                 {"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [
                     {"type": "command", "command": "./gradlew ktlintFormat"}]}]}}))
@@ -669,6 +671,11 @@ class TestStubGate(unittest.TestCase):
             "테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md)",
             "매트릭스 문서 / 대시보드 존재",
             "PR 리뷰 시간 / AI 사용량 / 토큰 추적",
+            # v0.9.1 (2회차 적대 검토) 에서 게이트가 확대된 규칙들.
+            "루트 문서가 3개 이상의 모듈 경로/문서 참조",
+            "CLAUDE.md 갱신 프로토콜 문서화",
+            "기계적 검증 훅 (pre-commit / AI 에이전트 hook)",
+            "CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재",
         }
         seen = set()
         for cat in result["categories"]:
@@ -723,6 +730,156 @@ class TestStubGate(unittest.TestCase):
     def test_count_guide_lines_does_not_double_count_one_line(self):
         # "절대 금지" 는 두 패턴에 동시에 걸린다 — 줄 단위로 세지 않으면 부풀려진다.
         self.assertEqual(audit.count_guide_lines("절대 금지: A\n", audit.DONOT_PATTERNS), 1)
+
+
+class TestRound2Gates(unittest.TestCase):
+    """2회차 적대 검토가 실측으로 확정한 우회로들을 막는다 (v0.9.1).
+
+    실측: 스텁 레포에 config 자기신고(`build_deps: ["plugins"]`)와 450바이트 잡문서 하나를
+    얹으면 52점이 63점이 돼 "AI 활용" 등급에 진입했고, 존재하지 않는 파일을 가리키는 링크
+    3개·스텁 옆 4KB 바이너리·스텁 문서의 "갱신 트리거" 한 줄·실재하지 않는 스크립트를
+    가리키는 훅 문자열이 각각 만점을 받았다.
+    """
+
+    def _rule(self, root: Path, rule_name: str) -> dict:
+        result = audit.run(root, root / ".ai-ready" / "out")
+        return next(r for c in result["categories"] for r in c["rules"]
+                    if r["name"] == rule_name)
+
+    def test_broken_references_do_not_count(self):
+        # 존재하지 않는 파일을 가리키는 링크 3개로 4/4 를 받던 자리.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / "CLAUDE.md").write_text(
+                "# proj\n"
+                "- [`core/NO-SUCH.md`](core/NO-SUCH.md)\n"
+                "- [`app/GHOST.md`](app/GHOST.md)\n"
+                "- [`docs/MISSING.md`](docs/MISSING.md)\n", encoding="utf-8")
+            rule = self._rule(root, "루트 문서가 3개 이상의 모듈 경로/문서 참조")
+            self.assertEqual(rule["points"], 0)
+            self.assertIn("실재하지 않거나 스텁", rule["note"])
+
+    def test_stub_reference_targets_do_not_count(self):
+        # 링크 대상이 실재해도 스텁이면 참조 수에서 뺀다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)  # 루트 문서의 링크 셋이 전부 스텁을 가리킨다
+            rule = self._rule(root, "루트 문서가 3개 이상의 모듈 경로/문서 참조")
+            self.assertEqual(rule["points"], 0)
+
+    def test_substantive_reference_targets_count(self):
+        real = "# 문서\n" + "실질 내용을 담은 문장입니다.\n" * 12
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            for rel in ("core/CLAUDE.md", "app/CLAUDE.md", "docs/INDEX.md"):
+                (root / rel).write_text(real, encoding="utf-8")
+            rule = self._rule(root, "루트 문서가 3개 이상의 모듈 경로/문서 참조")
+            self.assertEqual(rule["points"], 4)
+
+    def test_binary_file_does_not_satisfy_directory_gate(self):
+        # 스텁 ADR 옆 4KB 바이너리 하나로 ADR 규칙이 5/5 가 되던 자리 — errors="replace" 로
+        # 읽으면 무작위 바이트도 개행 덕에 줄 수를 넘긴다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / "docs" / "adr" / "diagram.png").write_bytes(os.urandom(4096))
+            rule = self._rule(root, "아키텍처 의사결정 기록 (ADR / wiki/decisions)")
+            self.assertEqual(rule["points"], 2)
+
+    def test_update_protocol_needs_nonstub_doc(self):
+        # 3줄 스텁의 "갱신 트리거" 한 줄로 5/5 를 받던 자리 (형제 키워드 규칙만 게이트된 비대칭).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / "CLAUDE.md").write_text("# p\n갱신 트리거: 아무때나\nx\n", encoding="utf-8")
+            rule = self._rule(root, "CLAUDE.md 갱신 프로토콜 문서화")
+            self.assertEqual(rule["points"], 0)
+            self.assertIn("스텁 문서에만", rule["note"])
+
+    def test_update_protocol_in_substantive_doc_scores(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "CLAUDE.md").write_text(
+                "# proj\n" + "실질 내용을 담은 문장입니다.\n" * 12 +
+                "## 유지보수\n갱신 트리거: 새 패키지 추가 시\n", encoding="utf-8")
+            rule = self._rule(root, "CLAUDE.md 갱신 프로토콜 문서화")
+            self.assertEqual(rule["points"], 5)
+
+    def test_dead_hook_commands_score_partial(self):
+        # 스텁 픽스처의 훅은 ./gradlew 와 freshness_check.py 를 가리키는데 둘 다 레포에 없다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            verify = self._rule(root, "기계적 검증 훅 (pre-commit / AI 에이전트 hook)")
+            fresh = self._rule(root, "CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재")
+            self.assertEqual(verify["points"], 1)
+            self.assertEqual(fresh["points"], 2)
+
+    def test_live_hook_commands_score_full(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / "gradlew").write_text("#!/bin/sh\nexec gradle \"$@\"\n", encoding="utf-8")
+            (root / "freshness_check.py").write_text("print('ok')\n", encoding="utf-8")
+            verify = self._rule(root, "기계적 검증 훅 (pre-commit / AI 에이전트 hook)")
+            fresh = self._rule(root, "CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재")
+            self.assertEqual(verify["points"], 3)
+            self.assertEqual(fresh["points"], 5)
+
+    def test_config_build_deps_ignores_structural_keyword(self):
+        # `plugins {}` 뿐인 매니페스트에 "plugins" 를 선언해 5/5 를 받던 자기신고 우회.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / ".ai-ready").mkdir()
+            (root / ".ai-ready" / "config.json").write_text(json.dumps(
+                {"version": 1, "rubric": {"api_contracts": {"build_deps": ["plugins"]}}}),
+                encoding="utf-8")
+            rule = self._rule(root, "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)")
+            self.assertEqual(rule["points"], 2, "구조 키워드 자기신고가 계약 신호로 인정됨")
+
+    def test_config_build_deps_shorter_than_four_chars_dropped(self):
+        cfg = {"rubric": {"api_contracts": {"build_deps": ["api", " rpc ", "springdoc"]}}}
+        self.assertEqual(config_loader.api_contract_build_deps(cfg), ["springdoc"])
+
+    def test_antipatterns_config_hint_overrides_stub_partial(self):
+        # 스텁 ANTIPATTERNS.md 의 부분점수(2)가 config 힌트 도달을 막던 비대칭 — naming 과 동일하게.
+        real = "# 컨벤션\n" + "안티패턴과 이유를 담은 문장입니다.\n" * 12
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / "docs" / "CONVENTIONS.md").write_text(real, encoding="utf-8")
+            (root / ".ai-ready").mkdir()
+            (root / ".ai-ready" / "config.json").write_text(json.dumps(
+                {"version": 1, "rubric": {"antipatterns": {"doc_hints": ["docs/CONVENTIONS.md"]}}}),
+                encoding="utf-8")
+            rule = self._rule(root, "ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재")
+            self.assertEqual(rule["points"], 5)
+            self.assertIn("config", rule["note"])
+
+    def test_report_discloses_config_awarded_points(self):
+        # 자기신고 인정분은 리포트 머리에 합산 공개된다.
+        real = "# 컨벤션\n" + "안티패턴과 이유를 담은 문장입니다.\n" * 12
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            (root / "docs" / "CONVENTIONS.md").write_text(real, encoding="utf-8")
+            (root / ".ai-ready").mkdir()
+            (root / ".ai-ready" / "config.json").write_text(json.dumps(
+                {"version": 1, "rubric": {"antipatterns": {"doc_hints": ["docs/CONVENTIONS.md"]}}}),
+                encoding="utf-8")
+            result = audit.run(root, root / ".ai-ready" / "out")
+            report = audit.render_report(result)
+            self.assertIn("config 자기신고 인정", report)
+
+    def test_report_omits_config_line_without_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _build_stub_repo(root)
+            result = audit.run(root, root / ".ai-ready" / "out")
+            self.assertNotIn("config 자기신고 인정", audit.render_report(result))
 
 
 class TestRuleNameReferences(unittest.TestCase):
