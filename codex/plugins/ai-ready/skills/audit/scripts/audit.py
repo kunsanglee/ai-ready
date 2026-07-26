@@ -177,27 +177,82 @@ def _has_min_content(path: Path, min_lines: int = DOC_MIN_LINES,
     존재만으로 만점을 주던 규칙(ANTIPATTERNS/NAMING/ARCHITECTURE/TESTING/ADR/INDEX 등)이
     빈 껍데기 문서에 점수를 주지 않게 하는 최소 품질 게이트다. 임계값 근거는
     DOC_MIN_BYTES 주석 참조. BOM 은 utf-8-sig 로 투명 제거.
+
+    이진 파일은 거른다 — errors="replace" 로 읽으면 무작위 바이너리도 개행 바이트 덕에
+    줄 수 조건을 넘어, 스텁 ADR 옆 이미지 하나가 게이트를 통과시켰다(2회차 적대 검토 발견 3).
+    앞 8KB 에 NUL 바이트가 있으면 텍스트가 아닌 것으로 본다.
     """
     if byte_size(path) < min_bytes:
         return False
     try:
+        with path.open("rb") as f:
+            if b"\x00" in f.read(8192):
+                return False
         with path.open("r", encoding="utf-8-sig", errors="replace") as f:
             return sum(1 for ln in f if ln.strip()) >= min_lines
     except OSError:
         return False
 
 
+# 디렉토리 실질 게이트가 문서로 세는 확장자. rglob 전체를 세면 이미지·아카이브 같은
+# 이진 파일이 게이트를 대신 통과시키므로 텍스트 문서류로 한정한다(2회차 적대 검토 발견 3).
+TEXT_DOC_SUFFIXES = {".md", ".txt", ".rst", ".adoc", ".yaml", ".yml", ".json", ".proto"}
+
+
 def _has_substantive_content(path: Path) -> bool:
-    """파일이면 _has_min_content, 디렉토리면 그 안에 실질 내용을 가진 파일이 하나라도 있는지.
+    """파일이면 _has_min_content, 디렉토리면 그 안에 실질 내용을 가진 문서가 하나라도 있는지.
 
     ADR 디렉토리·contracts 디렉토리처럼 "존재하면 만점" 이던 대상에 같은 스텁 게이트를 걸기 위한 것.
+    디렉토리는 TEXT_DOC_SUFFIXES 확장자 파일만 센다.
     """
     if path.is_dir():
         try:
-            return any(p.is_file() and _has_min_content(p) for p in path.rglob("*"))
+            return any(p.is_file() and p.suffix.lower() in TEXT_DOC_SUFFIXES
+                       and _has_min_content(p) for p in path.rglob("*"))
         except OSError:
             return False
     return _has_min_content(path)
+
+
+def _reference_target_counts(target: Path, ref: str) -> bool:
+    """루트 문서가 참조한 경로가 점수 근거로 성립하는지 — 실재해야 하고, 파일이면 스텁이 아니어야 한다.
+
+    존재하지 않는 경로 3개로도 경로 참조 규칙이 만점을 주던 구멍을 막는다(2회차 적대 검토 발견 2).
+    앵커(#…)와 끝 슬래시는 떼고 본다. 디렉토리는 존재로 충분하다 — 스텁 우회의 주 벡터가 아니고,
+    src/ 같은 큰 트리를 rglob 로 실질 검사하는 비용이 크다. 파일은 _has_min_content 게이트를
+    적용해 스텁 문서를 가리키는 링크도 참조 수에서 뺀다.
+    """
+    p = target / ref.split("#")[0].rstrip("/")
+    if p.is_dir():
+        return True
+    return p.is_file() and _has_min_content(p)
+
+
+# 의존성 "선언 줄" 판정 키워드 — gradle(kts/groovy)·maven. plugins/dependencies 같은
+# 블록 구조 키워드는 넣지 않는다(빈 매니페스트의 구조 줄에 올라타는 우회를 막는 것이 목적).
+DEP_DECLARATION_MARKERS = (
+    "implementation", "compileonly", "runtimeonly", "testimplementation",
+    "api(", "api '", 'api "', "classpath", "kapt", "ksp", "annotationprocessor",
+    "id(", "id '", 'id "',
+    "<artifactid>", "<groupid>", "<dependency>",
+)
+
+
+def _line_declares_dependency(line: str, dep: str) -> bool:
+    """(소문자로 넘어온) 매니페스트 한 줄이 dep 를 *의존성 선언으로* 담고 있는가.
+
+    config rubric.api_contracts.build_deps 는 부분 문자열 매칭이어서, 빈 매니페스트의 구조
+    키워드(`plugins {}`)에 "plugins" 를 선언해 올라타는 자기신고 우회가 가능했다(2회차 적대
+    검토 발견 1). gradle/maven 선언 키워드가 있는 줄, 또는 `"dep": …` / `dep = …` / `dep: …`
+    꼴의 키 선언 줄(package.json·Cargo.toml·pyproject 류)만 인정한다. 애매하면 인정하지 않는
+    쪽으로 진다 — 버전 카탈로그(libs.versions.toml) 같은 간접 선언은 못 알아보는 한계를 감수한다.
+    """
+    if dep not in line:
+        return False
+    if any(m in line for m in DEP_DECLARATION_MARKERS):
+        return True
+    pat = re.escape(dep)
+    return re.search(rf"""(?:["']{pat}[\w.\-]*["']\s*:|^\s*{pat}[\w.\-]*\s*[=:])""", line) is not None
 
 
 def count_guide_lines(text: str, patterns: list[str]) -> int:
@@ -392,6 +447,7 @@ def scan_target(target: Path, cfg: dict | None = None) -> dict:
         "arch_docs": [],
         "naming_docs": [],
         "adr_dirs": [],
+        "adr_config_dirs": [],
         "proto_files": [],
         "outcome_paths": [],
         "api_build_deps": [],
@@ -399,7 +455,10 @@ def scan_target(target: Path, cfg: dict | None = None) -> dict:
     seen_modules = set()
 
     # config 기반 채점 입력 (v0.3.0+) — cfg=None 이면 빈 리스트라 기존 동작 그대로.
-    adr_hints_strict = tuple(ADR_DIR_HINTS_STRICT) + tuple(decision_record_hints(cfg))
+    # config 선언으로 인정된 ADR 디렉토리는 따로 표시한다 — 자기신고 인정분을 리포트에
+    # 드러내기 위한 것(2회차 적대 검토 발견 1의 투명성 조치).
+    config_adr_hints = set(decision_record_hints(cfg))
+    adr_hints_strict = tuple(ADR_DIR_HINTS_STRICT) + tuple(config_adr_hints)
     contract_deps = api_contract_build_deps(cfg)
 
     for dirpath, dirnames, filenames in os.walk(target, onerror=_walk_onerror):
@@ -413,6 +472,8 @@ def scan_target(target: Path, cfg: dict | None = None) -> dict:
             if rel_str == hint or rel_str.endswith("/" + hint):
                 if any(f.endswith(".md") for f in filenames):
                     out["adr_dirs"].append(str(rel_dir))
+                    if hint in config_adr_hints:
+                        out["adr_config_dirs"].append(str(rel_dir))
                 is_adr = True
                 break
         if not is_adr:
@@ -428,14 +489,17 @@ def scan_target(target: Path, cfg: dict | None = None) -> dict:
             if rel_dir not in seen_modules:
                 seen_modules.add(rel_dir)
                 out["modules"].append(rel_dir)
-            # config 선언 API 계약 의존성 (예: springdoc) 을 매니페스트 텍스트에서 감지 (M-1, v0.3.0+)
+            # config 선언 API 계약 의존성 (예: springdoc) 을 매니페스트에서 감지 (M-1, v0.3.0+).
+            # 파일 전체 부분 문자열이 아니라 *의존성 선언 줄* 에서만 인정한다 —
+            # 근거는 _line_declares_dependency docstring (2회차 적대 검토 발견 1).
             if contract_deps:
                 for f in filenames:
                     if f in BUILD_MANIFESTS:
-                        txt = read_text(Path(dirpath) / f).lower()
-                        for dep in contract_deps:
-                            if dep in txt and dep not in out["api_build_deps"]:
-                                out["api_build_deps"].append(dep)
+                        for line in read_text(Path(dirpath) / f).lower().splitlines():
+                            for dep in contract_deps:
+                                if dep not in out["api_build_deps"] \
+                                        and _line_declares_dependency(line, dep):
+                                    out["api_build_deps"].append(dep)
 
         # 성과 지표 디렉토리 (M-3) — 정확 매칭
         for d in dirnames:
@@ -524,7 +588,9 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
             text = doc_text.get(root_doc, "")
             refs_catalog = any(c in text for c in PACKAGE_CATALOG_CANDIDATES)
             path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
-            non_http = {p for p in path_hits if not p.startswith("http") and "/" in p}
+            # 실재하지 않거나 스텁을 가리키는 참조는 세지 않는다 — _reference_target_counts 참조.
+            non_http = {p for p in path_hits if not p.startswith("http") and "/" in p
+                        and _reference_target_counts(target, p)}
             if refs_catalog:
                 r.award(4, [str(catalog_doc.relative_to(target))] if catalog_doc else ["PACKAGES.md 참조"],
                         note="루트 문서가 패키지 카탈로그를 참조")
@@ -542,19 +608,28 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
             text = doc_text.get(root_doc, "")
             path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
             module_first_segs = {str(m).split("/")[0] for m in modules if m != Path(".")}
-            valid_paths = set()
+            valid_paths, dead_refs = set(), set()
             for p in path_hits:
                 if "/" not in p or p.startswith("http"):
                     continue
                 seg = p.split("/")[0]
-                if seg in module_first_segs or seg in DOC_DIRS:
+                if seg not in module_first_segs and seg not in DOC_DIRS:
+                    continue
+                # 실재하지 않거나 스텁을 가리키는 참조는 세지 않는다 — _reference_target_counts 참조.
+                if _reference_target_counts(target, p):
                     valid_paths.add(p)
+                else:
+                    dead_refs.add(p)
+            dead_note = (f" (실재하지 않거나 스텁인 참조 {len(dead_refs)}건 제외: "
+                         f"{', '.join(sorted(dead_refs)[:3])})" if dead_refs else "")
             if len(valid_paths) >= 3:
-                r.award(4, sorted(valid_paths)[:5], note=f"유효한 모듈/문서 경로 참조 {len(valid_paths)}건")
+                r.award(4, sorted(valid_paths)[:5],
+                        note=f"유효한 모듈/문서 경로 참조 {len(valid_paths)}건{dead_note}")
             elif len(valid_paths) >= 1:
-                r.award(2, sorted(valid_paths), note=f"{len(valid_paths)}건만 발견 (3건 이상 필요)")
+                r.award(2, sorted(valid_paths),
+                        note=f"{len(valid_paths)}건만 발견 (3건 이상 필요){dead_note}")
             else:
-                r.note = "루트 문서에 모듈/문서 경로 참조가 없음"
+                r.note = "루트 문서에 실재하는 모듈/문서 경로 참조가 없음" + dead_note
     rules.append(r)
 
     # 1.3 모듈별 CLAUDE.md 커버리지 (단일 모듈은 PACKAGES.md 카탈로그로 대체)
@@ -750,10 +825,14 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict, cfg: dict |
                         note="디렉토리는 있으나 문서가 비어/스텁 — DO-NOT 항목을 채우면 만점")
     # config 선언 통합 문서(예: docs/CONVENTIONS.md)에 안티패턴을 두는 프로젝트 인정 (D1).
     # 파일 존재 + 최소 내용 게이트만 본다 — 섹션 헤더 스캔은 거짓양성이라 안 함.
-    if r.points == 0:
+    # 스텁 ANTIPATTERNS.md 부분점수(2점)가 있어도 힌트가 이긴다 — naming 의 elif 체인과 같은
+    # 의미론. 종전 `points == 0` 조건은 낡은 스텁 파일을 지워야만 config 인정을 받는 비대칭을
+    # 만들었다(2회차 적대 검토 발견 9).
+    if r.points < r.max:
         for hint in antipattern_doc_hints(cfg):
             hp = target / hint
             if hp.is_file() and _has_min_content(hp):
+                r.points, r.evidence = 0, []  # 스텁 부분점수를 대체 (award 는 가산이라 리셋 필요)
                 r.award(5, [hint], note="config antipatterns.doc_hints 선언 문서 인정")
                 break
     if r.points == 0:
@@ -765,7 +844,9 @@ def score_tribal_knowledge(target: Path, scan: dict, doc_text: dict, cfg: dict |
         # 디렉토리 존재만으로 만점을 주면 빈 ADR 파일 하나로 통과한다 — 스텁 게이트를 건다.
         substantive = [d for d in scan["adr_dirs"] if _has_substantive_content(target / d)]
         if substantive:
-            r.award(5, substantive[:3])
+            cfg_dirs = [d for d in substantive if d in scan.get("adr_config_dirs", [])]
+            r.award(5, substantive[:3],
+                    note="config decision_records.dir_hints 선언 디렉토리 인정" if cfg_dirs else "")
         else:
             r.award(2, scan["adr_dirs"][:3],
                     note="ADR 디렉토리는 있으나 문서가 비어/스텁 — 결정 배경과 거부된 대안을 채우면 만점")
@@ -913,28 +994,92 @@ def _ai_harness_verification_hooks(target: Path) -> list[str]:
     문서 신선도(freshness) / ai-ready 자기 산출물 명령은 *코드 검증이 아니므로* 제외한다.
     """
     settings = target / ".claude" / "settings.json"
-    if not settings.is_file():
-        return []
+    signals, _broken = _classify_settings_hooks(target, settings)
+    return signals
+
+
+def _settings_hook_commands(settings_path: Path) -> list[str]:
+    """.claude/settings.json 류 파일의 hooks 트리에서 command 문자열을 전부 수집."""
     try:
-        data = json.loads(read_text(settings))
-    except (ValueError, OSError):
+        data = json.loads(read_text(settings_path))
+    except ValueError:
         return []
     hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
     if not isinstance(hooks, dict):
         return []
+    commands = []
+    for matchers in hooks.values():
+        for matcher in (matchers or []):
+            if not isinstance(matcher, dict):
+                continue
+            for h in (matcher.get("hooks", []) or []):
+                if isinstance(h, dict) and h.get("command"):
+                    commands.append(str(h["command"]))
+    return commands
+
+
+def _command_missing_scripts(target: Path, cmd: str) -> list[str]:
+    """훅 명령 문자열이 가리키는 레포 상대 스크립트 중 실재하지 않는 것 목록.
+
+    훅 문자열 존재만으로 만점을 주면 가리키는 파일이 없는 죽은 설정도 점수를 받는다
+    (2회차 적대 검토 발견 6). 판정은 보수적이다 — `./` 로 시작하거나 스크립트 확장자
+    (.py/.sh/.js/.ts)로 끝나는 상대 경로 토큰만 본다. PATH 에서 찾는 명령(ktlint 등)과
+    `$VAR` 치환이 남은 토큰은 실행 환경을 모르는 채 오탐할 수 있어 판정하지 않는다.
+    `$CLAUDE_PROJECT_DIR/` 접두는 target 기준 상대 경로로 치환해 본다.
+    """
+    missing = []
+    for token in cmd.split():
+        t = token.strip("'\";&|")
+        t = t.replace("$CLAUDE_PROJECT_DIR/", "").replace("${CLAUDE_PROJECT_DIR}/", "")
+        if "$" in t or t.startswith(("-", "/")):
+            continue
+        is_dotslash = t.startswith("./")
+        is_script = t.endswith((".py", ".sh", ".js", ".ts"))
+        if not (is_dotslash or is_script):
+            continue
+        rel = t[2:] if is_dotslash else t
+        if rel and not (target / rel).exists() and t not in missing:
+            missing.append(t)
+    return missing
+
+
+def _classify_settings_hooks(target: Path, settings: Path) -> tuple[list[str], list[str]]:
+    """settings 의 코드 검증 훅을 (살아있는 신호, 죽은 신호) 로 분류.
+
+    죽은 신호 = 그 이벤트의 검증 명령이 전부 실재하지 않는 스크립트를 가리키는 경우.
+    같은 이벤트에 살아있는 명령이 하나라도 있으면 신호로 인정한다.
+    """
+    if not settings.is_file():
+        return [], []
+    try:
+        data = json.loads(read_text(settings))
+    except (ValueError, OSError):
+        return [], []
+    hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
+    if not isinstance(hooks, dict):
+        return [], []
     verify_kw = ("ktlint", "detekt", "lint", "test", "format", "check",
                  "gradlew", "prettier", "eslint", "mypy", "ruff", "tsc",
                  "typecheck", "build")
     exclude_kw = ("freshness", "ai-ready", ".ai-ready")
-    signals = []
+    signals, broken = [], []
     for event in ("PreToolUse", "PostToolUse", "Stop"):
+        alive = dead = False
         for matcher in hooks.get(event, []) or []:
             for h in (matcher.get("hooks", []) or []):
-                cmd = (h.get("command", "") or "").lower()
-                if any(k in cmd for k in verify_kw) and not any(x in cmd for x in exclude_kw):
-                    signals.append(f".claude/settings.json:{event}")
-                    break
-    return signals
+                cmd = (h.get("command", "") or "")
+                low = cmd.lower()
+                if any(k in low for k in verify_kw) and not any(x in low for x in exclude_kw):
+                    if _command_missing_scripts(target, cmd):
+                        dead = True
+                    else:
+                        alive = True
+        label = f".claude/settings.json:{event}"
+        if alive:
+            signals.append(label)
+        elif dead:
+            broken.append(label)
+    return signals, broken
 
 
 def score_verification(target: Path, scan: dict, doc_text: dict) -> dict:
@@ -942,13 +1087,16 @@ def score_verification(target: Path, scan: dict, doc_text: dict) -> dict:
 
     r = Rule("기계적 검증 훅 (pre-commit / AI 에이전트 hook)", 3)
     found = has_any_path(target, PRECOMMIT_FILES)
-    harness = _ai_harness_verification_hooks(target)
+    harness, harness_broken = _classify_settings_hooks(target, target / ".claude" / "settings.json")
     evidence = found + harness
     if evidence:
         note = ""
         if harness and not found:
             note = "AI 에이전트 편집/커밋 시점 검증 hook 인정 (.claude/settings.json)"
         r.award(3, evidence, note=note)
+    elif harness_broken:
+        r.award(1, harness_broken,
+                note="훅 명령이 가리키는 스크립트가 레포에 없음 — 실재하는 명령으로 고치면 만점")
     rules.append(r)
 
     r = Rule("CI 설정 존재 + 테스트 참조", 3)
@@ -1024,7 +1172,7 @@ def score_freshness(target: Path, scan: dict, doc_text: dict) -> dict:
         ".claude/hooks", ".claude/settings.json", ".claude/settings.local.json",
         ".husky", ".github/workflows",
     ]
-    found = []
+    found, broken = [], []
     for c in candidates:
         p = target / c
         if not p.exists():
@@ -1032,7 +1180,15 @@ def score_freshness(target: Path, scan: dict, doc_text: dict) -> dict:
         if p.is_file():
             text = read_text(p).lower()
             if any(k in text for k in FRESHNESS_KEYWORDS):
-                found.append(c)
+                # settings 파일은 키워드만 믿지 않는다 — 신선도 명령이 가리키는 스크립트가
+                # 전부 실재하지 않으면 죽은 설정이다(2회차 적대 검토 발견 6). 훅 파일(.claude/hooks
+                # 등 디렉토리 갈래)은 그 파일 자체가 실재하는 산출물이라 종전대로 인정한다.
+                fresh_cmds = [cmd for cmd in _settings_hook_commands(p)
+                              if any(k in cmd.lower() for k in FRESHNESS_KEYWORDS)]
+                if fresh_cmds and all(_command_missing_scripts(target, cmd) for cmd in fresh_cmds):
+                    broken.append(c)
+                else:
+                    found.append(c)
         else:
             for sub in p.rglob("*"):
                 if sub.is_file():
@@ -1041,16 +1197,26 @@ def score_freshness(target: Path, scan: dict, doc_text: dict) -> dict:
                         break
     if found:
         r.award(5, found)
+    elif broken:
+        r.award(2, broken,
+                note="갱신 훅 명령이 가리키는 스크립트가 레포에 없음 — 실재하는 명령으로 고치면 만점")
     rules.append(r)
 
-    # 6.2
+    # 6.2 — 키워드가 실질 문서에 있어야 한다. 스텁 문서의 "갱신 트리거" 한 줄로 만점을 주면
+    # 형제 키워드 규칙(금지·사용 시점)만 게이트한 0.9.0 의 구멍이 여기로 옮겨온다(2회차 발견 4).
     r = Rule("CLAUDE.md 갱신 프로토콜 문서화", 5)
+    protocol_keywords = ("갱신 트리거", "Maintenance", "유지보수", "update protocol",
+                         "Updating CLAUDE", "갱신 방식")
+    stub_only = False
     for d in scan["claude_docs"]:
         text = doc_text.get(d, "")
-        if any(k in text for k in ("갱신 트리거", "Maintenance", "유지보수", "update protocol",
-                                   "Updating CLAUDE", "갱신 방식")):
-            r.award(5, [str(d.relative_to(target))])
-            break
+        if any(k in text for k in protocol_keywords):
+            if _has_min_content(d):
+                r.award(5, [str(d.relative_to(target))])
+                break
+            stub_only = True
+    if r.points == 0 and stub_only:
+        r.note = "갱신 프로토콜 표현이 스텁 문서에만 있음 — 그 문서를 실질 내용으로 채우면 집계됩니다"
     rules.append(r)
 
     return {
@@ -1290,6 +1456,18 @@ def render_report(audit: dict) -> str:
     ts_utc = audit["timestamp"]
     lines.append(f"- **생성 시각**: {ts_local} (로컬) · {ts_utc} (UTC)" if ts_local else f"- **생성 시각**: {ts_utc}")
     lines.append(f"- **점수**: **{audit['total_score']} / {audit['max_score']}** — _{audit['grade']}_")
+    # config 자기신고 인정분 공개 — 채점당하는 레포가 쓰는 .ai-ready/config.json 이 채점 입력이므로,
+    # 그 선언으로 얻은 점수를 검토자가 한눈에 보게 한다(2회차 적대 검토 발견 1의 투명성 조치).
+    # 식별 규약: config 로 인정한 규칙의 note 에는 "config" 를 반드시 포함하고, 점수가 있는
+    # 다른 규칙의 note 에는 그 단어를 쓰지 않는다.
+    config_awarded = [(rule["name"], rule["points"])
+                      for cat in audit["categories"] for rule in cat["rules"]
+                      if rule["points"] > 0 and "config" in (rule.get("note") or "")]
+    if config_awarded:
+        config_points = sum(p for _, p in config_awarded)
+        lines.append(f"- **config 자기신고 인정**: {len(config_awarded)}개 규칙 {config_points}점 — "
+                     f"`.ai-ready/config.json` 선언으로 인정된 점수입니다. "
+                     f"선언이 프로젝트 실물과 맞는지는 사람이 확인하세요 (세부는 규칙 비고)")
     if audit.get("single_module_mode"):
         catalog = audit.get("package_catalog") or "없음 — 도입 권장"
         lines.append(f"- **레이아웃**: 단일 모듈 (패키지 = 논리 모듈)")
