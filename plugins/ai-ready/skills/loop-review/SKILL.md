@@ -66,7 +66,7 @@ echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}
 - 종류 어휘 rubric 경로 둘 다: BASE 와 LOCAL(있으면) — 같은 "review 값:" 줄에 있다.
 - findings 출력 경로(아래 `$F`).
 
-**maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
+**그 코드를 이 세션이 썼다면 그 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** loop-review 에는 maker 가 없다 — `/loop-run` 과 달리 코드를 쓴 쪽이 이 세션이거나 사람이고, 그래서 자기 변호가 checker 에 새어들 자리가 오히려 여기다. checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
 
 **checker 결과는 파일로 회수한다.** 스핀 전에 findings 출력 경로를 결정적 위치로 잡고 `: > "$F"` 로 비운 뒤, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 넘긴다:
 
@@ -104,7 +104,7 @@ rm -f "$F"
 - `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, await}`.
 - 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
 
-verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 처리), `RETRY`(CRITICAL≥1 — 무인 loop 면 maker 재진입감), `RETRY_SOFT`(MAJOR≥1 — 정체 시 사람 승인으로 통과 가능), `PASS`(MINOR 만/깨끗).
+verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 처리), `RETRY`(CRITICAL≥1 — 무인 loop 면 maker 를 다시 스핀할 감), `RETRY_SOFT`(MAJOR≥1 — 정체 시 사람 승인으로 통과 가능), `PASS`(MINOR 만/깨끗).
 
 ### Step 4. 보고서 조립 (등급 내림차순)
 
