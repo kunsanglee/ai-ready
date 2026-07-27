@@ -259,8 +259,11 @@ loop 계열 넷은 같은 결정론 판정 엔진을 공유합니다. 핵심은 
         │   ├── loop-lessons/  # 잡은 실수 → 지식층 반영 (사람 승인)
         │   └── loop-build/    # 설계를 여러 phase 로 무인 빌드아웃
         ├── agents/            # loop-checker · loop-lesson-synthesizer (읽기 전용)
-        └── _loop-engine/      # 결정론 채점 셸 + BASE 루브릭 + detect_build.py + gate_parse.py
+        ├── _loop-engine/      # 결정론 채점 셸 + BASE 루브릭 + detect_build.py + gate_parse.py
+        └── tests/             # 회귀 시험 (stdlib unittest — audit 스크립트 · 스킬 문서 셸 블록)
 ```
+
+시험은 두 층입니다. `_loop-engine/test.sh` 가 채점 결정론을, `tests/test_skill_blocks.py` 가 스킬 문서 안 셸 블록을 지킵니다. 뒤쪽은 SKILL.md 에서 블록을 뽑아 격리 레포에서 **프레시 셸마다** 실제로 돌립니다. 오케스트레이터가 그 블록을 그대로 Bash 도구에 넣어 실행하므로 블록이 곧 코드이고, 문법 검사로는 프레시 셸에서 변수가 복원되는지·fail-loud 경로가 실제로 멈추는지·지운다고 말한 것이 지워지는지를 알 수 없습니다. `tests/mutate_skill_blocks.py` 는 그 시험에 이가 있는지를 봅니다 — 지난 릴리스에서 실제로 있었던 결함을 문서 사본에 되넣고 시험이 깨지는지 확인합니다. 초록 50건은 "결함이 없다" 와 "결함을 볼 눈이 없다" 를 구별하지 못하기 때문입니다.
 
 ---
 
