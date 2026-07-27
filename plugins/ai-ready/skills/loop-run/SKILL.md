@@ -7,7 +7,7 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 
 > 무인 검증 loop 의 사람 핸드오프 입구(human-on-the-loop). 호출: `/loop-run [회차]`. 1회 점검만은 `/loop-review`, 종료 후 교훈 수확은 `/loop-lessons`. 셋은 같은 판정부(loop-checker + 채점 셸 + BASE/LOCAL rubric)를 공유한다.
 
-무인 검증 loop 의 **사람 핸드오프 입구(human-on-the-loop)** 다. 사람이 grill-me 로 작업 지시를 확정한 뒤 이 스킬에 넘기고 빠지면, **이 세션이 곧 maker** 가 되어 `maker(고침) → checker(독립 점검) → 채점 → 정체·brake 판정` 을 **루브릭 통과까지 자동 반복** 한다. 사람은 셋업하고 빠지고, 결과(수렴 diff)나 사람 호출(AWAIT_USER/brake)을 나중에 받는다.
+무인 검증 loop 의 **사람 핸드오프 입구(human-on-the-loop)** 다. 사람이 grill-me 로 작업 지시를 확정한 뒤 이 스킬에 넘기고 빠지면, **이 세션이 오케스트레이터** 가 되어 `maker(고침) → 게이트 → checker(독립 점검) → 채점 → 정체·brake 판정` 을 **루브릭 통과까지 자동 반복** 한다. maker 와 checker 는 둘 다 매 사이클 새로 띄우는 서브에이전트이고, **이 세션은 코드를 쓰지 않는다.** 사람은 작업 지시를 확인하고 빠지고, 결과(수렴 diff)나 사람 호출(AWAIT_USER/brake)을 나중에 받는다.
 
 무인 드라이버가 돌리는 것과 **똑같은 판정부**(단일 `loop-checker` + 결정론 채점 셸 + BASE/LOCAL rubric)를 쓴다. 다른 건 *방아쇠와 실행 호스트* 뿐이다 — 케이스2(Sentry 자동)는 agent 레포의 Node 드라이버가, 케이스3(이 스킬)은 Claude Code 백그라운드 세션이 같은 엔진을 돌린다.
 
@@ -16,27 +16,29 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 ## 🔌 plugin / 프로젝트 구조
 
 - 이 스킬은 `ai-ready` plugin 의 일부다(과거 별도 loop-engine plugin 이었으나 v0.6.0 에서 통합). **도구 본체는 유저 레벨**(plugin), **프로젝트별 차이는 런타임 감지**가 채운다 — 별도 어댑터 파일을 만들지 않는다.
-- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param` + `detect_build.py` 감지기 + `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace).
+- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param` + `detect_build.py` 감지기 + `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-maker.md`·`agents/loop-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace). `loop-maker` 는 `loop-build` 와 공유한다 — 스핀 패턴만 다르고 행동 규칙은 같은 정의다.
 - 프로젝트 사실(빌드·테스트·린트 명령·티켓 패턴·베이스 브랜치·컨벤션 docs·지식층)은 Step 0 에서 `detect_build.py` 가 매니페스트·브랜치를 *읽어* 감지한다(읽기 전용 — 커밋되는 어댑터 파일은 만들지 않는다. 감지 결과는 루프 한정 휘발 스냅숏 `params.env` 로만 남고 종료 시 폐기된다).
 - 프로젝트 델타(레포에 커밋, 선택): `.loop/rubric.md`(LOCAL rubric — 그 스택 특유 kind. BASE 와 병합 채점). 없어도 BASE 만으로 돈다. 스택 특유 종류(예: ddl-safety)는 사람이 `/loop-lessons` 로 덧붙여 키운다 — 자동 생성하지 않는다.
 - 지식층은 프로젝트의 `docs/ANTIPATTERNS.md`(ai-ready audit/apply 가 만들고 가꾸는 문서). checker 가 판정 기준으로 읽고, `/loop-lessons` 가 잡힌 실수를 거기에 덧붙인다. loop 은 그 문서를 *읽고 보탤* 뿐 따로 생성하지 않는다 — ai-ready 와 loop 이 같은 지식층을 공동 저작한다.
-- 런타임 상태(`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 의 stall·history·started.epoch·params.env·gate.fail·checker-findings·scored, 그리고 브랜치별 포인터 `.loop/run/.active-{브랜치}`)는 루프 한정 휘발성 — `.gitignore` 로 `.loop/run/` 추적 제외. `.loop/rubric.md`(있으면)는 추적 대상.
+- 런타임 상태(`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 의 stall·history·started.epoch·params.env·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문·tree.snapshot·brief, 그리고 브랜치별 포인터 `.loop/run/.active-{브랜치}`)는 루프 한정 휘발성 — `.gitignore` 로 `.loop/run/` 추적 제외. `.loop/rubric.md`(있으면)는 추적 대상.
 - 외부 인증 없음(전부 로컬 git + 셸). brake 런별 오버라이드는 `LOOP_*` env 로(아래).
 
 ## 입력
 
-1. **작업 지시(필수)**: grill-me 합의 요약 또는 spec 경로. "무엇을 만들/고칠지 + 완료 기준". 같은 세션 컨텍스트로 들어온다.
+1. **작업 지시(필수, 파일)**: spec·design 문서 경로. "무엇을 만들/고칠지 + 완료 기준". **파일이어야 한다** — maker 가 서브에이전트라 이 세션의 대화 맥락을 물려받지 못하고, 회차마다 요약을 다시 만들면 5회차 지시가 1회차와 달라진다. 파일이면 재개가 지시까지 함께 복원한다(대화 맥락은 세션이 끝나면 사라진다).
+   - **파일이 없으면 오케스트레이터가 쓴다.** grill-me 직후처럼 합의가 대화에만 있으면, Step 0 에서 그 맥락을 `$LOOP_DIR/brief.md` 로 한 번 옮기고 **사람에게 보여 확인받은 뒤** 루프를 시작한다. 무인으로 열 회차를 돌릴 작업의 지시를 사람이 한 번도 보지 않고 떠나는 것이 원래 위태로운 자리였다.
+   - 이 경로가 checker 의 정합 층 기준이자 maker 의 구현 근거다. 하나의 파일이 둘 다 맡는다.
 2. **비교 베이스**: `$LOOP_BASE_BRANCH`(Step 0 감지, 기본 `origin/main`). 점검 범위 = `$LOOP_BASE_BRANCH...HEAD + uncommitted`.
-3. **작업 정의 문서 경로**(있으면): design/티켓 문서. checker 가 정합 층 점검에 쓴다. 없으면 "missing".
+3. ~~작업 정의 문서 경로~~: 입력 1로 합쳤다. 종전에는 선택이었고 없으면 checker 에게 "missing" 을 넘겼는데, maker 가 서브에이전트가 되면서 그 문서가 없으면 maker 도 구현 근거가 없어 필수가 됐다.
 4. **시도 횟수 상한(선택)**: 사용자가 `/loop-run` 에 회차를 명시하면(예: "5회로", "--max-iter 5") 그 값을 쓴다. 없으면 rubric `max_iterations`(현재 5). 명시값도 하드 천장 10 으로 깎인다. 횟수를 늘려도 PASS·정체·시간·비가역 조기 종료는 그대로라 상한을 다 안 쓰고 일찍 끝날 수 있다 — 상한이지 목표가 아니다.
 
-작업 지시가 모호하면 루프를 **시작하지 않는다** — checker 의 정합 층이 기준을 못 잡아 헛돈다. 사람이 빠지기 전에 grill-me 로 완료 기준부터 확정하게 한다.
+작업 지시가 모호하면 루프를 **시작하지 않는다** — checker 의 정합 층이 기준을 못 잡고 maker 도 구현 근거가 없어 헛돈다. 사람이 빠지기 전에 grill-me 로 완료 기준부터 확정하게 한다. **Step 0-1 이 그 확인을 사람 게이트로 만든다.**
 
 ## 핵심 불변 (절대 어기지 않는다)
 
-1. **maker / checker 분리.** maker = 이 세션(오케스트레이터). checker = **매 사이클 새로 띄우는 `loop-checker` 서브에이전트**. checker 프롬프트에 **maker 의 구현 변명·합리화를 절대 넣지 않는다** — checker 는 diff·문서·ANTIPATTERNS 만 독립적으로 본다. 자기 코드를 자기가 후하게 보는 걸 막는 게 이 루프의 신뢰 근거다. 이 독립성은 별 컨텍스트 서브에이전트 + checker 의 Edit/Write 부재 + checker 본문의 "쓰기 계열 Bash 금지" 지시로 강제한다 — 도구 목록만으로 완벽히 보장되진 않으니(Bash 로 우회 가능) checker 에 쓰기 금지를 명시로 못박았다.
+1. **maker / checker 분리, 그리고 둘 다 오케스트레이터가 아니다.** maker = **매 사이클 새로 띄우는 `loop-maker` 서브에이전트**. checker = **매 사이클 새로 띄우는 `loop-checker` 서브에이전트**. **이 세션은 코드를 쓰지 않는다** — 스핀하고 셸을 돌리고 판정을 읽고 분기한다. `loop-build` 와 codex 쪽 두 스킬이 이미 이 구조이고 이 스킬만 달랐다. checker 프롬프트에 **maker 의 구현 변명·합리화를 절대 넣지 않는다** — checker 는 diff·문서·ANTIPATTERNS 만 독립적으로 본다. 자기 코드를 자기가 후하게 보는 걸 막는 게 이 루프의 신뢰 근거다. 이 독립성은 별 컨텍스트 서브에이전트 + checker 의 Edit/Write 부재 + checker 본문의 "쓰기 계열 Bash 금지" 지시로 강제한다 — 도구 목록만으로 완벽히 보장되진 않으니(Bash 로 우회 가능) checker 에 쓰기 금지를 명시로 못박았다.
 2. **severity 는 셸이 매긴다.** checker 는 `(종류·차원·가중플래그·위치·근거·force_await)` 만 태깅. 등급·verdict 는 결정론 셸이 낸다. checker 가 "괜찮아 보임" 해도 셸 판정을 따른다.
-3. **게이트가 checker 보다 먼저, brake 가 평가보다 먼저.** 컴파일·테스트가 깨지면 checker 를 부르지 않고 즉시 maker 재진입. 매 사이클 시작에 brake(반복·시간) 부터 확인.
+3. **게이트가 checker 보다 먼저, brake 가 평가보다 먼저.** 컴파일·테스트가 깨지면 checker 를 부르지 않고 즉시 maker 를 다시 스핀한다. 매 사이클 시작에 brake(반복·시간) 부터 확인.
 4. **종료는 점수 합산이 아니라 severity 게이트.** `BLOCKER 0 AND CRITICAL 0` 이라야 PASS. 가중 합("총점 높으니 통과") 금지.
 5. **비가역 영역은 사람.** 운영 DB DML/DDL·돈·인가·대량발송·삭제에 닿으면(`AWAIT_USER`) 루프가 멈추고 사람을 부른다. 무인이어도 이 영역은 자동 통과 안 한다.
 
@@ -100,6 +102,16 @@ if ! grep -qxF '.loop/run/' "$PROJECT_ROOT/.gitignore" 2>/dev/null; then
   printf '.loop/run/\n' >> "$PROJECT_ROOT/.gitignore"
 fi
 STATE="$LOOP_DIR/stall.json"; HIST="$LOOP_DIR/history.jsonl"
+# 작업 지시는 파일이어야 한다 — maker 가 서브에이전트라 이 세션의 대화를 물려받지 못한다(입력 1).
+# spec 경로를 사용자가 줬으면 그 값으로 아래 LOOP_DESIGN_REF 를 잡는다. 안 줬으면 비워 둔다.
+LOOP_DESIGN_REF="${LOOP_DESIGN_REF:-}"
+if [ -n "$LOOP_DESIGN_REF" ] && [ ! -f "$LOOP_DESIGN_REF" ]; then
+  echo "loop: 지정한 작업 지시 파일 '$LOOP_DESIGN_REF' 가 없다 — 경로 확인. PASS 로 넘기지 말 것" >&2; exit 3
+fi
+if [ -z "$LOOP_DESIGN_REF" ]; then
+  echo "loop: 작업 지시 파일 없음 — 이 대화의 합의를 $LOOP_DIR/brief.md 로 옮기고 사람 확인을 받은 뒤 계속한다" >&2
+  LOOP_DESIGN_REF="$LOOP_DIR/brief.md"   # 아래 브리프 절차로 채운다. 채우기 전엔 Step 1 로 넘어가지 않는다.
+fi
 # 같은 티켓 재실행이면 직전 상태가 남아 정체 감지를 오염시킨다 — 새 루프면 초기화(게이트 실패 카운터 포함).
 # **재개**(사람 멈춤 AWAIT_USER/STALLED/brake 후 이어가기)는 이 Step 0 자체를 다시 실행하지 않는다 —
 # 아래 초기화와 params.env 재작성이 재개 상태(회차·정체·loop-build 의 phase 오버라이드)를 파괴한다.
@@ -120,6 +132,7 @@ BUDGET_MIN="${BUDGET_MIN:-$(source "$ENG/lib.sh" && loop_param budget_minutes)}"
   printf 'ENG=%q\nLOOP_DIR=%q\nSTATE=%q\nHIST=%q\n' "$ENG" "$LOOP_DIR" "$STATE" "$HIST"
   printf 'LOOP_BASE_BRANCH=%q\nLOOP_BUILD_CMD=%q\nLOOP_TEST_CMD=%q\nLOOP_LINT_CMD=%q\n' "$LOOP_BASE_BRANCH" "$LOOP_BUILD_CMD" "$LOOP_TEST_CMD" "$LOOP_LINT_CMD"
   printf 'LOOP_CONVENTION_DOCS=%q\nLOOP_KNOWLEDGE_LAYER=%q\nLOOP_RUBRIC_LOCAL=%q\n' "$LOOP_CONVENTION_DOCS" "$LOOP_KNOWLEDGE_LAYER" "${LOOP_RUBRIC_LOCAL:-}"
+  printf 'LOOP_DESIGN_REF=%q\n' "$LOOP_DESIGN_REF"   # maker·checker 가 매 사이클 프롬프트로 받는 작업 지시 파일
   printf 'MAX_ITER=%q\nBUDGET_MIN=%q\nABS_CEIL=%q\nTICKET=%q\n' "$MAX_ITER" "$BUDGET_MIN" "$ABS_CEIL" "$TICKET"
 } > "$LOOP_DIR/params.env"
 # 재유도 진입점 — 이후 Step 들은 이 포인터로 LOOP_DIR 를 되찾아 params.env 를 source 한다.
@@ -129,6 +142,16 @@ BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
 printf '%s\n' "$LOOP_DIR" > "$PROJECT_ROOT/.loop/run/.active-$BR"
 echo "loop-run 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') max_iter=$MAX_ITER (디폴트 $DEFAULT_ITER) budget_min=$BUDGET_MIN 천장 $ABS_CEIL"
 ```
+
+### Step 0-1. 작업 지시 파일 확보 (없을 때만)
+
+Step 0 이 `LOOP_DESIGN_REF` 를 `$LOOP_DIR/brief.md` 로 잡았다면 그 파일이 아직 비어 있다. **채우고 사람 확인을 받기 전에 Step 1 로 넘어가지 않는다.**
+
+1. 이 대화에서 합의된 것을 `brief.md` 에 쓴다. 담을 것은 셋이다. **무엇을 만들/고칠지**, **완료 기준**, **건드리지 않을 범위**. 대화 전체를 옮기지 않는다 — maker 가 매 사이클 읽을 파일이라 짧고 확정적이어야 한다.
+2. 그 파일을 사람에게 보여 준다. 경로와 본문을 함께 낸다.
+3. 사람이 확인하면 루프를 시작한다. **작업 지시가 모호하다고 판단되면 루프를 시작하지 않는다** — checker 의 정합 층이 기준을 못 잡아 헛돌고, maker 도 구현 근거가 없다. grill-me 로 완료 기준부터 확정하게 한다.
+
+`brief.md` 는 `$LOOP_DIR` 안이라 Step 5-1 폐기에 함께 사라진다. 남길 값이 있는 지시라면 애초에 grill-me B 흐름의 specs 파일로 있어야 하고, 그때는 그 경로를 `LOOP_DESIGN_REF` 로 주면 브리프를 만들지 않는다.
 
 > Bash 도구 호출은 호출마다 새 셸이라 env 가 안 남는다. 그래서 회차·시작시각뿐 아니라 **brake 값·감지 명령까지 전부 파일로 영속** 한다(`started.epoch`, `history.jsonl` 줄 수, `params.env`). 이후 모든 Step 의 셸 블록은 맨 위의 재유도 프리앰블(브랜치별 포인터 `.loop/run/.active-{브랜치}` → `set -a` 로 `params.env` source)로 시작한다 — 변수 carry-over 를 가정하지 않는다. `set -a` 가 핵심이다: 그냥 source 하면 값만 복원되고 export 속성이 빠져, 채점 자식 프로세스(score/decide/stall)가 `LOOP_RUBRIC_LOCAL` 을 못 읽어 LOCAL rubric 이 조용히 무시된다.
 
@@ -184,7 +207,7 @@ if [ "$GATE_FAILED" -eq 1 ]; then
 fi
 ```
 
-- 컴파일·테스트 **실패** = 게이트 층 RETRY. 먼저 아래 자기완결 증가를 실행해 실패 횟수를 영속한다(위 brake 가 회차와 합산해 세는 값 — 게이트만 계속 깨져도 시간 상한까지 공회전하지 않게). 별도 Bash 호출에서 실행되므로 `$GFAIL` 셸 변수에 기대면 안 된다 — 미정의 변수는 산술에서 0 이라 카운터가 항상 1 로 리셋된다. 그 뒤 checker 를 부르지 않고 **Step 6(maker 재진입)** 으로 가서 고친 뒤 이 사이클을 다시 연다. 단, 깨진 게 maker 가 못 고치는 운영 비가역(예: 마이그레이션 충돌)이면 사람 대기.
+- 컴파일·테스트 **실패** = 게이트 층 RETRY. 먼저 아래 자기완결 증가를 실행해 실패 횟수를 영속한다(위 brake 가 회차와 합산해 세는 값 — 게이트만 계속 깨져도 시간 상한까지 공회전하지 않게). 별도 Bash 호출에서 실행되므로 `$GFAIL` 셸 변수에 기대면 안 된다 — 미정의 변수는 산술에서 0 이라 카운터가 항상 1 로 리셋된다. 그 뒤 checker 를 부르지 않고 **Step 6(maker 스핀)** 으로 가서 고친 뒤 이 사이클을 다시 연다. 단, 깨진 게 maker 가 못 고치는 운영 비가역(예: 마이그레이션 충돌)이면 사람 대기.
 
   ```bash
   # 자기완결 증가 — 파일에서 읽어 +1 해 파일로. 셸 변수 carry-over 불필요.
@@ -206,14 +229,13 @@ fi
 
 > 모델: checker 는 frontmatter 에 모델을 고정하지 않는다(v0.8.4) — 기본은 호출한 세션의 모델을 상속한다. 특정 모델로 돌리고 싶으면 이 `Agent` 호출에 `model` 파라미터를 지정한다(세션마다 maker 와 같은 모델로 점검하는 것이 기본 의도).
 
-- 원래 작업 정의(입력 1 요약, 1~3문장).
-- 작업 정의 문서 경로(있으면, 없으면 "missing").
+- **작업 정의 파일 경로**: `$LOOP_DESIGN_REF` 값. maker 에게 준 것과 **같은 파일**이라 둘의 기준이 갈리지 않는다. 이 경로가 checker 의 정합 층 기준이다. 종전처럼 이 세션이 1~3문장으로 요약해 넘기지 않는다 — 요약은 손실이고 maker 와 checker 가 서로 다른 요약을 받으면 정합 판정 자체가 어긋난다.
 - 비교 베이스: `$LOOP_BASE_BRANCH`(기본 `origin/main`).
 - 점검 기준 문서: `$LOOP_CONVENTION_DOCS` 값(공백 구분 경로 목록)과 지식층 `$LOOP_KNOWLEDGE_LAYER` 값. 비었으면 "없음"이라고 명시해 넘긴다 — checker 가 "컨벤션 문서 없음, 신뢰도 제한" 경로를 정직하게 타게 한다.
 - 종류 어휘 rubric 경로 둘 다: BASE(`$ENG/rubric.base.md` 값)와 LOCAL(`$LOOP_RUBRIC_LOCAL`, 있으면) — checker 는 환경변수도 `$CLAUDE_PLUGIN_ROOT` 도 전달받지 못하므로 두 경로 모두 프롬프트 텍스트로 준다.
 - findings 출력 경로(아래 `$F` 절대경로).
 
-**maker(이 세션)의 합리화·구현 변명을 checker 프롬프트에 절대 넣지 마라**(핵심 불변 1). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff·컨벤션 문서·ANTIPATTERNS 를 직접 읽어 독립 판단한다.
+**maker 가 보고한 것을 checker 프롬프트에 절대 넣지 마라**(핵심 불변 1). maker 가 서브에이전트라 그 산문이 오케스트레이터를 거쳐야만 checker 에 닿을 수 있는데, 그 경유가 곧 이 금지의 대상이다. 한 줄짜리 `ok` 도 옮기지 않는다. checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff·컨벤션 문서·ANTIPATTERNS 를 직접 읽어 독립 판단한다.
 
 **checker 결과는 파일로 회수한다.** checker 를 스핀하기 **전에** findings 출력 경로를 결정적 위치로 잡고 **비운 뒤**, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 명시한다. checker 는 `{base, findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 대화형 가독성용 사본 — 백그라운드 세션에선 서브에이전트 최종 메시지가 오케스트레이터에 인라인으로 전달되지 않아, 파일이 정본 회수 경로다).
 
@@ -277,17 +299,17 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 2. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `ITER + GFAIL >= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN` — Step 1 과 동일하게 게이트 실패 합산) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다.
 3. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시.
 4. `V == PASS` → **종료(수렴).** Step 5 로.
-5. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall 미도달) → **Step 6(maker 재진입)** 로 가서 finding 을 고치고 Step 1 로 루프.
+5. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall 미도달) → **Step 6(maker 스핀)** 로 가서 finding 을 고치고 Step 1 로 루프.
 
 ### Step 5. 종료 처리
 
-- **PASS(수렴)**: 사람에게 결과 보고 — 통과 verdict, 사이클 수, 남은 MINOR(기록만), 변경 요약. PR 인계는 **보류 합의 사항**이라 자동으로 올리지 않는다(spec). 프로젝트의 마감 스킬(예: c8c-api `/finalize`) 또는 `/pr` 로 사람이 마감하도록 제안하고, 원하면 그때 진행.
+- **PASS(수렴)**: 사람에게 결과 보고 — 통과 verdict, 사이클 수, 남은 MINOR(기록만), 변경 요약. **변경 요약은 maker 보고를 모아 쓰지 않고 `git diff "$LOOP_BASE_BRANCH"...HEAD --stat` 과 `git status --short` 에서 뽑는다** — maker 는 회차마다 새로 띄워져 전체를 아는 주체가 없고, 트리가 유일한 정본이다. PR 인계는 **보류 합의 사항**이라 자동으로 올리지 않는다(spec). 프로젝트의 마감 스킬(예: c8c-api `/finalize`) 또는 `/pr` 로 사람이 마감하도록 제안하고, 원하면 그때 진행.
 - **AWAIT_USER / STALLED / REGRESS / brake**: 멈춘 이유 + 현재 남은 finding(등급 내림차순) + 다음 행동 후보(고쳐서 재개 / 이 등급 안고 통과 승인 / 작업 정의 재정렬)를 사람에게 핑. 이 경우 코드는 마지막 maker 시도 상태로 워크트리에 남는다.
 - 종료 후(특히 PASS·사람 멈춤 모두) `/loop-lessons` 로 이 루프의 `history.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 사람에게 제안한다(선순환 닫기). 강제 아님.
 
 ### Step 5-1. 종료 정리 (런타임 상태 폐기)
 
-`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문 `gate-*.out`)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
+`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문 `gate-*.out`·트리 스냅숏 `tree.snapshot`·오케스트레이터가 쓴 `brief.md`)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
 
 ```bash
 rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
@@ -299,32 +321,68 @@ rm -f "$PROJECT_ROOT/.loop/run/.active-$BR"   # 이 브랜치의 재유도 포�
 - **사람 멈춤(AWAIT_USER/STALLED/brake)으로 재개 여지가 있으면 바로 폐기하지 않는다.** `stall.json`·`started.epoch`·`params.env` 가 남아 있어야 이어서 돌릴 수 있다(없으면 다음 시작이 INIT 로 리셋돼 정체 감지가 무력화). 재개할 때는 Step 0 의 초기화 줄(`: > "$HIST"; rm -f "$STATE"`·epoch 갱신)을 다시 타지 않는다. 사람이 그 작업을 닫기로 하면(고침 완료 또는 포기) 그때 lesson 종합 후 폐기.
 - 워크트리째 버리는 경우엔 `.loop/run/` 도 같이 사라지니 별도 폐기가 불필요하지만, **메인 체크아웃이나 워크트리를 남겨 둔 경우엔 이 단계가 정리를 보장**한다. 워크트리 수명에 기대지 않는다.
 
-### Step 6. maker 재진입 (고침)
+### Step 6. maker 스핀 (고침)
 
-이 세션이 maker 다. 고치고 나면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시). 매 회차 코드가 바뀌어야 루프가 의미 있다 — 같은 결과를 N번 내지 않는다.
+`Agent` 툴로 `loop-maker` 를 **회차마다 새로 한 번** 띄운다. **이 세션은 코드를 쓰지 않는다**(핵심 불변 1). 같은 maker 를 `SendMessage` 로 이어가지 않는다 — 회차마다 새로 띄우는 이유는 한 maker 가 열 회차를 살면 회차마다 읽은 파일·편집·빌드 출력을 전부 지고 가기 때문이다. **회차 간에 필요한 것은 대화가 아니라 워킹 트리와 반복 표시로 전달된다.**
 
-**입력이 두 갈래다. 게이트 큐가 먼저다.**
+행동 규칙(배정 범위만·테스트 동반·컴파일 자기 검증·설계 결함 시 보고·`ok`/`blocked` 종료·커밋 금지)은 `loop-maker` 정의가 담당하므로 프롬프트에 반복하지 않는다. **환경변수는 서브에이전트에 전달되지 않으니 아래 값 전부를 프롬프트 텍스트로 넘긴다.**
+
+프롬프트에 담는 것은 이것만이다.
+
+1. **작업 지시 파일 경로**: `$LOOP_DESIGN_REF` 값. 루프 전체에 안 바뀐다.
+2. **이번 회차 입력 파일 경로 하나**: 아래가 고르는 것. **둘 다 주지 않는다.**
+3. **반복 표시**: 아래 명령이 내는 목록. finding 마다 몇 회차째인지.
+4. **직전 회차 maker 의 한 줄**: 있으면. 없으면 생략.
+5. **컨벤션 문서 경로**: `$LOOP_CONVENTION_DOCS` 값. 비었으면 "없음".
+6. **빌드 명령**: `$LOOP_BUILD_CMD` 값. 규칙 4의 자기 검증에 쓴다. 비었으면 "없음".
+
+**입력은 두 갈래이고 게이트 큐가 먼저다.**
 
 ```bash
 # 재유도 프리앰블(Step 1 과 동일) 뒤에:
 GQ="$LOOP_DIR/gate-queue.jsonl"
-if [ -s "$GQ" ]; then echo "입력: 게이트 큐 $(wc -l < "$GQ" | tr -d ' ')건"
-else echo "입력: 채점 큐 scored.json"; fi
+if [ -s "$GQ" ]; then MAKER_INPUT="$GQ"; echo "maker 입력: 게이트 큐 $(wc -l < "$GQ" | tr -d ' ')건"
+else MAKER_INPUT="$LOOP_DIR/scored.json"; echo "maker 입력: 채점 큐 $MAKER_INPUT"; fi
+# 반복 표시 — finding 마다 몇 회차째 같은 kind@location 인가. 프롬프트에 이 출력을 그대로 넣는다.
+# stall.sh 는 루프 전체의 no_progress 만 내고 finding 단위 반복은 안 낸다. history 에서 뽑는다.
+[ -s "$HIST" ] && jq -rs '
+  [ .[] | .iteration as $it | (.findings // [])[] | {k: "\(.kind)@\(.location)", it: $it} ]
+  | group_by(.k) | map({key: .[0].k, cycles: (map(.it) | unique)})
+  | map(select(.cycles | length > 1)) | sort_by(-(.cycles | length))
+  | .[] | "\(.cycles | length)회차째  회차=\(.cycles | join(","))  \(.key)"
+' "$HIST" || echo "(반복 없음 — 첫 회차이거나 매번 새 finding)"
+echo "작업 지시: $LOOP_DESIGN_REF / 빌드: ${LOOP_BUILD_CMD:-없음} / 컨벤션: ${LOOP_CONVENTION_DOCS:-없음}"
 ```
 
-1. **`gate-queue.jsonl` 이 비어 있지 않으면 그것부터.** 게이트가 깨진 사이클이라는 뜻이고, 이때 `scored.json` 은 **이번 사이클 것이 아니다** — 게이트가 깨지면 checker 를 부르지 않아 Step 3 이 돌지 않았고, 그 파일은 앞 사이클에서 남은 값이다. 그걸 먼저 고치면 없는 문제를 쫓는다. 컴파일이 깨진 상태의 판정은 신뢰할 수 없다는 핵심 불변 3(게이트가 checker 보다 먼저)의 연장이다.
-   - 항목 순서는 `compile-error` → `test-failure` → `lint-violation` 이다. 컴파일이 안 되면 테스트 실패는 정보가 없고, 린트는 동작에 영향이 없다.
-   - 항목의 `file`·`line_number` 로 그 자리만 연다. `raw` 는 파서가 잘못 쪼갰을 때 돌아갈 원문이고, 더 필요하면 `$LOOP_DIR/gate-<단계>.out` 을 **그 항목 주변만** 본다. 전문을 창에 끌어오지 않는다. 항목이 수천 개가 될 수 있어 채점 큐보다 이 규율이 더 중요하다.
-   - `gate-output-unparsed` 항목이면 파서가 형식을 모른 것이다. 그 꼬리를 읽고 고치되, 같은 형식이 반복되면 `_loop-engine/gate_parse.py` 에 패턴을 더할 후보로 사람에게 보고한다.
-2. **비어 있으면 `scored.json`.** Step 3 이 남긴 것을 finding 단위로 열어(등급·종류·위치 목록은 Step 3 출력에 이미 있다 — 전문을 통째로 cat 하지 말 것) **CRITICAL → MAJOR 순으로 실제 코드를 고친다**.
-
-- **코드를 작성·수정하면 그 변경분에 대응하는 테스트도 함께 작성한다.** 이 강제는 rubric 의 KINDS 표에 `test-missing`(convention, CRITICAL) 이 있어야 작동하는데, **현재 BASE rubric 에 등록돼 있어 LOCAL rubric 없이도 프로젝트 무관하게 작동한다**(checker 가 변경분에 대응 테스트 누락을 잡으면 셸이 CRITICAL→RETRY). 테스트 규약·도구가 다른 프로젝트는 LOCAL rubric 의 같은 kind 로 override 하거나 끈다 — 스킬 본문이 아니라 rubric 이 결정한다. 작성 직전에 Step 0 감지가 준 `$LOOP_CONVENTION_DOCS`(공백 구분 경로 목록 — 테스트 규약·네이밍·에러 처리 등 ai-ready 가 만든 문서) 중 변경 표면에 닿는 문서를 **그 시점에 lazy 하게 Read** 해 컨벤션을 따른다. 목록이 비었거나 파일이 없으면 그 단계를 건너뛴다. 작성한 테스트는 Step 1 의 테스트 게이트(`$LOOP_TEST_CMD`)에 포함돼 실제로 실행·검증된다.
+- **`gate-queue.jsonl` 이 비어 있지 않으면 그것.** 게이트가 깨진 사이클이라는 뜻이고, 이때 `scored.json` 은 **이번 사이클 것이 아니다** — 게이트가 깨지면 checker 를 부르지 않아 Step 3 이 돌지 않았고, 그 파일은 앞 사이클에서 남은 값이다. 그걸 주면 maker 가 없는 문제를 쫓는다. 핵심 불변 3(게이트가 checker 보다 먼저)의 연장이다.
+- **`gate-output-unparsed` 항목이 섞여 있으면** 파서가 그 도구의 형식을 모른 것이다. maker 가 꼬리를 읽고 고치되, 같은 형식이 반복되면 `_loop-engine/gate_parse.py` 에 패턴을 더할 후보로 사람에게 보고하라고 프롬프트에 한 줄 덧붙인다.
+- **오케스트레이터는 이 파일들의 전문을 창에 끌어오지 않는다.** 경로만 넘기고 maker 가 읽는다. 린트 게이트는 항목이 수천 개가 될 수 있다.
+- **테스트 동반 강제는 rubric 이 지탱한다.** KINDS 표의 `test-missing`(convention, CRITICAL)이 BASE 에 등록돼 있어 LOCAL rubric 없이도 작동한다. checker 가 변경분에 대응 테스트 누락을 잡으면 셸이 CRITICAL → RETRY 를 낸다. 테스트 규약이 다른 프로젝트는 LOCAL rubric 의 같은 kind 로 override 하거나 끈다 — 스킬 본문이 아니라 rubric 이 결정한다.
+- **`blocked` 로 끝났으면 다음 maker 를 띄우지 않는다.** 사유를 사람에게 넘긴다(`AWAIT_USER`). 고칠 수 없거나 고치면 안 되는 항목을 maker 사이로 돌려보내면 회차만 탄다.
 - MINOR 만 남았으면 보통 PASS 라 여기 오지 않는다. RETRY_SOFT(MAJOR)는 고치되, 정체로 멈추면 사람 승인으로 통과 가능.
-- 고칠 수 없거나 고치면 안 되는 finding(force_await·비가역)은 maker 가 만지지 말고 AWAIT_USER 로 사람에게.
+
+### Step 6-1. 트리가 실제로 바뀠는지 확인 (게이트 전)
+
+maker 가 `ok` 로 끝냈다고 코드가 바뀐 것은 아니다. **보고는 거짓일 수 있고 트리는 아니다.** 안 바뀐 상태로 Step 1 로 가면 게이트가 같은 결과를, checker 가 같은 finding 을 내고 회차만 탄다.
+
+```bash
+# 재유도 프리앰블 뒤에. maker 스핀 직전 스냅숏과 비교한다.
+NOW="$(git rev-parse HEAD):$(git status --porcelain | shasum | cut -d' ' -f1)"
+PREV="$(cat "$LOOP_DIR/tree.snapshot" 2>/dev/null || echo none)"
+printf '%s\n' "$NOW" > "$LOOP_DIR/tree.snapshot"
+if [ "$NOW" = "$PREV" ]; then
+  echo "loop: maker 스핀 후 워킹 트리가 그대로다 — 회차가 아니라 정체 신호. 게이트를 돌리지 말고 사람 호출" >&2
+  # Step 4 분기 3(정체)과 같이 처리한다. 같은 결과를 N번 내지 않는 것이 이 루프의 전제다.
+fi
+```
+
+**Step 6 진입 직전에도 같은 명령으로 스냅숏을 갱신한다.** 그러면 비교 대상이 "이번 maker 가 손대기 전" 이 된다. 이 확인이 스킬이 원래 요구했던 "매 회차 코드가 바뀌어야 루프가 의미 있다" 에 처음으로 집행을 붙인다.
+
+통과하면 **Step 1** 로 돌아가 다음 사이클을 연다(게이트부터 다시).
 
 ## 백그라운드 세션 실행
 
-사람이 빠져도 루프가 계속 돌게 하려면 이 세션을 **백그라운드 잡**으로 띄운다. grill-me 로 spec 을 확정한 *그 세션에서* `/loop-run` 을 걸고 사용자는 자리를 비운다. 루프가 PASS·brake·AWAIT_USER 에 닿으면 결과/호출을 남긴다. 케이스3 의 매력은 "이미 Claude 와 대화 중이니 그대로 맡긴다" 는 매끄러움이다 — grill-me → loop-run 이 한 세션에서 이어진다.
+사람이 빠져도 루프가 계속 돌게 하려면 이 세션을 **백그라운드 잡**으로 띄운다. grill-me 로 spec 을 확정한 *그 세션에서* `/loop-run` 을 걸고, **Step 0-1 의 작업 지시 파일을 한 번 확인한 뒤** 사용자는 자리를 비운다. 그 한 박자가 이 흐름의 유일한 사람 게이트다. 루프가 PASS·brake·AWAIT_USER 에 닿으면 결과/호출을 남긴다. 케이스3 의 매력은 "이미 Claude 와 대화 중이니 그대로 맡긴다" 는 매끄러움이다 — grill-me → loop-run 이 한 세션에서 이어진다.
 
 ## 트러블슈팅
 
@@ -336,7 +394,12 @@ else echo "입력: 채점 큐 scored.json"; fi
 | `score.sh: 입력 형식 오류 — exit 65` | checker 가 findings 파일(`$LOOP_DIR/checker-findings.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | 정체 감지가 매번 INIT | 사이클 간 `stall.json` 이 사라짐(셸 종료마다 리셋한 경우) | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history.jsonl` append 누락 | Step 3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
-| 무한 같은 finding | maker 가 안 고치고 재진입 | Step 6 에서 실제 코드를 바꿨는지 확인. 못 고치는 finding 은 AWAIT_USER |
+| 무한 같은 finding | maker 가 안 고치고 재진입 | Step 6-1 트리 확인이 잡는다. 그게 정체로 뜨면 못 고치는 finding 이므로 AWAIT_USER |
+| `loop: 작업 지시 파일 없음` | 입력 1을 파일로 안 줬다 | Step 0-1 로 `brief.md` 를 쓰고 사람 확인. 정상 경로다. 사람 확인 없이 Step 1 로 넘어가지 말 것 |
+| `loop: 지정한 작업 지시 파일 ... 가 없다` | 경로 오타 또는 워크트리 상대경로 | 절대경로로 다시 준다. `exit 3` 이라 루프가 시작되지 않았다 |
+| maker 가 매 회차 같은 접근을 반복 | 반복 표시를 프롬프트에 안 넣었다 | Step 6 의 `jq` 출력을 프롬프트에 그대로 넣는다. 이게 회차 간 유일한 기억이다 |
+| maker 스핀 후 트리 그대로 | 규칙 4의 자기 검증에서 컴파일이 깨져 아무것도 못 고쳤거나, `blocked` 인데 스핀을 계속함 | Step 6-1 이 잡는다. maker 의 종료 문자열이 `blocked` 였는지 확인 |
+| maker 보고가 길다 | 오케스트레이터가 요약을 요구했다 | `loop-run` 은 `ok`/`blocked` 만 받는다. 요약 요구는 `loop-build` 의 phase 흐름 몫 |
 | 게이트 큐가 `gate-output-unparsed` 한 건뿐 | `gate_parse.py` 가 그 도구의 오류 형식을 모름 | 그 항목의 꼬리로 고치되, 같은 형식이 반복되면 파서에 패턴 추가 후보로 보고. **큐가 비는 것보다 이게 낫다** — 빈 큐는 통과로 오독된다 |
 | 게이트 큐에 이미 고친 오류가 남음 | Step 1 의 `: > "$GQ"` 초기화를 건너뜀 | 게이트 블록을 통째로 실행한다. 큐는 사이클마다 새로 채우는 것이 정본 |
 | 게이트 실패인데 창에 원문이 안 보임 | 설계다 — 출력은 `$LOOP_DIR/gate-<단계>.out` 으로 간다 | 창의 한 줄 목록으로 판단하고, 필요한 항목 주변만 그 파일에서 읽는다 |

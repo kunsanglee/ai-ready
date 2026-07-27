@@ -7,7 +7,11 @@ description: "Build out a settled design across multiple phases with an unattend
 
 Build a settled design out across several phases without a human in the loop per step. The Codex session is the **orchestrator**: it decomposes the design into phases, drives each phase to PASS with the same maker/checker cycle as `loop-run`, and advances. It writes no code itself and makes no verdict itself — the deterministic engine does.
 
-This is the multi-phase wrapper around the `loop-run` cycle. Read `loop-run`'s SKILL first: its invariants, setup, cycle, model note, and boundaries all apply here unchanged. This skill adds phase decomposition and a phase loop around that cycle.
+This is the multi-phase wrapper around the `loop-run` cycle. Read `loop-run`'s SKILL first: its invariants, setup, cycle, model note, and boundaries apply here, with the two exceptions below. This skill adds phase decomposition and a phase loop around that cycle.
+
+**Exception 1 — the maker's lifetime is the phase, not the cycle.** `loop-run` invariant 1 spawns a fresh maker every cycle. Here the unit is the phase: one maker implements a phase's steps and stays for that phase's retry cycles, because a phase is a multi-step build where why a file was edited a certain way spans cycles. A new phase always gets a new maker, so nothing accumulates past a phase boundary. If the host cannot resume a delegated subagent, spawn a fresh maker per cycle instead and give it the phase's `design_ref` plus this cycle's one input file — the design reference and the working tree hold what a resumed maker would have remembered.
+
+**Exception 2 — the task definition file is the design doc plus the decomposition.** `loop-run` setup step 5 requires a task definition file and writes a brief when only chat has one. Here that requirement is already met by the design or spec being decomposed plus `phases.json`, so no brief is written, and the one human gate is the decomposition approval below rather than a brief confirmation.
 
 ## Start gate (the one human approval)
 
@@ -23,6 +27,7 @@ Resolve the engine path once as in `loop-run` setup. Then for each phase in orde
 
 1. **Isolate phase state.** Give each phase its own history, stall, and findings files in loop scratch (for example suffixed by phase name), so a prior phase's cycle counts and clean-pass residue do not leak into the next phase's verdict.
 2. **Run the inner cycle.** Drive this phase through `loop-run`'s cycle: delegate the maker (this phase's steps plus its design reference and a one to two line summary of what prior `done` phases built), gate, delegate the checker (pointed at this phase's findings path, told to check the phase against its design reference), score with `bash "$ENGINE/score.sh" <phase findings> | bash "$ENGINE/decide.sh"`, and obey the verdict.
+   - The maker contract ends at `ok` or `blocked: <one line>` by default. When a phase passes, ask that maker explicitly for the one to two line summary the next phase's maker needs — this is the one place a loop-build orchestrator wants more than a signal, and the contract allows up to 5 lines when asked.
 3. **On PASS**, mark the phase `done` in the decomposition file and move to the next phase. **On AWAIT_USER, brake, or stall**, stop and hand to a human — the decomposition file records which phases are `done` so the run can resume later from the first phase that is not `done`.
 
 ## Design drift is a human gate
