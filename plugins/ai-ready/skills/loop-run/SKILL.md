@@ -312,9 +312,17 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(history·stall·started.epoch·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문 `gate-*.out`·트리 스냅숏 `tree.snapshot`·오케스트레이터가 쓴 `brief.md`)는 루프 한정 휘발성이다. **마무리하면 남기지 않는다.** 단 lesson 흐름이 `history.jsonl` 을 입력으로 쓰므로 **폐기는 반드시 lesson 종합 다음**이다 — 종합 전에 지우면 선순환 입력이 사라진다.
 
 ```bash
-rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}. lesson 종합(또는 사람이 생략 결정) 후에만.
+# 이 블록도 별도 Bash 호출이라 LOOP_DIR 를 포인터에서 재유도한다. 재유도 없이 돌면 빈 LOOP_DIR 로
+# rm 이 아무것도 못 지우면서 종료코드 0 을 내, 상태가 그대로 남은 채 "정리했다" 로 읽힌다(실측 확인).
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
-rm -f "$PROJECT_ROOT/.loop/run/.active-$BR"   # 이 브랜치의 재유도 포인터도 함께 — 남으면 다음 루프의 프리앰블이 죽은 경로를 가리킨다.
+PTR="$PROJECT_ROOT/.loop/run/.active-$BR"
+LOOP_DIR="$(cat "$PTR" 2>/dev/null)"
+# 폐기는 lesson 종합(또는 사람이 생략 결정) 후에만. 지울 것이 없으면 그렇다고 말하고 끝낸다(재실행 안전).
+[ -n "$LOOP_DIR" ] || { echo "loop: 포인터 없음 — 지울 상태가 없다(이미 폐기됐거나 Step 0 미실행)" >&2; exit 0; }
+rm -rf "$LOOP_DIR"   # = $CLAUDE_PROJECT_DIR/.loop/run/{ticket}
+rm -f "$PTR"         # 이 브랜치의 재유도 포인터도 함께 — 남으면 다음 루프의 프리앰블이 죽은 경로를 가리킨다.
+echo "loop: 런타임 상태 폐기 — $LOOP_DIR"
 ```
 
 - **PASS(수렴)**: 결과 보고 → (선택) `/loop-lessons` → 그 다음 폐기. 깨끗이 비운다.
@@ -367,7 +375,11 @@ maker 가 `ok` 로 끝냈다고 코드가 바뀐 것은 아니다. **보고는 �
 
 ```bash
 # 재유도 프리앰블 뒤에. maker 스핀 직전 스냅숏과 비교한다.
-NOW="$(git rev-parse HEAD):$(git status --porcelain | shasum | cut -d' ' -f1)"
+# 상태가 아니라 **내용**을 해싱한다. `git status --porcelain` 만 쓰면 이미 수정된 파일을 또 고쳤을 때
+# 출력이 ' M src/Main.kt' 로 동일해 거짓 정체가 뜬다 — 2회차 maker 가 1회차와 같은 파일을 고치는 것이
+# 루프의 정상 상황이라 그 오탐이 상시가 된다. 미추적 파일 재수정도 같은 이유로 놓친다. 반대로 내용
+# 변화 없는 `git add` 는 porcelain 만 보면 '바뀠다' 가 된다. 여섯 사례 실측으로 확인한 형태다.
+NOW="$(git rev-parse HEAD):$( { git diff HEAD; git ls-files --others --exclude-standard -z | xargs -0 shasum 2>/dev/null; } | shasum | cut -d' ' -f1)"
 PREV="$(cat "$LOOP_DIR/tree.snapshot" 2>/dev/null || echo none)"
 printf '%s\n' "$NOW" > "$LOOP_DIR/tree.snapshot"
 if [ "$NOW" = "$PREV" ]; then

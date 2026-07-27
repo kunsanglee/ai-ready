@@ -64,6 +64,12 @@ loop-run SKILL.md 의 **Step 0 셋업 블록을 그대로 실행** 한다(`PROJE
 ```bash
 # 호출 인자 중 정수가 있으면 loop-run Step 0 실행 전에 MAX_ITER=<정수> 로 잡아 phase 당 회차로 넘긴다.
 # (loop-run Step 0 을 먼저 실행: PROJECT_ROOT/ENG/LOOP_DIR/LOOP_BASE_BRANCH/MAX_ITER/BUDGET_MIN 확보 + params.env 영속)
+# 이 블록이 Step 0 과 같은 Bash 호출이 아닐 수 있어 LOOP_DIR 를 포인터에서 재유도한다 — 빈 LOOP_DIR 면
+# PHASES 가 '/phases.json' 이 되고 append 가 파일시스템 루트를 향한다(실측: 그 경로는 쓰기 실패).
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LOOP_DIR/params.env" ] \
+  || { echo "loop-build: params.env 없음 — loop-run Step 0 을 먼저 실행" >&2; exit 65; }
 PHASES="$LOOP_DIR/phases.json"   # 분해 결과 + phase 별 status 를 여기 영속(휘발성)
 printf 'PHASES=%q\n' "$PHASES" >> "$LOOP_DIR/params.env"   # 재유도용 — 이후 Step 은 프리앰블이 params.env 로 복원
 ```
@@ -219,9 +225,18 @@ jq -e --arg p "$PHASE" '[.phases[] | select(.name==$p) | .status] == ["done"]' "
 `$LOOP_DIR`(phases.json·history-*.jsonl·stall)은 루프 한정 휘발성이다. **lesson 종합 다음에만** 폐기한다(종합 전 삭제 시 선순환 입력 소멸). 사람 멈춤(AWAIT_USER/STALLED/brake)으로 재개 여지가 있으면 바로 폐기하지 않는다 — `phases.json`(done/pending)·stall 이 남아야 이어서 돌릴 수 있다.
 
 ```bash
-rm -rf "$LOOP_DIR"   # PASS(전 phase done) + lesson 종합(또는 생략 결정) 후에만.
+# loop-run Step 5-1 과 동일하게 LOOP_DIR 를 포인터에서 재유도한다 — 별도 Bash 호출이라 재유도 없이
+# 돌면 빈 LOOP_DIR 로 rm 이 아무것도 못 지우면서 종료코드 0 을 낸다. 그러면 phases.json 이 전 phase
+# done 인 채로 남아, 같은 티켓의 다음 loop-build 가 "미완 phase 없음" 으로 읽고 아무것도 안 한다.
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
-rm -f "$PROJECT_ROOT/.loop/run/.active-$BR"   # 이 브랜치의 재유도 포인터도 함께(loop-run Step 5-1 과 동일).
+PTR="$PROJECT_ROOT/.loop/run/.active-$BR"
+LOOP_DIR="$(cat "$PTR" 2>/dev/null)"
+# PASS(전 phase done) + lesson 종합(또는 생략 결정) 후에만. 지울 것이 없으면 그렇다고 말하고 끝낸다.
+[ -n "$LOOP_DIR" ] || { echo "loop-build: 포인터 없음 — 지울 상태가 없다(이미 폐기됐거나 Step 0 미실행)" >&2; exit 0; }
+rm -rf "$LOOP_DIR"
+rm -f "$PTR"         # 이 브랜치의 재유도 포인터도 함께(loop-run Step 5-1 과 동일).
+echo "loop-build: 런타임 상태 폐기 — $LOOP_DIR"
 ```
 
 ## 재개 (중단된 롱런 이어가기)
