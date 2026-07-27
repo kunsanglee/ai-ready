@@ -14,13 +14,13 @@ description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/ste
 | | loop-run | loop-build (이 스킬) |
 |---|---|---|
 | 목적 | 하나의 변경을 PASS 까지 수렴 | 설계를 여러 phase 로 나눠 무인 빌드아웃 |
-| 오케스트레이터 | 메인 세션(= maker 겸임) | 메인 세션(= 순수 오케스트레이터, 코딩 안 함) |
-| maker | 메인 세션 자신 | **phase 마다 새 `loop-maker` 서브에이전트**(SendMessage 로 사이클 이어감) |
+| 오케스트레이터 | 메인 세션(= 순수 오케스트레이터, 코딩 안 함) | **동일** |
+| maker | **매 회차 새 `loop-maker` 서브에이전트** | **phase 마다 새 `loop-maker` 서브에이전트**(그 phase 안의 RETRY 는 SendMessage 로 이어감) |
 | checker | 매 사이클 새 `loop-checker` 서브에이전트 | **동일** (재사용) |
 | 채점 | `_loop-engine` 셸(score/decide/stall) + BASE/LOCAL rubric | **동일** (재사용) |
 | 범위 | `origin/main...HEAD + uncommitted` | phase 별 diff, 누적은 워크트리 |
 
-즉 **각 phase 의 안쪽 루프는 loop-run 의 Step 1~6 과 같다**. 다른 건 두 가지뿐이다: (1) maker 가 메인 세션이 아니라 서브에이전트, (2) 바깥에 phase 순회가 감싼다.
+즉 **각 phase 의 안쪽 루프는 loop-run 의 Step 1~6 과 같다**. 다른 건 두 가지뿐이다: (1) maker 의 수명이 회차가 아니라 phase 다, (2) 바깥에 phase 순회가 감싼다. 0.9.5 이전에는 (1)이 "maker 가 메인 세션이 아니라 서브에이전트" 였다. loop-run 이 maker 를 세션에서 떼면서 그 차이가 사라지고 수명 하나만 남았다.
 
 ## 🔌 plugin 구조 (loop-run 과 공유)
 
@@ -31,11 +31,13 @@ description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/ste
 
 ## 핵심 불변 (loop-run 5개 상속 + 2개 추가)
 
-loop-run 의 핵심 불변 5개를 **그대로 상속** 한다: (1) maker/checker 분리, (2) severity 는 셸이 매김, (3) 게이트가 checker 보다·brake 가 평가보다 먼저, (4) 종료는 점수 합산이 아니라 `BLOCKER 0 AND CRITICAL 0` severity 게이트, (5) 비가역 영역(운영 DB DML/DDL·돈·인가·대량발송·삭제)은 `AWAIT_USER`. 상세는 loop-run SKILL.md 의 "핵심 불변" 절.
+loop-run 의 핵심 불변 5개를 상속한다: (1) maker/checker 분리 + 둘 다 오케스트레이터가 아님, (2) severity 는 셸이 매김, (3) 게이트가 checker 보다·brake 가 평가보다 먼저, (4) 종료는 점수 합산이 아니라 `BLOCKER 0 AND CRITICAL 0` severity 게이트, (5) 비가역 영역(운영 DB DML/DDL·돈·인가·대량발송·삭제)은 `AWAIT_USER`. 상세는 loop-run SKILL.md 의 "핵심 불변" 절.
+
+**예외 하나.** loop-run 불변 1은 maker 도 checker 도 **매 회차** 새로 띄운다고 못박는데, maker 에 한해 아래 불변 6이 그것을 대체한다. 여기서 수명 단위는 회차가 아니라 phase 다. checker 는 예외 없이 매 사이클 새로 띄운다.
 
 멀티-phase 라서 두 개를 **추가** 한다:
 
-6. **phase 격리 + phase 내 연속성.** maker 는 phase 마다 **새 서브에이전트** 로 띄운다 — 이전 phase 의 편집 노이즈가 오케스트레이터에도 다음 maker 에도 안 쌓인다(롱런 컨텍스트 보존). 단 **한 phase 안의 RETRY 사이클은 `SendMessage` 로 같은 maker 를 이어간다** — 매 사이클 새 Task 를 띄우면 그 phase 의 수정 맥락("이 파일을 왜 이렇게 고쳤는지")을 잃어 같은 파일 반복 수정에서 역행한다. phase = maker 1명, 사이클 = 그 maker 에게 finding 을 이어 보냄.
+6. **phase 격리 + phase 내 연속성(loop-run 불변 1의 "매 회차" 를 maker 에 한해 대체).** maker 는 phase 마다 **새 서브에이전트** 로 띄운다 — 이전 phase 의 편집 노이즈가 오케스트레이터에도 다음 maker 에도 안 쌓인다(롱런 컨텍스트 보존). 단 **한 phase 안의 RETRY 사이클은 `SendMessage` 로 같은 maker 를 이어간다** — 매 사이클 새 Task 를 띄우면 그 phase 의 수정 맥락("이 파일을 왜 이렇게 고쳤는지")을 잃어 같은 파일 반복 수정에서 역행한다. phase = maker 1명, 사이클 = 그 maker 에게 finding 을 이어 보냄.
 7. **분해는 시작 전 사람 승인 1회.** 무인 실행은 phase/step 분해가 확정된 뒤에만 시작한다. 설계가 모호해 자기완결 step 으로 못 쪼개지면 **시작하지 않는다**(loop-run 의 "작업 지시 모호하면 시작 안 함"의 phase 판). 승인 후에는 사람이 빠지고, 오케스트레이터가 PASS·brake·AWAIT_USER 까지 자율 진행한다.
 
 ## 좋은 step 의 원칙 (분해 기준)
@@ -131,7 +133,14 @@ echo "loop-build 전체 시간 상한: ${BUDGET_MIN}분 (phase 당 ${BUDGET_MIN_
 
 **phase 진입 — maker 서브에이전트 1명 스핀:**
 
-`Agent` 로 `loop-maker` 를 **하나** 띄운다 — 행동 규칙(이 phase 만·테스트 동반·설계 결함 시 보고·5줄 보고·커밋 금지)은 그 에이전트 정의가 담당하므로 프롬프트에 반복하지 않는다. 프롬프트에는 phase 별 가변 정보만: (1) 그 phase 의 step 들(goal·layer·signature·ac_cmd)과 `design_ref`(구현할 설계 구역), (2) **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄 요약**(진행 맥락 — 코드는 워크트리에 있지만 요약을 주면 재파악이 빠르다), (3) 프로젝트 컨벤션 문서 경로(`$LOOP_CONVENTION_DOCS` 값 — 환경변수는 서브에이전트에 전달되지 않으니 값 자체를 텍스트로). maker 의 `agentId` 를 보관한다(사이클 이어가기용).
+`Agent` 로 `loop-maker` 를 **하나** 띄운다 — 행동 규칙(배정 범위만·테스트 동반·자기 컴파일 검증·설계 결함 시 보고·커밋 금지·`ok`/`blocked` 종료)은 그 에이전트 정의가 담당하므로 프롬프트에 반복하지 않는다. **`loop-maker` 는 loop-run 과 공유하는 정의라 기본 종료 보고가 한 줄(`ok` 또는 `blocked: <사유>`)** 이다. 그보다 긴 것이 필요하면 이 프롬프트가 명시로 요구해야 온다(계약 상한 5줄). 프롬프트에는 phase 별 가변 정보만:
+
+1. 그 phase 의 step 들(goal·layer·signature·ac_cmd)과 `design_ref`(구현할 설계 구역). **`ac_cmd` 가 곧 규칙 4의 자기 검증 명령이다** — maker 가 보고 전에 그것으로 컴파일을 스스로 확인한다.
+2. **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄 요약**(진행 맥락 — 코드는 워크트리에 있지만 요약을 주면 재파악이 빠르다).
+3. 프로젝트 컨벤션 문서 경로(`$LOOP_CONVENTION_DOCS` 값 — 환경변수는 서브에이전트에 전달되지 않으니 값 자체를 텍스트로).
+4. **phase 를 마칠 때 다음 phase maker 에게 넘길 1~2줄 요약을 달라는 요구.** 위 2번의 입력이 여기서 나온다. 계약 기본이 한 줄이라 이 요구가 없으면 요약이 오지 않는다.
+
+maker 의 `agentId` 를 보관한다(사이클 이어가기용).
 
 > 모델: loop-maker 는 frontmatter 기본값이 `opus` 다(v0.8.5) — 구현은 생산 작업이라 세션 모델보다 아래 급을 기본으로 두고, 검증은 세션 모델을 상속하는 checker 가 맡는 비대칭이 전제다. phase 난도 판단에 따라 이 `Agent` 호출에 `model` 파라미터를 지정해 상향·하향할 수 있다 — 호출 파라미터가 frontmatter 를 이긴다.
 
@@ -159,7 +168,8 @@ loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므�
 
 **안쪽 루프 — loop-run Step 1~4 를 이 phase 컨텍스트에서:**
 
-1. **게이트(loop-run Step 1)**: brake 선확인 → 컴파일(`$LOOP_BUILD_CMD`) → 테스트(`$LOOP_TEST_CMD`). 깨지면 checker 안 부르고 **maker 재진입**(아래 5번)으로.
+1. **게이트(loop-run Step 1)**: brake 선확인 → 컴파일(`$LOOP_BUILD_CMD`) → 테스트(`$LOOP_TEST_CMD`). 깨지면 checker 안 부르고 **maker 재진입**(아래 5번)으로. loop-run Step 1 을 그대로 상속하므로 **실패 출력은 `gate_parse.py` 로 `$LOOP_DIR/gate-queue.jsonl` 작업 큐가 되고, 매 게이트 실행 시작에 그 파일을 비운다**(앞 회차·앞 phase 의 잔여 항목을 maker 가 쫓지 않게).
+   - **게이트를 돌리기 전에 loop-run Step 6-1 의 트리 변경 확인을 함께 상속한다.** `SendMessage` 로 이어간 maker 도 보고가 거짓일 수 있다 — 고쳤다고 하고 아무것도 안 바꿨으면 게이트가 같은 결과를, checker 가 같은 finding 을 내고 회차만 탄다. 변경이 없으면 회차가 아니라 정체 신호이므로 게이트를 돌리지 않고 사람을 부른다. `stall.sh` 도 결국 잡지만 그건 floor 가 몇 회차 제자리인 뒤다.
 2. **checker 1회(loop-run Step 2)**: `Agent` 로 `loop-checker` 를 **매 사이클 새로** 띄운다. 스핀 전에 findings 출력 경로를 **phase 별** 결정적 위치로 잡고 비운다 — `F="$LOOP_DIR/checker-findings-{phase}.json"; : > "$F"`. **phase 별 파일이 핵심이다**: 단일 파일을 phase 가 공유하면 앞 phase 의 깨끗-통과 잔여(`{"findings":[]}`)가 남아, 다음 phase 에서 오케스트레이터가 비우기를 빠뜨리고 checker 가 안 쓰면 그 옛 빈 배열이 채점돼 미점검 phase 가 done 으로 둔갑한다. phase 분리(`history-{phase}.jsonl` 와 같은 결)면 다음 phase 의 파일은 없는 상태로 시작해 `[ -s "$F" ]`+score.sh 가 fail-loud 로 멈춘다. checker 는 결과 `{base, findings:[...]}` 를 그 파일에 쓰고, 오케스트레이터는 그 파일을 **열지 않고 경로째** 채점 셸에 넘긴다(백그라운드 세션은 서브에이전트 최종 메시지가 인라인으로 안 와 파일이 정본 회수 경로, loop-run Step 2 개정판). 프롬프트에 원 작업 정의 + 설계 문서 경로 + **이 phase 의 `design_ref` 와 step 목록**(이 phase 가 그 설계대로 구현됐는지 정합을 phase 단위로 점검하게 한다) + 베이스 + 점검 기준 문서(`$LOOP_CONVENTION_DOCS`·`$LOOP_KNOWLEDGE_LAYER`·BASE/LOCAL rubric 경로 — 환경변수는 서브에이전트에 전달되지 않으니 phase 진입 블록이 echo 한 값 자체를 프롬프트 텍스트로, 비었으면 "없음" 명시) + 그 findings 출력 경로. **maker 의 변명·구현 설명을 절대 넣지 않는다**(불변 1). checker 는 diff·컨벤션·ANTIPATTERNS 를 독립적으로 읽고, intent 차원으로 **이 phase 코드 ↔ `design_ref` 정합**을 본다 — 코드가 설계를 벗어나면 finding(채점을 거쳐 PASS 를 막으므로, 이게 곧 "이 phase 를 설계대로 구현했나"라는 phase 통과 조건이다).
 
 > 모델: checker 는 frontmatter 에 모델을 고정하지 않는다(v0.8.4) — 기본은 호출한 세션(오케스트레이터=maker)의 모델을 상속한다. 특정 모델로 돌리려면 이 `Agent` 호출에 `model` 파라미터를 지정한다.
@@ -171,7 +181,7 @@ loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므�
    - `PASS` → 이 phase `status=done`, **maker 종료 통지**, **다음 phase 로**. maker 는 백그라운드 팀메이트라 통지 없이는 대기 상태로 남는다 — `SendMessage({to: <agentId>})` 로 "phase 완료 — 종료. 새 작업을 시작하지 말고 한 줄 확인으로 턴을 끝내라" 를 보내고 응답을 기다리지 않는다. 이후 이 maker 에는 재진입하지 않으며, 다음 phase 는 새 maker 를 띄운다.
    - `RETRY`/`RETRY_SOFT` → 5번(maker 재진입).
 5. **maker 재진입 — `SendMessage` 로 같은 maker 를 이어감(불변 6):** `SendMessage({to: <agentId>})` 에는 **counts 요약 한 줄 + scored 파일 경로(`$LOOP_DIR/scored-{phase}.json`)만** 담아 "이 파일을 읽고 CRITICAL→MAJOR 순으로 고쳐라. 고친 코드에 대응 테스트도" 라고 이어 지시한다. finding 전문(evidence 산문)을 메시지에 붙여넣지 않는다 — SendMessage 도구 결과가 보낸 텍스트를 그대로 에코해 오케스트레이터 창에 같은 내용이 두 벌씩 쌓이고, maker 는 어차피 파일을 직접 읽는 쪽이 정확하다. **새 Task 를 띄우지 않는다** — 그래야 그 phase 의 수정 맥락이 유지된다. 고쳐지면 1번(게이트)부터 이 사이클을 다시 연다.
-   - 게이트가 깨진 경우도 같은 maker 에게 `SendMessage` 로 "빌드/테스트가 깨졌다. 고쳐라"를 넘긴다.
+   - 게이트가 깨진 경우도 같은 maker 에게 `SendMessage` 로 이어 지시하는데, **넘기는 것은 게이트 큐 경로(`$LOOP_DIR/gate-queue.jsonl`) 하나** 다. 항목 본문이나 빌드 출력을 메시지에 붙여넣지 않는다 — 린트 게이트 하나가 수천 항목을 낼 수 있고, 그때 오케스트레이터 창이 먼저 죽는다. 큐가 비어 있지 않으면 그것이 scored 파일보다 우선한다(게이트가 깨진 회차는 checker 가 아예 안 돌아 scored 가 앞 회차 값이다).
    - 못 고치거나 고치면 안 되는 finding(force_await·비가역)은 maker 에게 넘기지 말고 `AWAIT_USER`.
 
 > **설계 drift 는 무인이 판단하지 않는다(사람 게이트).** 실제 구현이 최초 설계(`design_ref`)와 달라져야 한다고 maker 가 보고하거나, checker 가 "코드가 설계와 다른데 코드 쪽이 맞아 보인다(설계 결함 의심)"를 잡으면 — maker 가 코드를 설계에 맞추는 걸로 끝내지 않고 **`AWAIT_USER` 로 멈춰 사람에게 설계 재결정을 맡긴다**. loop-build 는 "설계대로 구현"이 목표이지 "설계를 고쳐 구현"이 아니다. 설계 자체를 바꾸는 결정은 사람이 하고, 승인되면 프로젝트의 설계 문서 스킬(예: c8c-api `/design --decision`)로 설계 문서를 갱신한 뒤 그 phase 를 재개한다.
@@ -193,7 +203,7 @@ jq -e --arg p "$PHASE" '[.phases[] | select(.name==$p) | .status] == ["done"]' "
 
 > **오케스트레이터는 코드를 쓰지 않는다.** 메인 세션은 순환 제어(phase 순회·게이트 실행·checker 스핀·채점·분기·SendMessage)만 한다. 실제 편집은 전부 maker 서브에이전트 안에서 일어나 오케스트레이터 컨텍스트에 안 쌓인다. 이게 여러 phase 롱런을 버티게 하는 핵심이다.
 
-> **오케스트레이터는 내용을 보유하지 않는다(컨텍스트 위생).** 롱런 완주는 오케스트레이터 창이 얼마나 가볍게 유지되느냐에 달려 있다. 규칙 다섯: (1) checker findings·scored JSON 의 evidence 전문을 cat/Read 하지 않는다 — 채점은 경로째 셸에 넘기고, 창에는 counts 와 등급·종류·위치 한 줄 목록만 남긴다. (2) maker 완료 보고는 5줄 요약으로 받는다(스핀 프롬프트에 명시). (3) SendMessage 는 짧게 — 도구 결과가 보낸 전문을 에코한다. (4) phases.json·설계 문서를 다시 Read 하지 않는다 — 상태 갱신·조회는 jq 로. (5) git 확인은 `--stat`·`--name-only` 수준까지만.
+> **오케스트레이터는 내용을 보유하지 않는다(컨텍스트 위생).** 롱런 완주는 오케스트레이터 창이 얼마나 가볍게 유지되느냐에 달려 있다. 규칙 다섯: (1) checker findings·scored JSON 의 evidence 전문을 cat/Read 하지 않는다 — 채점은 경로째 셸에 넘기고, 창에는 counts 와 등급·종류·위치 한 줄 목록만 남긴다. (2) maker 완료 보고는 phase 요약 1~2줄로 받는다 — 공유 계약의 기본은 `ok` 한 줄이고, 이 요약은 스핀 프롬프트가 명시로 요구해서 오는 것이다(상한 5줄). (3) SendMessage 는 짧게 — 도구 결과가 보낸 전문을 에코한다. (4) phases.json·설계 문서를 다시 Read 하지 않는다 — 상태 갱신·조회는 jq 로. (5) git 확인은 `--stat`·`--name-only` 수준까지만.
 
 ### Step 3. 전체 완료 처리 (커밋하지 않는다)
 
