@@ -66,6 +66,8 @@ echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}
 - 종류 어휘 rubric 경로 둘 다: BASE 와 LOCAL(있으면) — 같은 "review 값:" 줄에 있다.
 - findings 출력 경로(아래 `$F`).
 
+> 모델·effort: checker 는 모델을 frontmatter 에 고정하지 않아 호출한 세션을 상속하고(v0.8.4, 이 `Agent` 호출의 `model` 파라미터로 재정의 가능), effort 는 `xhigh` 로 **고정한다**(v0.9.6, 호출로 재정의 불가 — 도구에 파라미터가 없다). 1회 점검이라 아낄 자리가 아니고, 세션 등급을 내려도 판정 기준은 무인 루프와 같아야 한다. 계약은 `core/effort-ladder.md`.
+
 **그 코드를 이 세션이 썼다면 그 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** loop-review 에는 maker 가 없다 — `/loop-run` 과 달리 코드를 쓴 쪽이 이 세션이거나 사람이고, 그래서 자기 변호가 checker 에 새어들 자리가 오히려 여기다. checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
 
 **checker 결과는 파일로 회수한다.** 스핀 전에 findings 출력 경로를 결정적 위치로 잡고 `: > "$F"` 로 비운 뒤, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 넘긴다:
