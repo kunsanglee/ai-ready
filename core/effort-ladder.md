@@ -29,4 +29,4 @@ loop 역할(maker·checker·lesson-synthesizer)은 구체 effort 토큰을 박�
 ## 적용 지점
 
 - **codex(균일 프로필)**: 세션 시작 시 `-c model_reasoning_effort=<토큰>` 로 준다. 세션 effort 는 위임된 maker/checker 하위 에이전트로 상속된다(2026-07-22 실측 — orchestrator `high` → 하위 `high`). 프로필은 `codex/plugins/ai-ready/loop-profile.env` 의 `LOOP_EFFORT`(중립 등급), 런처 `loop-launch.sh` 가 codex 토큰으로 넘긴다.
-- **Claude**: loop-maker frontmatter·모델 정책 파일에서 `--effort` 로 준다(이 PR 범위 밖 — Claude 트리 무변경, 채택은 후속).
+- **Claude(비대칭 프로필)**: 역할별 에이전트 frontmatter 의 `effort:` 키로 준다(값은 `low·medium·high·xhigh·max`, 세션 등급을 덮어쓰고 미기입이면 상속). codex 와 달리 **호출 시점 재정의가 없다** — Agent 도구는 `model` 파라미터는 받아도 `effort` 파라미터가 없으므로, 호출별 조정이 필요하면 Workflow 스크립트의 `agent(..., {effort})` 를 쓰거나 frontmatter 를 고친다. 그래서 Claude 트리는 균일 프로필이 아니라 **역할별 고정**으로 간다: `loop-maker=high`(모델이 이미 opus 로 세션 아래인 데 더해 한 등급 낮춤), `loop-checker=xhigh`(적발률이 곧 탐색량이라 세션 등급과 분리해 고정 — 세션을 내려도 판정부는 안 내려간다). `loop-lesson-synthesizer` 는 루프당 1회에 결과를 사람이 전량 승인하므로 상속을 유지한다. 2026-07-29 채택.
