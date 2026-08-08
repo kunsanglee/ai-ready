@@ -55,7 +55,24 @@ thr_c="$(loop_param stall_threshold_critical)"
 thr_m="$(loop_param stall_threshold_major)"
 reg_n="$(loop_param regress_consecutive)"
 
-if [ -f "$state_file" ]; then prev="$(cat "$state_file")"; else prev="null"; fi
+# 상태 파일도 신뢰할 수 없는 입력이다 — `.loop/run/{ticket}/` 이라 maker 가 쓸 수 있는 자리고,
+# 검증은 stdin 에만 걸려 있었다(적대적 시험 13·14). 두 가지가 실제로 났다.
+#   - `no_progress` 에 음수를 한 번 심으면 임계에 영영 못 닿아 정체 감지가 죽는다.
+#   - 형식이 깨지면(`{}`) jq 산술이 죽고 파일이 그대로 남아 **그 뒤 모든 사이클이 같은 자리에서** 죽는다.
+# 형식이 어긋나면 시끄럽게 알리고 INIT 로 회복한다(계속 죽는 것보다 낫다). 카운터는 0 이상으로 조인다.
+prev="null"
+if [ -f "$state_file" ]; then
+  raw="$(cat "$state_file")"
+  if printf '%s' "$raw" | jq -e '
+        type == "object"
+        and ([.floor, .cur, .prev] | all(type == "array" and length == 3 and all(type == "number")))
+        and (.no_progress | type == "number") and (.regress_streak | type == "number")' >/dev/null 2>&1; then
+    prev="$(printf '%s' "$raw" | jq -c '.no_progress = ([.no_progress, 0] | max)
+                                        | .regress_streak = ([.regress_streak, 0] | max)')"
+  else
+    echo "stall: 상태 파일 형식이 어긋난다($state_file) — INIT 로 회복한다. 누가 덮어썼는지 확인할 것." >&2
+  fi
+fi
 
 result="$(jq -n \
   --argjson prev "$prev" \

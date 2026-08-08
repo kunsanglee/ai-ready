@@ -37,7 +37,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 | 파일 | 책임 | 입력 → 출력 |
 |---|---|---|
 | `lib.sh` | 공용 부트스트랩: repo root·rubric 경로, severity 사다리, rubric 표 추출(awk/jq) | (source 전용) |
-| `score.sh` | 종류 lookup → base severity, weights 있으면 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
+| `score.sh` | 깨끗함↔안 봄 게이트(findings·reviewed 둘 다 비면 exit 65), 종류 lookup → base severity, 경로 유도 + checker 가중 합집합으로 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
 | `decide.sh` | severity 집계 → 종료 verdict | scored JSON → `{verdict, counts, await}` |
 | `stall.sh` | 사전식 벡터 + best-ever floor 정체 판정 | decide JSON + `--state <file>` → 갱신된 상태 |
 | `lessons.sh` | 루프 종료 후 history.jsonl diff → 출처1 실수(고쳐진 finding) 추출 | `--history <file>` → mistakes JSON |
@@ -103,7 +103,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 - **severity 는 셸이 매긴다.** checker 는 `(종류·차원·가중플래그·위치·근거)` 만 태깅.
 - **변질 입력은 fail-loud.** 채점 셸은 신뢰하는 변환기가 아니라 안전 게이트다. 입력 생산자가 LLM checker 라
   빈/null/`{}`/형식오류 JSON 이 흔하다. 그걸 조용히 PASS 로 통과(fail-open)시키지 않고 `exit 65` 로 거부한다
-  (오케스트레이터는 사람 대기 신호로 본다). 깨끗한 `{"findings":[]}` 만 정상 통과. kind·dimension 누락은 jq
+  (오케스트레이터는 사람 대기 신호로 본다). 깨끗한 결과는 `{"findings":[],"reviewed":[...]}` 여야 통과다 — `reviewed` 가 비면 "안 본 것" 과 구분이 안 돼 거부한다. kind·dimension 누락은 jq
   크래시 없이 보수 채점하며, 모르는/누락 dimension 은 가장 관대한 MINOR 가 아니라 CRITICAL 로 떨어뜨린다.
   `decide.sh`·`stall.sh` 도 빈 입력과 계약 밖 입력(`findings`/`counts` 누락 — 배선 오류로 다른 단계 출력이 직결된 경우)을 거부해 파이프(`score|decide|stall`)가 앞단 실패를 통과로 둔갑시키지 못하게 한다.
 - **종료는 점수 합산이 아니라 severity 게이트.** BLOCKER 0 AND CRITICAL 0 → PASS.

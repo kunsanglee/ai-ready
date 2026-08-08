@@ -106,11 +106,33 @@ _loop_table_one() {
 }
 
 # KINDS 표 → {kind_id: {dimension,layer,base,force_await}} JSON.
+# 열 수가 모자란 행은 **조용히 버리지 않는다.** 전에는 `NF < 5` 로 건너뛰어, 손으로 적은 LOCAL 행이
+# 한 칸 빠지면 그 kind 가 등록 안 된 채 dimension floor 로 떨어졌다 — 사람은 등록했다고 믿는다.
 loop_kinds_json() {
   loop_table KINDS | awk -F'\t' '
-    $1 == "kind_id" || NF < 5 { next }
+    $1 == "kind_id" { next }
+    NF < 5 { printf "loop: KINDS 행의 열이 모자란다(%d/5): %s\n", NF, $0 > "/dev/stderr"; bad = 1; next }
     { printf "{\"kind\":\"%s\",\"dimension\":\"%s\",\"layer\":\"%s\",\"base\":\"%s\",\"force_await\":\"%s\"}\n", $1, $2, $3, $4, $5 }
-  ' | jq -s 'map({key: .kind, value: .}) | from_entries'
+    END { if (bad) exit 65 }
+  ' | jq -s '
+    # 같은 kind 는 LOCAL(뒤)이 BASE(앞)를 덮는다 — **단 force_await=always 만 합집합**이다.
+    # 자동화 금지 목록의 뜻이 "등급 무관 사람 대기" 라, 등급은 저장소가 조절해도 사람 게이트는 남는다.
+    # 이 파일은 `.loop/rubric.md` 라 채점받는 쪽이 쓸 수 있어, 한 줄로 게이트가 사라지면 안 된다.
+    group_by(.kind)
+    | map({ key: .[0].kind,
+            value: (.[-1] + { force_await: (if any(.[]; .force_await == "always") then "always"
+                                            else .[-1].force_await end) }) })
+    | from_entries'
+}
+
+# PATHEXCLUDE 표 → 제외 패턴 배열. 걸리면 경로 유도를 아예 안 한다(checker 가 직접 단 가중은 남는다).
+# 부분 일치라 마이그레이션을 설명하는 문서·픽스처·의존성 트리까지 잡혀 무인 루프가 서던 것을 막고,
+# 동시에 LOCAL 이 BASE 경로 규칙을 끄는 유일한 길이다(PATHWEIGHTS 는 누적이라 덮을 수 없다).
+loop_pathexclude_json() {
+  loop_table PATHEXCLUDE | awk -F'\t' '
+    $1 == "exclude_pattern" || $1 == "" { next }
+    { print $1 }
+  ' | jq -R -s 'split("\n") | map(select(length > 0))'
 }
 
 # DIMFLOOR 표 → {dimension: floor_severity} JSON.
@@ -128,6 +150,24 @@ loop_weights_json() {
     $1 == "weight_key" || $1 == "" { next }
     { printf "{\"w\":\"%s\"}\n", $1 }
   ' | jq -s 'map(.w)'
+}
+
+# PATHWEIGHTS 표 → [{p: 패턴, w: [가중키...]}] JSON 배열. 표가 없으면 빈 배열(유도 없음).
+# location 경로에 패턴이 걸리면 score 가 그 가중을 checker 가 준 것과 합집합한다.
+# 패턴 안에 `|` 를 쓰면 표 열이 쪼개지므로 한 행에 하나만 — rubric 산문이 그 제약을 적는다.
+# BASE 행 뒤에 LOCAL 행이 이어 붙는다(덮어쓰기가 아니라 누적 — 경로 규칙은 많을수록 촘촘하다).
+# JSON 은 손으로 짜지 않고 `jq -R` 로 인코딩한다. 이 열의 값은 **정규식**이라 역슬래시가 흔한데
+# (`\.sql$` 같은), printf 로 따옴표에 끼워 넣으면 `\.` 이 JSON 의 잘못된 이스케이프가 되어
+# 파서가 죽는다. 실제로 그렇게 죽는 것을 확인하고 이 방식으로 바꿨다. 큰따옴표도 같은 이유다.
+loop_pathweights_json() {
+  loop_table PATHWEIGHTS | awk -F'\t' '
+    $1 == "path_pattern" || $1 == "" || NF < 2 { next }
+    { print $1 "\t" $2 }
+  ' | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(split("\t"))
+    | map({ p: .[0],
+            w: ((.[1] // "") | split(",") | map(sub("^\\s+"; "") | sub("\\s+$"; "")) | map(select(length > 0))) })
+  '
 }
 
 # PARAMS 표에서 한 값 조회. 없으면 비0 exit.

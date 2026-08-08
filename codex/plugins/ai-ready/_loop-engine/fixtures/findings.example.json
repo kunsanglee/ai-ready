@@ -1,6 +1,10 @@
 {
   "ticket": "EXAMPLE-1",
   "iteration": 1,
+  "reviewed": [
+    "src/main/kotlin/Query.kt",
+    "src/main/kotlin/UpdateController.kt"
+  ],
   "findings": [
     {
       "id": "f1",
@@ -8,7 +12,9 @@
       "dimension": "runtime",
       "location": "src/query/ListQueryService.kt:88",
       "evidence": "루프 안에서 단건 조회를 반복 호출",
-      "weights": ["hotpath"]
+      "weights": [
+        "hotpath"
+      ]
     },
     {
       "id": "f2",
@@ -24,7 +30,9 @@
       "dimension": "security",
       "location": "src/api/UpdateController.kt:40",
       "evidence": "소유권 검증 없음(인증됐으나 자기 자원만 접근하는지 미확인)",
-      "weights": ["authz"]
+      "weights": [
+        "authz"
+      ]
     },
     {
       "id": "f4",

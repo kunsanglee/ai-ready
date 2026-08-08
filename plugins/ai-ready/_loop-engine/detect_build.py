@@ -284,12 +284,6 @@ def local_kinds_for_stack(target: Path, stack: list[str]) -> list[dict[str, str]
             "base_severity": "MAJOR", "force_await": "no",
             "note": "새 ErrorCode 에 대응하는 i18n 메시지 키 누락 (Spring ErrorCode 감지)",
         })
-    if "postgres" in stack:
-        kinds.append({
-            "kind_id": "ddl-safety", "dimension": "runtime", "layer": "gate",
-            "base_severity": "BLOCKER", "force_await": "always",
-            "note": "NOT NULL 추가·컬럼 DROP·ALTER TYPE·비CONCURRENTLY 인덱스 (PostgreSQL 감지)",
-        })
     return kinds
 
 
