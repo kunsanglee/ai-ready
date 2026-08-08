@@ -44,6 +44,23 @@ class CodexAdapterTests(unittest.TestCase):
             for token in forbidden:
                 self.assertNotIn(token, skill, f"{name}: {token}")
 
+    def test_checker_contract_is_stated_in_both_places(self):
+        """codex 의 checker 계약은 산문 두 곳에만 있어 한쪽만 고쳐지는 사고가 실제로 났다.
+
+        에이전트 정의 파일이 없는 트리라 `loop-run/SKILL.md`(위임 지시)와
+        `references/checker-role.md`(역할 계약)가 계약의 전부다. 0.9.7 첫 커밋에서
+        후자만 갱신돼 같은 스킬 안에서 스키마가 어긋났다.
+        """
+        skill = (PLUGIN / "skills" / "loop-run" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "loop-run" / "references" / "checker-role.md").read_text(encoding="utf-8")
+        for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
+            self.assertIn("reviewed", text,
+                          f"{name} 가 checker 출력의 reviewed 를 안 적는다 — 계약이 갈라진다")
+        # 옛 스키마가 남아 있으면 그걸 따라 짠 checker 가 채점에서 exit 65 로 거부된다.
+        for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
+            self.assertNotIn('{"base", "findings"', text,
+                             f"{name} 에 reviewed 없는 옛 출력 스키마가 남아 있다")
+
     def test_audit_bundle_has_no_hook_installer(self):
         scripts = PLUGIN / "skills" / "audit" / "scripts"
         for filename in ("audit.py", "scaffold.py", "extract_antipatterns.py", "dashboard.py"):

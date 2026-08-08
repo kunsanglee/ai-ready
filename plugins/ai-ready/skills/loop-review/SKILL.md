@@ -49,6 +49,15 @@ git fetch origin --quiet 2>/dev/null || true
 git diff "$LOOP_BASE_BRANCH"...HEAD --stat   # 브랜치에서 커밋된 전체 변경
 git diff --stat                      # uncommitted (unstaged)
 git diff --staged --stat             # uncommitted (staged)
+
+# 점검 대상이 실제로 있나 — loop-run Step 6-1 과 같은 가드. 베이스 오감지면 checker 가 빈 diff 를
+# 보고 깨끗하다고 답하고 그게 통과가 된다. 리뷰는 회차가 없어 이 한 번이 전부라 더 치명적이다.
+CHANGED=$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD 2>/dev/null | wc -l | tr -d ' ')
+DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+if [ "${CHANGED:-0}" -eq 0 ] && [ "${DIRTY:-0}" -eq 0 ]; then
+  echo "loop: 점검 대상 변경 0건 ($LOOP_BASE_BRANCH...HEAD + uncommitted) — 깨끗함이 아니라 베이스 확인 필요. 멈추고 보고" >&2
+  exit 3
+fi
 # 감지 값을 창에 출력한다 — 변수 대입은 stdout 이 없어, 출력 없이는 Step 2 프롬프트에 넣을 값이 존재하지 않는다.
 echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[$([ -f "$PROJECT_ROOT/.loop/rubric.md" ] && echo "$PROJECT_ROOT/.loop/rubric.md" || echo 없음)]"
 ```
@@ -81,7 +90,7 @@ F="${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PROJECT_ROOT")-$(git rev-pa
 : > "$F"
 ```
 
-checker 는 `{base, findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 랜덤 `mktemp` 는 쓰지 않는다(Bash 호출마다 셸이 새로 떠 변수가 Step 3 채점에 안 남는다) — 위 경로는 브랜치에서 결정적으로 재유도된다. 완료되면 그 파일을 Step 3 채점에 넣는다.
+checker 는 `{base, reviewed:[...], findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 랜덤 `mktemp` 는 쓰지 않는다(Bash 호출마다 셸이 새로 떠 변수가 Step 3 채점에 안 남는다) — 위 경로는 브랜치에서 결정적으로 재유도된다. 완료되면 그 파일을 Step 3 채점에 넣는다.
 
 ### Step 3. 결정론 채점 (score → decide)
 
@@ -97,12 +106,17 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 F="${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse --abbrev-ref HEAD | cksum | tr ' ' '-').json"
 # checker 가 파일에 못 썼으면(빈/미생성) exit 65 로 fail-loud — 조용히 PASS 금지(정상 빈 배열은 -s 통과라 오탐 없음).
 [ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 멈춰 보고" >&2; exit 65; }
-SCORED=$(bash "$ENG/score.sh" "$F")          # finding 마다 severity·await·base·kind_known 추가
+# 종료코드를 본다. 삼키면 $SCORED 가 빈 문자열이 된 채 흘러가고, 아래 rm 이 원인을 볼 유일한
+# 증거(findings 파일)까지 지운다 — 조용한 통과가 아니라 조용한 증거 인멸이 된다.
+SCORED=$(bash "$ENG/score.sh" "$F") || {
+  echo "loop: 채점이 입력을 거부했다(exit 65) — checker 출력 계약 위반. 흔한 원인은 깨끗한 결과에 reviewed 를 안 채운 것. $F 는 남겨 두니 그대로 보고 멈춘다" >&2
+  exit 65
+}
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")   # verdict·counts·await 집계
-rm -f "$F"
+rm -f "$F"   # 채점이 성공한 뒤에만 지운다
 ```
 
-- `$SCORED` = `{base, findings:[{..., severity, await, base, kind_known}]}`.
+- `$SCORED` = `{base, reviewed, findings:[{..., severity, await, base, kind_known}]}`.
 - `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, await}`.
 - 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
 
@@ -145,6 +159,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 |---|---|---|
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
 | `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일(`${TMPDIR:-/tmp}/loop-review-findings-{repo}-{branch-cksum}.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
+| `loop: findings 도 reviewed 도 비었다 — exit 65` | checker 가 `{"findings":[]}` 만 내고 `reviewed` 를 안 채움. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** — 그러면 점검 없이 통과가 된다 | 베이스 브랜치와 diff 범위를 먼저 확인한다. 정말 깨끗하면 checker 가 검토한 파일을 `reviewed` 에 담아야 한다. PASS 로 넘기지 말 것 |
 | `[ -s "$F" ]` 가 거짓 "checker 실패" | Step 2 와 Step 3 사이에 브랜치를 바꿔 F 재유도가 어긋남 | 리뷰가 도는 동안 그 체크아웃의 브랜치를 바꾸지 않는다 |
 | `loop: 'jq' 필요` | jq 미설치 | `brew install jq` |
 | 모든 finding 이 CRITICAL 로 뜸 | checker 가 dimension 을 5값 밖으로 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker 출력의 dimension 값 점검 |
