@@ -899,6 +899,23 @@ class TestLoopReview(BlockCase):
         self.assertNotEqual(r.rc, 0, repr(r))
         self.assertIn("점검 대상 변경 0건", r.err)
 
+    def test_score_rejection_stops_and_keeps_the_evidence(self):
+        """채점이 거부하면 멈춰야 하고, 원인을 볼 findings 파일을 지우면 안 된다.
+
+        loop-run 쪽은 잠갔는데 같은 결함의 형제인 여기가 안 잠겨 있었다 — 이 수정을 되돌려도
+        52건이 전부 초록이었다(변이로 확인). 이 저장소가 이번 릴리스에 `test-vacuous` 라고
+        이름 붙인 바로 그 결함을 스스로 낸 것이다.
+
+        여기가 loop-run 보다 나쁜 이유가 하나 더 있다. 삼킨 뒤 `rm -f "$F"` 가 이어져
+        조용한 통과가 아니라 **조용한 증거 인멸**이 된다.
+        """
+        (self.work / "Changed.kt").write_text("class Changed\n")
+        f = self.review_findings_path()
+        f.write_text('{"findings":[]}')
+        r = self.run_block("lv-score")
+        self.assertNotEqual(r.rc, 0, repr(r))
+        self.assertTrue(f.is_file(), "거부됐는데 findings 파일을 지우면 원인을 볼 수 없다")
+
     def test_findings_path_is_deterministic_and_emptied(self):
         expected = self.review_findings_path()
         expected.write_text('{"findings":[{"id":"stale"}]}')

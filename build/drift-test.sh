@@ -58,6 +58,25 @@ else
   exit 1
 fi
 
+# --- 설명문 드리프트: 매니페스트 셋이 이 릴리스를 언급하나 ---
+# 버전 검사는 `version` 숫자만 본다. 그 옆의 `description` 은 마켓플레이스 UI 에서 설치자가 읽는 자리인데
+# 실제로 세 파일이 세 가지 답을 하고 있었다(marketplace 는 0.9.6 을 건너뛰고, claude 는 0.9.7 이 없고,
+# codex 는 0.9.5 에서 멈췄다). 전문을 강제로 같게 만들지는 않는다 — 길이가 8,957자와 19,679자로 달라
+# 목적이 다른 글이다. **이 릴리스를 언급은 하는가**까지만 잠근다.
+desc_missing=""
+for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json codex/plugins/ai-ready/.codex-plugin/plugin.json; do
+  if ! jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description] | map(select(. != null)) | join(" ")' "$f" \
+       | grep -q "v${ver_claude}+"; then
+    desc_missing="$desc_missing $f"
+  fi
+done
+if [ -n "$desc_missing" ]; then
+  echo "[description] 누락 — 이 매니페스트의 설명문이 v${ver_claude} 를 언급하지 않는다:$desc_missing" >&2
+  echo "              설치자가 마켓플레이스에서 읽는 자리라, 셋이 다른 릴리스를 말하면 무엇이 깔리는지 알 수 없다." >&2
+  exit 1
+fi
+echo "[description] OK — 매니페스트 셋 모두 v$ver_claude 언급"
+
 # --- 변경 이력 드리프트: 사용자 대면 릴리스 노트가 이 버전을 담고 있나 ---
 # 0.9.6 은 매니페스트도 README 도 안 올라갔다. 계약이 바뀌는 릴리스에서 설치자가 그 사실을 알 경로가
 # 없다는 뜻이고, 위 버전 검사가 숫자만 보면 그 상태에 초록 도장을 찍는다.
