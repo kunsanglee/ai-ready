@@ -127,12 +127,11 @@ class TestDetectStack(unittest.TestCase):
 
 
 class TestLocalKinds(unittest.TestCase):
-    def test_ddl_safety_for_postgres(self):
+    def test_postgres_alone_yields_no_local_kind(self):
+        # ddl-safety 는 BASE rubric 이 쥔다(force_await=always). 여기서 같은 다섯 열을 다시 만들면
+        # 채점상 아무 효과 없는 override 가 된다 — 0.9.7 에서 이 분기를 뺐다.
         with tempfile.TemporaryDirectory() as td:
-            kinds = detect_build.local_kinds_for_stack(Path(td), ["postgres"])
-            ddl = next(k for k in kinds if k["kind_id"] == "ddl-safety")
-            self.assertEqual(ddl["base_severity"], "BLOCKER")
-            self.assertEqual(ddl["force_await"], "always")
+            self.assertEqual(detect_build.local_kinds_for_stack(Path(td), ["postgres"]), [])
 
     def test_i18n_requires_spring_and_error_code_signal(self):
         with tempfile.TemporaryDirectory() as td:

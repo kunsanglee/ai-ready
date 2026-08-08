@@ -74,7 +74,7 @@ LOOP_TEST_CMD="$(printf '%s' "$DET" | jq -r '.test_cmd // ""')"
 LOOP_LINT_CMD="$(printf '%s' "$DET" | jq -r '.lint_cmd // ""')"
 LOOP_TICKET_REGEX="$(printf '%s' "$DET" | jq -r '.ticket_regex // "[A-Z]+-[0-9]+"')"
 LOOP_BASE_BRANCH="$(printf '%s' "$DET" | jq -r '.base_branch // "origin/main"')"
-# 베이스 ref 가 실제 존재하는지 확인 — 오감지하면 빈 diff 가 거짓 PASS 로 둔갑한다(채점이 빈 입력을 PASS 로 처리).
+# 베이스 ref 가 실제 존재하는지 확인 — 오감지하면 빈 diff 가 거짓 PASS 로 둔갑한다(checker 가 reviewed 를 채우면 채점은 빈 findings 를 PASS 로 낸다).
 if ! git rev-parse --verify --quiet "$LOOP_BASE_BRANCH^{commit}" >/dev/null 2>&1; then
   echo "loop: 베이스 ref '$LOOP_BASE_BRANCH' 확인 불가 — git fetch 후 재확인" >&2
   git fetch --quiet origin 2>/dev/null || true
@@ -86,7 +86,8 @@ fi
 LOOP_KNOWLEDGE_LAYER="$(printf '%s' "$DET" | jq -r '.knowledge_layer // ""')"
 LOOP_CONVENTION_DOCS="$(printf '%s' "$DET" | jq -r '(.convention_docs // []) | join(" ")')"
 # 프로젝트 특유 심각도 규칙은 선택적 LOCAL rubric. 있으면 BASE 와 병합 채점, 없으면 BASE 만으로 돈다.
-# 스택 특유 종류(예: postgres→ddl-safety)는 자동 생성하지 않는다 — 사람이 /loop-lessons 로 덧붙여 키운다.
+# 스택 특유 종류는 자동 생성하지 않는다 — 사람이 /loop-lessons 로 덧붙여 키운다.
+# (ddl-safety 는 0.9.7 부터 BASE 금지행이라 예시에서 뺐다 — LOCAL 에 다시 적으면 등급만 낮아진다.)
 if [ -f "$PROJECT_ROOT/.loop/rubric.md" ]; then export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"; fi
 # 티켓 키가 상태 디렉터리(LOOP_DIR)를 가른다. JIRA 키 없을 때 'loop' 단일 폴백은 동시 실행·다중
 # 워크트리에서 같은 LOOP_DIR 를 공유해 정체 상태(stall.json)가 충돌한다 — 브랜치 슬러그로 분리한다.
@@ -176,12 +177,14 @@ if [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" 
   echo "loop: brake 도달 (iter=$ITER + 게이트실패 $GFAIL / $MAX_ITER 천장 $ABS_CEIL, 경과 ${ELAPSED_MIN}/${BUDGET_MIN}분) — 평가 없이 종료, Step 5 사람 호출" >&2
   # 더 진행하지 말고 Step 4 분기 2(brake) → Step 5 로.
 fi
-# 점검 대상이 실제로 있나 — 베이스 오감지·빈 작업이면 finding 0 이 거짓 PASS 로 둔갑한다(Step 3 채점은 빈 입력을 PASS 로).
+# 점검 대상이 실제로 있나 — 베이스 오감지·빈 작업이면 finding 0 이 거짓 PASS 로 둔갑한다. **여기가 결정론 1차 방어**고, 채점의 reviewed 게이트는 checker 가 그 뒤에 반쯤 죽는 경우를 받는다.
 CHANGED=$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD 2>/dev/null | wc -l | tr -d ' ')
 DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 if [ "${CHANGED:-0}" -eq 0 ] && [ "${DIRTY:-0}" -eq 0 ]; then
   echo "loop: 점검 대상 변경 0건 ($LOOP_BASE_BRANCH...HEAD + uncommitted) — PASS 아님. 베이스 브랜치 확인 필요, 멈추고 사람 호출" >&2
-  # 조용히 통과 금지 — Step 5 사람 호출로.
+  # 조용히 통과 금지 — Step 5 사람 호출로. **echo 만 하고 흘려보내면 산문과 코드가 어긋난다**:
+  # 여기서 안 멈추면 checker 가 빈 diff 를 보고 깨끗하다고 답하고 그게 PASS 가 된다.
+  exit 3
 fi
 # 게이트: 컴파일 먼저(빠름), 통과하면 변경 모듈 테스트(또는 전체).
 # 출력은 창이 아니라 파일로 받는다. 실패하면 파서가 항목 큐로 바꾸고, 창에는 한 줄 목록만 낸다.
@@ -273,7 +276,10 @@ set -a; . "$LOOP_DIR/params.env"; set +a
 F="$LOOP_DIR/checker-findings.json"
 # checker 가 파일에 못 썼으면(빈/미생성) 조용히 PASS 로 넘기지 말고 멈춘다 — exit 65 로 fail-loud(정상 빈 배열 {"findings":[]} 은 바이트가 있어 -s 통과, 오탐 없음).
 [ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 멈춰 사람 호출" >&2; exit 65; }
-SCORED=$(bash "$ENG/score.sh" "$F")                              # finding 마다 severity·await 부여
+SCORED=$(bash "$ENG/score.sh" "$F") || {
+  echo "loop: 채점이 입력을 거부했다(exit 65) — checker 출력 계약 위반. 흔한 원인은 깨끗한 결과에 reviewed 를 안 채운 것. 멈춰 사람 호출" >&2
+  exit 65
+}                                                                # finding 마다 severity·await 부여
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, counts, await}
 STALL=$(printf '%s' "$VERDICT"  | bash "$ENG/stall.sh" --state "$STATE")   # 정체 판정 + 상태 영속
 ITER=$(( $(wc -l < "$HIST" 2>/dev/null | tr -d ' ') + 1 ))

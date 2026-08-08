@@ -49,6 +49,15 @@ git fetch origin --quiet 2>/dev/null || true
 git diff "$LOOP_BASE_BRANCH"...HEAD --stat   # 브랜치에서 커밋된 전체 변경
 git diff --stat                      # uncommitted (unstaged)
 git diff --staged --stat             # uncommitted (staged)
+
+# 점검 대상이 실제로 있나 — loop-run Step 6-1 과 같은 가드. 베이스 오감지면 checker 가 빈 diff 를
+# 보고 깨끗하다고 답하고 그게 통과가 된다. 리뷰는 회차가 없어 이 한 번이 전부라 더 치명적이다.
+CHANGED=$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD 2>/dev/null | wc -l | tr -d ' ')
+DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+if [ "${CHANGED:-0}" -eq 0 ] && [ "${DIRTY:-0}" -eq 0 ]; then
+  echo "loop: 점검 대상 변경 0건 ($LOOP_BASE_BRANCH...HEAD + uncommitted) — 깨끗함이 아니라 베이스 확인 필요. 멈추고 보고" >&2
+  exit 3
+fi
 # 감지 값을 창에 출력한다 — 변수 대입은 stdout 이 없어, 출력 없이는 Step 2 프롬프트에 넣을 값이 존재하지 않는다.
 echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[$([ -f "$PROJECT_ROOT/.loop/rubric.md" ] && echo "$PROJECT_ROOT/.loop/rubric.md" || echo 없음)]"
 ```
@@ -81,7 +90,7 @@ F="${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PROJECT_ROOT")-$(git rev-pa
 : > "$F"
 ```
 
-checker 는 `{base, findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 랜덤 `mktemp` 는 쓰지 않는다(Bash 호출마다 셸이 새로 떠 변수가 Step 3 채점에 안 남는다) — 위 경로는 브랜치에서 결정적으로 재유도된다. 완료되면 그 파일을 Step 3 채점에 넣는다.
+checker 는 `{base, reviewed:[...], findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 랜덤 `mktemp` 는 쓰지 않는다(Bash 호출마다 셸이 새로 떠 변수가 Step 3 채점에 안 남는다) — 위 경로는 브랜치에서 결정적으로 재유도된다. 완료되면 그 파일을 Step 3 채점에 넣는다.
 
 ### Step 3. 결정론 채점 (score → decide)
 
@@ -102,7 +111,7 @@ VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")   # verdict·counts·aw
 rm -f "$F"
 ```
 
-- `$SCORED` = `{base, findings:[{..., severity, await, base, kind_known}]}`.
+- `$SCORED` = `{base, reviewed, findings:[{..., severity, await, base, kind_known}]}`.
 - `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, await}`.
 - 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
 

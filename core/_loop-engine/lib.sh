@@ -106,11 +106,33 @@ _loop_table_one() {
 }
 
 # KINDS 표 → {kind_id: {dimension,layer,base,force_await}} JSON.
+# 열 수가 모자란 행은 **조용히 버리지 않는다.** 전에는 `NF < 5` 로 건너뛰어, 손으로 적은 LOCAL 행이
+# 한 칸 빠지면 그 kind 가 등록 안 된 채 dimension floor 로 떨어졌다 — 사람은 등록했다고 믿는다.
 loop_kinds_json() {
   loop_table KINDS | awk -F'\t' '
-    $1 == "kind_id" || NF < 5 { next }
+    $1 == "kind_id" { next }
+    NF < 5 { printf "loop: KINDS 행의 열이 모자란다(%d/5): %s\n", NF, $0 > "/dev/stderr"; bad = 1; next }
     { printf "{\"kind\":\"%s\",\"dimension\":\"%s\",\"layer\":\"%s\",\"base\":\"%s\",\"force_await\":\"%s\"}\n", $1, $2, $3, $4, $5 }
-  ' | jq -s 'map({key: .kind, value: .}) | from_entries'
+    END { if (bad) exit 65 }
+  ' | jq -s '
+    # 같은 kind 는 LOCAL(뒤)이 BASE(앞)를 덮는다 — **단 force_await=always 만 합집합**이다.
+    # 자동화 금지 목록의 뜻이 "등급 무관 사람 대기" 라, 등급은 저장소가 조절해도 사람 게이트는 남는다.
+    # 이 파일은 `.loop/rubric.md` 라 채점받는 쪽이 쓸 수 있어, 한 줄로 게이트가 사라지면 안 된다.
+    group_by(.kind)
+    | map({ key: .[0].kind,
+            value: (.[-1] + { force_await: (if any(.[]; .force_await == "always") then "always"
+                                            else .[-1].force_await end) }) })
+    | from_entries'
+}
+
+# PATHEXCLUDE 표 → 제외 패턴 배열. 걸리면 경로 유도를 아예 안 한다(checker 가 직접 단 가중은 남는다).
+# 부분 일치라 마이그레이션을 설명하는 문서·픽스처·의존성 트리까지 잡혀 무인 루프가 서던 것을 막고,
+# 동시에 LOCAL 이 BASE 경로 규칙을 끄는 유일한 길이다(PATHWEIGHTS 는 누적이라 덮을 수 없다).
+loop_pathexclude_json() {
+  loop_table PATHEXCLUDE | awk -F'\t' '
+    $1 == "exclude_pattern" || $1 == "" { next }
+    { print $1 }
+  ' | jq -R -s 'split("\n") | map(select(length > 0))'
 }
 
 # DIMFLOOR 표 → {dimension: floor_severity} JSON.

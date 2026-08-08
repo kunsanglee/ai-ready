@@ -696,12 +696,31 @@ class TestCheckerAndScoring(BlockCase):
         self.assertTrue(all("severity" in f for f in scored["findings"]))
 
     def test_empty_findings_array_scores_as_pass(self):
-        """대조군 — 정상 '발견 없음' 은 -s 가드를 통과해 PASS 로 채점돼야 한다."""
+        """대조군 — 정상 '발견 없음' 은 -s 가드를 통과해 PASS 로 채점돼야 한다.
+
+        0.9.7 부터 깨끗함을 인정받으려면 `reviewed` 로 무엇을 봤는지 함께 내야 한다.
+        """
         self.setup_loop()
-        (self.loop_dir / "checker-findings.json").write_text('{"findings":[]}')
+        (self.loop_dir / "checker-findings.json").write_text(
+            '{"findings":[],"reviewed":["src/A.kt"]}')
         r = self.run_block("lr-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("verdict=PASS", r.out)
+
+    def test_clean_without_reviewed_stops_instead_of_passing(self):
+        """`{"findings":[]}` 만으로는 통과가 아니다 — 안 본 것과 구분이 안 되기 때문이다.
+
+        그리고 오케스트레이터가 그 exit 65 를 **삼키지 않아야** 한다. 전에는 SCORED 가 빈 문자열이
+        된 채 흘러가 verdict 가 미정의가 되고, history 줄이 안 쌓여 회차 카운터까지 제자리였다.
+        """
+        self.setup_loop()
+        (self.loop_dir / "checker-findings.json").write_text('{"findings":[]}')
+        r = self.run_block("lr-score")
+        self.assertNotEqual(r.rc, 0, repr(r))
+        self.assertNotIn("verdict=", r.out)
+        hist = self.loop_dir / "history.jsonl"
+        self.assertFalse(hist.is_file() and hist.read_text().strip(),
+                         "거부된 사이클이 history 에 줄을 남기면 안 된다")
 
     def test_scoring_writes_into_phase_scope(self):
         """loop-build 의 phase 스코프를 loop-run Step 3 이 params.env 로 상속한다."""
@@ -861,12 +880,24 @@ class TestLoopReview(BlockCase):
         return Path(r.out.strip())
 
     def test_detect_prints_prompt_values(self):
+        # 0.9.7 의 빈 diff 가드가 여기서도 돈다 — 점검 대상이 없으면 멈춘다. 감지 값 출력을 보려면
+        # 실제로 볼 변경이 있어야 한다(리뷰는 회차가 없어 이 한 번이 전부라 더 치명적이다).
+        (self.work / "Changed.kt").write_text("class Changed\n")
         r = self.run_block("lv-detect")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("review 값: base=origin/main", r.out, repr(r))
         self.assertIn("docs/CONVENTIONS.md", r.out)
         self.assertIn("docs/ANTIPATTERNS.md", r.out)
         self.assertIn(str(ENGINE / "rubric.base.md"), r.out)
+
+    def test_no_change_stops_review_instead_of_reporting_clean(self):
+        """베이스가 어긋나 diff 가 통째로 비면 checker 는 깨끗하다고 답한다 — 그게 통과가 되면 안 된다.
+
+        loop-run 에는 이 가드가 있었고 loop-review 에는 통째로 없었다.
+        """
+        r = self.run_block("lv-detect")
+        self.assertNotEqual(r.rc, 0, repr(r))
+        self.assertIn("점검 대상 변경 0건", r.err)
 
     def test_findings_path_is_deterministic_and_emptied(self):
         expected = self.review_findings_path()

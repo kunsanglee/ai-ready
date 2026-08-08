@@ -61,8 +61,16 @@ checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 
 
 **패턴은 한 행에 하나만 쓴다.** 표 구분자가 `|` 라 정규식 안의 `|` 교대(alternation)는 열을 쪼갠다.
 여러 경로를 덮으려면 행을 늘린다. `weight_keys` 는 쉼표로 여럿 쓸 수 있다.
-패턴은 `location` 문자열에 대한 부분 일치이고, 잘못된 정규식은 그 행만 조용히 건너뛴다
+패턴은 `location` 문자열에 대한 **대소문자 무시** 부분 일치이고, 잘못된 정규식은 그 행만 건너뛴다
 (한 줄 오타가 배치 전체를 죽이지 않게 — 대신 그 행은 아무것도 못 붙인다).
+**`weight_keys` 가 위 WEIGHTS 허용 표 밖이면 설정 오류로 거부한다**(exit 65). 조용히 무시하면
+사람은 그 경로를 덮었다고 믿는데 실제로는 아무 가중도 안 서고, `|` 로 열이 밀린 행이 그 모양이 된다.
+
+> **BASE 목록은 2026-08-09 적대적 시험으로 채웠다.** 처음엔 다섯 줄이었는데 흔한 배치를 놓쳤다 —
+> `/migrations/` 가 앞 슬래시를 요구해 레포 루트 `migrations/`(golang-migrate·sqlx)를 놓쳤고,
+> Rails 의 `db/migrate/` 는 `db/migration` 과 한 글자 차이로 빗나갔고, Liquibase 의 실제 관례
+> 디렉터리는 `db/changelog` 인데 패턴은 리터럴 `liquibase` 라 보통 경로에 안 나왔다.
+> 대소문자를 가려 `DB/Migration` 도 빠졌다. **운영 DB 를 드롭하는 finding 이 사람 없이 돌 수 있었다.**
 
 **BASE 에는 어느 스택에서나 같은 뜻인 것만 둔다.** DB 마이그레이션 디렉터리가 그렇다.
 돈·인가 경로는 저장소마다 이름이 달라 BASE 가 못 정한다 — LOCAL rubric 에 자기 경로를 적는다.
@@ -72,12 +80,41 @@ checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 
 | path_pattern | weight_keys |
 |---|---|
 | db/migration | operational_data |
-| /migrations/ | operational_data |
+| migrations/ | operational_data |
+| db/migrate/ | operational_data |
+| db/changelog | operational_data |
 | flyway | operational_data |
 | liquibase | operational_data |
 | alembic/versions | operational_data |
+| changeset | operational_data |
 
 <!-- LOOP_RUBRIC:PATHWEIGHTS:END -->
+
+### 유도에서 빼는 경로
+
+위 패턴은 부분 일치라 마이그레이션을 **설명하는** 문서, 테스트 픽스처, 의존성 트리까지 걸린다.
+그러면 마이그레이션 정책 문서에 테스트가 없다는 지적 하나가 `AWAIT_USER` 를 내고
+**밤새 도는 무인 루프가 거기서 선다**(2026-08-09 실측: `docs/db/migration-policy.md`,
+`src/test/fixtures/migrations/seed.sql`, `node_modules/p/migrations/x.js` 셋 다 사람 대기였다).
+
+아래 패턴에 걸리는 `location` 은 유도를 아예 안 받는다(checker 가 직접 단 가중은 그대로 남는다).
+이 표는 **LOCAL 이 BASE 경로 규칙을 끄는 유일한 길**이기도 하다 — KINDS·DIMFLOOR 는 같은 키를
+LOCAL 이 덮지만 PATHWEIGHTS 는 누적이라, 마이그레이션 디렉터리가 통째로 픽스처인 저장소는
+여기에 자기 경로를 적어 뺀다.
+
+<!-- LOOP_RUBRIC:PATHEXCLUDE:BEGIN -->
+
+| exclude_pattern |
+|---|
+| node_modules/ |
+| vendor/ |
+| \.md$ |
+| /fixtures/ |
+| /testdata/ |
+| src/test/ |
+| /__tests__/ |
+
+<!-- LOOP_RUBRIC:PATHEXCLUDE:END -->
 
 ## 자동화 금지 영역 (severity 무관 사람 대기)
 
@@ -97,6 +134,11 @@ checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 
 > 사람 대기가 표에서 선다. 종류를 잘못 부르면 여전히 새지만, 모델이 맞춰야 할 것이
 > **둘(종류 + 가중 플래그)에서 하나(종류)로** 줄었다. 이름은 스택 무관하게 골랐다 — 프로젝트가
 > 자기 용어를 쓰고 싶으면 LOCAL 에서 같은 `kind_id` 로 덮거나 별칭 행을 더한다.
+>
+> **`force_await=always` 는 LOCAL 이 끄지 못한다(2026-08-09).** 다른 열은 LOCAL 이 덮지만 이 열만
+> 병합이 합집합이다 — 어느 쪽이든 `always` 면 `always` 다. 그러지 않으면 LOCAL 한 줄로 다섯 게이트가
+> 통째로 사라지는데, 그 파일은 `.loop/rubric.md` 라 **채점받는 쪽(maker)이 쓸 수 있는 자리**다.
+> 등급은 여전히 LOCAL 이 조절할 수 있고, 사람 대기만 남는다.
 >
 > **다섯 행의 `always` 는 등급과 겹친다.** `base_severity` 가 BLOCKER 라 그것만으로 이미 사람 대기다.
 > 그래도 `always` 를 함께 적는 이유는, 나중에 누가 등급을 내려도 사람 대기가 남게 하기 위해서다
