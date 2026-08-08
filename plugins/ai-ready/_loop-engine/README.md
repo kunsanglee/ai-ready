@@ -37,7 +37,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 | 파일 | 책임 | 입력 → 출력 |
 |---|---|---|
 | `lib.sh` | 공용 부트스트랩: repo root·rubric 경로, severity 사다리, rubric 표 추출(awk/jq) | (source 전용) |
-| `score.sh` | 종류 lookup → base severity, weights 있으면 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
+| `score.sh` | 깨끗함↔안 봄 게이트(findings·reviewed 둘 다 비면 exit 65), 종류 lookup → base severity, 경로 유도 + checker 가중 합집합으로 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
 | `decide.sh` | severity 집계 → 종료 verdict | scored JSON → `{verdict, counts, await}` |
 | `stall.sh` | 사전식 벡터 + best-ever floor 정체 판정 | decide JSON + `--state <file>` → 갱신된 상태 |
 | `lessons.sh` | 루프 종료 후 history.jsonl diff → 출처1 실수(고쳐진 finding) 추출 | `--history <file>` → mistakes JSON |

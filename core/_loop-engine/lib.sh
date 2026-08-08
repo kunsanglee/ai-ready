@@ -130,6 +130,24 @@ loop_weights_json() {
   ' | jq -s 'map(.w)'
 }
 
+# PATHWEIGHTS 표 → [{p: 패턴, w: [가중키...]}] JSON 배열. 표가 없으면 빈 배열(유도 없음).
+# location 경로에 패턴이 걸리면 score 가 그 가중을 checker 가 준 것과 합집합한다.
+# 패턴 안에 `|` 를 쓰면 표 열이 쪼개지므로 한 행에 하나만 — rubric 산문이 그 제약을 적는다.
+# BASE 행 뒤에 LOCAL 행이 이어 붙는다(덮어쓰기가 아니라 누적 — 경로 규칙은 많을수록 촘촘하다).
+# JSON 은 손으로 짜지 않고 `jq -R` 로 인코딩한다. 이 열의 값은 **정규식**이라 역슬래시가 흔한데
+# (`\.sql$` 같은), printf 로 따옴표에 끼워 넣으면 `\.` 이 JSON 의 잘못된 이스케이프가 되어
+# 파서가 죽는다. 실제로 그렇게 죽는 것을 확인하고 이 방식으로 바꿨다. 큰따옴표도 같은 이유다.
+loop_pathweights_json() {
+  loop_table PATHWEIGHTS | awk -F'\t' '
+    $1 == "path_pattern" || $1 == "" || NF < 2 { next }
+    { print $1 "\t" $2 }
+  ' | jq -R -s '
+    split("\n") | map(select(length > 0)) | map(split("\t"))
+    | map({ p: .[0],
+            w: ((.[1] // "") | split(",") | map(sub("^\\s+"; "") | sub("\\s+$"; "")) | map(select(length > 0))) })
+  '
+}
+
 # PARAMS 표에서 한 값 조회. 없으면 비0 exit.
 loop_param() {
   loop_table PARAMS | awk -F'\t' -v k="$1" '

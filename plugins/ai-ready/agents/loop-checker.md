@@ -87,6 +87,9 @@ effort: xhigh
 ## weights (가중 플래그) — 정확히 태깅
 
 finding 이 닿으면 단다. 셸이 이걸로 severity 를 한 단계 올린다. 임의로 남발하지 마라.
+
+> **일부는 셸이 경로에서 직접 붙인다**(rubric 의 PATHWEIGHTS 표 — 마이그레이션 디렉터리 등).
+> 네가 빠뜨려도 그만큼은 서지만, **경로로 못 읽는 것은 네가 달아야 한다.** 겹쳐 달아도 합집합이라 안전하다.
 - `hotpath` — 사용자당 매 요청 타는 고빈도 경로(피드·홈·목록 조회), 루프 내부, 대량 순회.
 - `operational_data` — 운영 DB 기존 데이터를 읽거나 쓰는 경로(마이그레이션, 운영 테이블 UPDATE/DELETE, 운영 row 에 존재하는 enum 값).
 - `money` — 돈·포인트·정산·결제 경로.
@@ -95,11 +98,13 @@ finding 이 닿으면 단다. 셸이 이걸로 severity 를 한 단계 올린다
 ## force_await — 자동화 금지 영역 (severity 무관 사람 대기)
 
 다음에 닿는 finding 은 `force_await: true`. 점수 만점이어도 사람이 봐야 한다.
-1. 운영 DB DML/DDL(UPDATE/DELETE 마이그레이션, 컬럼 삭제, enum 제거).
-2. 돈·포인트·정산·결제 경로.
-3. 인가 정책 변경.
-4. 알림·메시지 대량 발송(회수 불가).
-5. 삭제·익명화·탈퇴 처리(복구 불가).
+**괄호 안 종류 이름을 쓰면 플래그를 빠뜨려도 표가 사람을 부른다** — 이름 쪽을 먼저 맞춘다.
+
+1. 운영 DB DML/DDL(UPDATE/DELETE 마이그레이션, 컬럼 삭제, enum 제거) — `ddl-safety`
+2. 돈·포인트·정산·결제 경로 — `money-path-change`
+3. 인가 정책 변경 — `authz-policy-change`
+4. 알림·메시지 대량 발송(회수 불가) — `mass-dispatch`
+5. 삭제·익명화·탈퇴 처리(복구 불가) — `destructive-data-op`
 
 ## 새 종류 (rubric 표에 없는 패턴)
 
@@ -114,6 +119,7 @@ KINDS 예외표는 "floor 와 다른 종류"만 담는다. 대부분의 finding 
 ```json
 {
   "base": "origin/main",
+  "reviewed": ["src/.../UpdateController.kt", "src/.../QueryService.kt"],
   "findings": [
     {
       "id": "c1",
@@ -143,5 +149,17 @@ KINDS 예외표는 "floor 와 다른 종류"만 담는다. 대부분의 finding 
 - `dimension` 은 5개 중 하나.
 - `weights` 는 배열(없으면 `[]`).
 - `force_await` 는 불리언.
+- **`reviewed` 는 네가 실제로 읽은 변경 파일의 경로 배열이다. 반드시 채운다.**
 - finding 이 없으면 `"findings": []` 로 빈 배열을 낸다(빈 배열도 신호 — 깨끗하다는 뜻).
+  **단 그때는 `reviewed` 가 비면 안 된다.** 둘 다 비면 채점 셸이 exit 65 로 거부하고 사람을 부른다 —
+  "깨끗함" 과 "아무것도 안 봤음" 이 구분되지 않기 때문이다. 실제로 이 둘이 가장 흔하게 갈리는 원인은
+  베이스 브랜치 해석이 어긋나 diff 가 통째로 비는 것이고, 그러면 점검 없이 통과가 된다.
+  **diff 가 정말 비어 있으면 빈 결과를 내지 말고 그 사실을 보고한다.**
 - severity·등급·PASS/FAIL 을 출력에 넣지 마라. 그건 너의 일이 아니다.
+
+**자동화 금지 영역은 종류 이름만 맞으면 표가 사람을 부른다.** BASE rubric 의 `ddl-safety`·
+`money-path-change`·`authz-policy-change`·`mass-dispatch`·`destructive-data-op` 다섯이 그것이고,
+`force_await` 나 `weights` 를 네가 안 달아도 표가 `AWAIT_USER` 를 낸다. 해당하면 **그 종류 이름을 쓴다.**
+
+**되돌려도 통과하는 테스트는 `test-vacuous` 다.** `test-missing` 은 테스트가 *없는* 경우고, 있는데
+변경을 원복해도 초록인 경우는 그것과 다르다(없는 것보다 나쁘다 — 덮인 것처럼 보인다).

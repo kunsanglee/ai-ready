@@ -11,4 +11,10 @@ Absolute rules:
 
 Input the orchestrator gives you: the original task summary, the compare base (git ref), the findings output path, and any convention docs.
 
-Output: write `{"base": "<ref>", "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`. If clean, use `"findings": []` (an empty array is a valid signal — it means clean). Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
+Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`. Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
+
+`reviewed` is the list of changed files you actually read. Always fill it. If clean, use `"findings": []` — an empty array is a valid signal — but **`reviewed` must not also be empty**: the scoring shell rejects that pair with exit 65, because "clean" and "never looked" are otherwise indistinguishable. The usual real cause is a mis-resolved compare base leaving an empty diff, which would pass a phase without review. If the diff really is empty, report that instead of emitting an empty result.
+
+Two kind names carry consequences the shell applies for you:
+- The five automation-prohibited areas have kind ids — `ddl-safety`, `money-path-change`, `authz-policy-change`, `mass-dispatch`, `destructive-data-op`. Naming the kind is enough; the table forces human review even without `force_await` or weights.
+- A test that still passes when the change is reverted is `test-vacuous` — distinct from `test-missing`, which is for a test that does not exist.

@@ -408,6 +408,7 @@ fi
 | 빌드/테스트 명령이 비어 게이트 스킵 | `detect_build.py` 가 빌드 시스템 미인식(unknown) | 매니페스트(build.gradle/package.json 등) 확인. 비표준이면 셋업에서 `LOOP_BUILD_CMD`/`LOOP_TEST_CMD` 를 직접 지정 |
 | `python3` / `detect_build.py` 오류 | python3 미설치 또는 감지기 부재(설치 손상) | python3 설치 확인. plugin 재설치(감지기는 `_loop-engine/detect_build.py`) |
 | `score.sh: 입력 형식 오류 — exit 65` | checker 가 findings 파일(`$LOOP_DIR/checker-findings.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
+| `loop: findings 도 reviewed 도 비었다 — exit 65` | checker 가 `{"findings":[]}` 만 내고 `reviewed` 를 안 채움. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** — 그러면 점검 없이 통과가 된다 | 베이스 브랜치와 diff 범위를 먼저 확인한다. 정말 깨끗하면 checker 가 검토한 파일을 `reviewed` 에 담아야 한다. PASS 로 넘기지 말 것 |
 | 정체 감지가 매번 INIT | 사이클 간 `stall.json` 이 사라짐(셸 종료마다 리셋한 경우) | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history.jsonl` append 누락 | Step 3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
 | 무한 같은 finding | maker 가 안 고치고 재진입 | Step 6-1 트리 확인이 잡는다. 그게 정체로 뜨면 못 고치는 finding 이므로 AWAIT_USER |
