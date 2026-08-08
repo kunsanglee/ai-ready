@@ -58,24 +58,25 @@ else
   exit 1
 fi
 
-# --- 설명문 드리프트: 매니페스트 셋이 이 릴리스를 언급하나 ---
-# 버전 검사는 `version` 숫자만 본다. 그 옆의 `description` 은 마켓플레이스 UI 에서 설치자가 읽는 자리인데
-# 실제로 세 파일이 세 가지 답을 하고 있었다(marketplace 는 0.9.6 을 건너뛰고, claude 는 0.9.7 이 없고,
-# codex 는 0.9.5 에서 멈췄다). 전문을 강제로 같게 만들지는 않는다 — 길이가 8,957자와 19,679자로 달라
-# 목적이 다른 글이다. **이 릴리스를 언급은 하는가**까지만 잠근다.
-desc_missing=""
+# --- 설명문 길이: 변경 이력을 여기 쌓지 않는다 ---
+# 이 필드는 플러그인 목록 화면에서 사람이 읽는 한 문단이다. 그런데 릴리스마다 문단을 하나씩 덧붙여
+# 19,805자까지 갔고, 목록이 읽을 수 없게 됐다. 0.9.7 에서 전부 README 변경 이력으로 옮겼다.
+#
+# **직전 판의 "이 릴리스를 언급하나" 검사가 바로 그 부풀림의 유인이었다** — 통과하는 가장 쉬운 길이
+# 문단을 하나 더 붙이는 것이었다. 그래서 그 검사를 길이 상한으로 바꾼다. 릴리스 이력의 단일 출처는
+# README 이고, 아래 changelog 검사가 그쪽을 지킨다.
+DESC_MAX=1200
+desc_long=""
 for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json codex/plugins/ai-ready/.codex-plugin/plugin.json; do
-  if ! jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description] | map(select(. != null)) | join(" ")' "$f" \
-       | grep -q "v${ver_claude}+"; then
-    desc_missing="$desc_missing $f"
-  fi
+  longest="$(jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description] | map(select(. != null) | length) | max // 0' "$f")"
+  [ "$longest" -gt "$DESC_MAX" ] && desc_long="$desc_long $f($longest자)"
 done
-if [ -n "$desc_missing" ]; then
-  echo "[description] 누락 — 이 매니페스트의 설명문이 v${ver_claude} 를 언급하지 않는다:$desc_missing" >&2
-  echo "              설치자가 마켓플레이스에서 읽는 자리라, 셋이 다른 릴리스를 말하면 무엇이 깔리는지 알 수 없다." >&2
+if [ -n "$desc_long" ]; then
+  echo "[description] 너무 길다(상한 ${DESC_MAX}자) —$desc_long" >&2
+  echo "              플러그인 목록에서 사람이 읽는 자리다. 릴리스 이력은 README.md 변경 이력에 쓴다." >&2
   exit 1
 fi
-echo "[description] OK — 매니페스트 셋 모두 v$ver_claude 언급"
+echo "[description] OK — 매니페스트 셋 모두 ${DESC_MAX}자 이하"
 
 # --- 변경 이력 드리프트: 사용자 대면 릴리스 노트가 이 버전을 담고 있나 ---
 # 0.9.6 은 매니페스트도 README 도 안 올라갔다. 계약이 바뀌는 릴리스에서 설치자가 그 사실을 알 경로가
