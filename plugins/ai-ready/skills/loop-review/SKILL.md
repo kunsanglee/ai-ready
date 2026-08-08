@@ -106,9 +106,14 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 F="${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse --abbrev-ref HEAD | cksum | tr ' ' '-').json"
 # checker 가 파일에 못 썼으면(빈/미생성) exit 65 로 fail-loud — 조용히 PASS 금지(정상 빈 배열은 -s 통과라 오탐 없음).
 [ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 멈춰 보고" >&2; exit 65; }
-SCORED=$(bash "$ENG/score.sh" "$F")          # finding 마다 severity·await·base·kind_known 추가
+# 종료코드를 본다. 삼키면 $SCORED 가 빈 문자열이 된 채 흘러가고, 아래 rm 이 원인을 볼 유일한
+# 증거(findings 파일)까지 지운다 — 조용한 통과가 아니라 조용한 증거 인멸이 된다.
+SCORED=$(bash "$ENG/score.sh" "$F") || {
+  echo "loop: 채점이 입력을 거부했다(exit 65) — checker 출력 계약 위반. 흔한 원인은 깨끗한 결과에 reviewed 를 안 채운 것. $F 는 남겨 두니 그대로 보고 멈춘다" >&2
+  exit 65
+}
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")   # verdict·counts·await 집계
-rm -f "$F"
+rm -f "$F"   # 채점이 성공한 뒤에만 지운다
 ```
 
 - `$SCORED` = `{base, reviewed, findings:[{..., severity, await, base, kind_known}]}`.
