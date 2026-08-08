@@ -37,7 +37,12 @@ description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(
 ### Step 1. 스코프·작업 정의 파악
 
 ```bash
-ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+# 채점 엔진: plugin 번들. **$CLAUDE_PLUGIN_ROOT 는 Bash 도구의 셸에 없다** — 스킬 본문을 만들 때
+# 치환되는 값이라 자식 셸로 안 내려간다(실측). 그대로 쓰면 ENG=/_loop-engine 이 되어 조용히 없는
+# 경로를 가리킨다. 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 그대로 넣는다.
+SKILL_DIR="<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"
+ENG="$(cd "$SKILL_DIR/../.." && pwd)/_loop-engine"
+[ -f "$ENG/lib.sh" ] || { echo "loop: 채점 엔진을 못 찾았다 ($ENG) — base directory 확인" >&2; exit 65; }
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 # 베이스·컨벤션 문서·지식층을 diff 보다 먼저 감지한다 — 기본 브랜치가 master 인 레포에서
 # origin/main 하드코딩이 깨지고, checker 프롬프트(Step 2)가 이 값들을 쓴다.
@@ -97,7 +102,12 @@ checker 는 `{base, reviewed:[...], findings:[...]}` 를 그 파일에 쓴다(�
 checker 가 쓴 findings 파일(`$F`)을 채점 셸에 흘린다. **severity 는 셸이 매긴다 — checker 가 낸 등급을 쓰지 않는다(애초에 checker 는 등급을 안 낸다).**
 
 ```bash
-ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+# 채점 엔진: Step 1 과 같은 유도. **$CLAUDE_PLUGIN_ROOT 는 Bash 도구의 셸에 없고**(스킬 본문을 만들
+# 때 치환되는 값이라 자식 셸로 안 내려간다), Bash 호출마다 새 셸이라 Step 1 의 ENG 도 남지 않는다.
+# 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 그대로 넣는다.
+SKILL_DIR="<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"
+ENG="$(cd "$SKILL_DIR/../.." && pwd)/_loop-engine"
+[ -f "$ENG/lib.sh" ] || { echo "loop: 채점 엔진을 못 찾았다 ($ENG) — base directory 확인" >&2; exit 65; }
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 # 프로젝트에 LOCAL rubric 이 있으면 BASE 와 병합(없으면 BASE 만으로 점검).
 [ -f "$PROJECT_ROOT/.loop/rubric.md" ] && export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"

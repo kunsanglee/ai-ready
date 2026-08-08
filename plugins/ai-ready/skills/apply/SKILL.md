@@ -40,11 +40,20 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 
 각 audit 규칙 이름(`rule.name`)에 대응되는 처리 방법:
 
+아래 표의 mechanical 명령은 `ai-ready:audit` 스킬 폴더의 스크립트를 부른다. 그 폴더 경로는 아래 두 줄로 유도한다 — **`$CLAUDE_PLUGIN_ROOT` 는 Bash 도구의 셸에 없다**(스킬 본문을 만들 때 치환되는 값이라 자식 셸로 안 내려간다. 실측). 그대로 쓰면 `/skills/audit/...` 이 되어 조용히 없는 경로를 가리킨다. Bash 호출마다 새 셸이라 아래 두 줄을 **명령과 같은 호출에 함께** 넣는다.
+
+```bash
+# 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 그대로 넣는다(= .../skills/apply).
+SKILL_DIR="<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"
+AUDIT="$(cd "$SKILL_DIR/../audit" && pwd)"
+[ -f "$AUDIT/scripts/audit.py" ] || { echo "apply: audit 스크립트를 못 찾았다 ($AUDIT) — base directory 확인" >&2; exit 65; }
+```
+
 | Rule name (audit.json 기준) | 처리 방법 | 명령 |
 |----------------------------|----------|------|
 | 루트 CLAUDE.md 또는 AGENTS.md 존재 | **judgment** (스크립트 없음) | Claude 가 프로젝트를 훑고 루트 CLAUDE.md 초안 작성 → 사용자 승인 후 저장. 분량 목표는 "루트 CLAUDE.md 상주 분량 (800~8,000바이트)" 규칙과 같은 **바이트 기준 800~8,000** — 채점이 0.8.9 부터 바이트라, 줄 수로 짓으면 한국어 문서는 줄이 적어도 초과할 수 있다 |
 | 루트 문서가 3개 이상의 모듈 경로/문서 참조 | **maintain** | `inject_module_map.py --target <T> --json` 로 모듈 사실(경로·요약·가이드 존재) 수집 → AI 가 루트 CLAUDE.md '모듈 맵'·MODULE_MAP.md 에 새 모듈만 추가·바뀐 요약만 수정. 마커(`<!-- module-map -->`) 안 자동 영역만, 사용자 영역 보존 |
-| 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/scaffold.py --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
+| 모듈별 CLAUDE.md 커버리지 | **mechanical** | `python3 "$AUDIT/scripts/scaffold.py" --target <T> --out <T>/.ai-ready/scaffolds --top 5` |
 | 루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조 | **judgment** *(단일 모듈)* | Claude 가 루트 `CLAUDE.md` 의 '모듈 맵' 섹션에서 `docs/PACKAGES.md` lazy-load 진입 안내를 박는다 |
 | 패키지 카탈로그 문서 (PACKAGES.md) 존재 + 3개 이상 패키지 섹션 | **mechanical+judgment** *(단일 모듈)* | `scaffold.py` 가 `scaffolds/PACKAGES.md` 초안 생성 → Claude 가 패키지별 TODO 라인을 패키지 코드 훑어 채움 → `docs/PACKAGES.md` 로 이동 |
 | 패키지 카탈로그 문서 적정 길이 (50~300줄) | **judgment** *(단일 모듈)* | Claude 가 카탈로그를 50~300줄 범위로 다이어트하거나 패키지별 항목을 보강 |
@@ -54,7 +63,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 모듈 문서 평균 길이 (10~50줄) | **judgment** | Claude 가 가장 긴 모듈 CLAUDE.md 를 추려 다이어트하고, 평균이 10줄 미만이면 반대로 스텁을 채운다 (**v0.9.0+** 하한). **보존 가드**: "도메인 설계 문서" 포인터 줄 (`docs/design/domain_{name}.md` 참조) 은 다이어트 대상에서 제외 — design 문서가 있는 도메인의 모듈엔 반드시 포인터가 남아야 한다 (불변식) |
 | 명시적 안티패턴 / 절대 금지 가이드 존재 | **judgment** | Claude 가 `.ai-ready/scaffolds/ANTIPATTERNS.md` 와 git 핫스팟을 보고 "DO NOT" 항목 5~10개 초안 작성 |
 | '사용 시점' 가이드 존재 | **maintain+judgment** | `inject_lazy_load_index.py --target <T> --json` 로 트리거 사실 수집 → AI 가 루트 CLAUDE.md lazy-load 표(자동 마커 안)에 새 트리거 추가(사용자 행 보존). 추가로 모듈/패턴 문서에 "When to use" bullet 도 함께 추가 권장 |
-| ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/extract_antipatterns.py --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |
+| ANTIPATTERNS.md (또는 wiki/anti-patterns/) 존재 | **mechanical** | `python3 "$AUDIT/scripts/extract_antipatterns.py" --target <T> --out <T>/.ai-ready/scaffolds/ANTIPATTERNS.md --days 180` (그 후 Claude 가 시드 → 실제 항목으로 변환해 `<T>/docs/ANTIPATTERNS.md` 에 채택) |
 | 아키텍처 의사결정 기록 (ADR / wiki/decisions) | **judgment** | Claude 가 git history 와 README, blog 등을 훑어 ADR 3~5건 후보 제시 (`<T>/docs/decisions/00NN-*.md`). *이미 design 통합 문서 등으로 결정을 기록 중이면* `.ai-ready/config.json` 의 `rubric.decision_records.dir_hints` 에 그 디렉토리를 선언해 인정시키는 게 우선 |
 | 네이밍 컨벤션 문서화 | **maintain** | `extract_section.py --target <T> --kind naming --json` 로 흩어진 네이밍 섹션 사실 수집 → AI 가 docs/NAMING.md 에 새 섹션만 추가·바뀐 것만 수정(사람이 다듬은 산문 보존). 부재 시에만 통째 생성 |
 | 모듈 의존성 맵 / 다이어그램 존재 | **maintain** | `gen_arch_diagram.py --target <T> --json` 로 정확한 의존 엣지·노드 사실 수집 → AI 가 그 엣지로 docs/ARCHITECTURE.md 의 Mermaid 를 갱신(엣지를 지어내지 않음, 스크립트가 준 것만). 사람이 더한 설명 산문 보존 |
@@ -63,7 +72,7 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
 | 기계적 검증 훅 (pre-commit / AI 에이전트 hook) | **judgment** | AI 코딩 환경이면 `.claude/settings.json` PostToolUse(편집 후 ktlint/format)·PreToolUse(커밋 전 test/check) hook 을 먼저 제안. 추가 안전망으로 lefthook pre-commit / CI. 글로벌(~/.claude) 말고 *프로젝트* 설정에 둘 것 |
 | CI 설정 존재 + 테스트 참조 | **judgment** | CI provider 에 따라 다름 — Claude 가 추천 |
 | 테스트 컨벤션 문서화 (CLAUDE.md 또는 TESTING.md) | **maintain** | `extract_section.py --target <T> --kind testing --json` 로 흩어진 테스트 섹션 사실 수집 → AI 가 docs/TESTING.md 에 새 섹션만 추가·바뀐 것만 수정(사람이 다듬은 산문 보존). 부재 시에만 통째 생성 |
-| CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재 | **mechanical** | `python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/install_hook.py --target <T>` |
+| CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재 | **mechanical** | `python3 "$AUDIT/scripts/install_hook.py" --target <T>` |
 | CLAUDE.md 갱신 프로토콜 문서화 | **judgment** | Claude 가 루트 CLAUDE.md 에 "## 유지보수" 섹션 추가 제안 |
 | 매트릭스 문서 / 대시보드 존재 | **judgment (대)** | 측정 인프라 도입 — 별도 작업 |
 | PR 리뷰 시간 / AI 사용량 / 토큰 추적 | **judgment (대)** | 추적 셋업 — 별도 작업 |
@@ -94,9 +103,9 @@ description: Apply ROI-prioritized actions from an ai-ready:audit run. Read `<ta
    - 관련 파일 읽기 (`Read`)
    - 초안 작성 (메시지로 보여주기)
    - 사용자 승인 대기 → 적용 (`Write`/`Edit`)
-6. 모든 적용이 끝나면:
+6. 모든 적용이 끝나면 (`$AUDIT` 유도 두 줄을 같은 Bash 호출에 함께 넣는다 — 호출마다 새 셸이라 앞 호출의 값이 안 남는다):
    ```
-   python3 $CLAUDE_PLUGIN_ROOT/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready
+   python3 "$AUDIT/scripts/audit.py" --target <T> --out <T>/.ai-ready
    ```
    재실행해 변화한 점수와 카테고리별 변화를 표로 보고.
 

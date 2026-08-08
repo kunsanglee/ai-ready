@@ -74,6 +74,13 @@ ANCHORS = {
     "lv-score":      ("loop-review", 'rm -f "$F"'),
 }
 
+# 스킬 폴더 자리표시자. 호스트가 스킬 본문 첫머리에 텍스트로 주입하는 "Base directory for this
+# skill" 값을 오케스트레이터가 여기에 붙여 넣는다. `$CLAUDE_PLUGIN_ROOT` 는 Bash 도구의 셸에
+# **없어서**(스킬 본문을 만들 때 치환되는 값이라 자식 셸로 안 내려간다) 그 자리를 대신한다.
+# 치환은 run_block 이 ANCHORS 의 스킬 이름으로 자동 수행한다 — 호출부마다 적으면 아홉 군데가 되고
+# 새 블록이 늘 때 빠뜨리기 쉽다. 일부러 안 치환하고 돌리는 대조군은 keep_placeholder=True 를 쓴다.
+SKILL_DIR_PLACEHOLDER = '"<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"'
+
 # 문서가 "재유도 프리앰블 뒤에" 라고 지시하는 블록. 프리앰블은 lr-gate 에서 뽑아 붙인다.
 NEEDS_PREAMBLE = {"lr-makerinput", "lr-tree"}
 
@@ -247,7 +254,9 @@ class BlockCase(unittest.TestCase):
             "HOME": os.environ.get("HOME", str(self.scratch)),
             "LANG": os.environ.get("LANG", "en_US.UTF-8"),
             "CLAUDE_PROJECT_DIR": str(self.work),
-            "CLAUDE_PLUGIN_ROOT": str(TREE),
+            # CLAUDE_PLUGIN_ROOT 는 **일부러 안 넣는다.** Bash 도구가 띄우는 셸에 그 변수가 없다는
+            # 것이 실측이고, 여기서 주입하면 블록이 실제 환경에서는 안 도는데 시험만 초록이 된다.
+            # 그 주입이 `ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"` 을 오래 살려 뒀다(TestControlGroups).
             # 실제 /tmp 를 오염시키지 않는다 — loop-review 블록이 TMPDIR 하위에 findings 를 쓴다.
             "TMPDIR": str(self.scratch / "tmpdir"),
         }
@@ -256,10 +265,15 @@ class BlockCase(unittest.TestCase):
         return base
 
     def run_block(self, block_id: str, *, env: dict[str, str] | None = None,
-                  subst: dict[str, str] | None = None, body: str | None = None) -> Run:
+                  subst: dict[str, str] | None = None, body: str | None = None,
+                  keep_placeholder: bool = False) -> Run:
         text = BLOCKS[block_id] if body is None else body
         if block_id in NEEDS_PREAMBLE and body is None:
             text = PREAMBLE + text
+        if SKILL_DIR_PLACEHOLDER in text and not keep_placeholder:
+            # 오케스트레이터가 하는 일과 같다 — 그 스킬 본문 첫머리의 base directory 를 붙여 넣는다.
+            skill = ANCHORS[block_id][0]
+            text = text.replace(SKILL_DIR_PLACEHOLDER, f'"{SKILLS / skill}"')
         for k, v in (subst or {}).items():
             self.assertIn(k, text, f"{block_id} 에 치환 대상 '{k}' 가 없다 — 문서가 바뀠다")
             text = text.replace(k, v)
@@ -326,6 +340,27 @@ class TestBlockInventory(unittest.TestCase):
                                           capture_output=True, text=True)
                     self.assertEqual(proc.returncode, 0,
                                      f"{skill} 블록 {i} 문법 오류: {proc.stderr}")
+
+    def test_no_block_relies_on_plugin_root_env(self):
+        """`$CLAUDE_PLUGIN_ROOT` 는 Bash 도구의 셸에 없다 — 블록이 거기 기대면 안 된다.
+
+        스킬 본문을 만들 때 치환되는 값이라 자식 셸로 안 내려간다(실측: `echo` 가 빈 문자열).
+        그대로 쓰면 `ENG=/_loop-engine` 처럼 **있어 보이는데 없는** 경로가 되고, 뒤따르는
+        `loop_param` 이 빈 값을 내며 조용히 흘러간다. 경로는 base directory 에서 유도한다.
+
+        주석 줄은 뺀다 — 왜 이 변수를 쓰면 안 되는지 적은 줄이 블록마다 있고, 그 설명이 사라지면
+        다음 사람이 같은 실수를 되돌린다.
+        """
+        def code_only(body: str) -> str:
+            return "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+
+        offenders = [f"{skill} 블록 {i}"
+                     for skill, blocks in ALL_BLOCKS.items()
+                     for i, body in enumerate(blocks, 1)
+                     if "CLAUDE_PLUGIN_ROOT" in code_only(body)]
+        self.assertEqual(
+            offenders, [],
+            "이 블록들이 Bash 셸에 없는 변수를 쓴다 — base directory 자리표시자로 유도한다")
 
     def test_state_blocks_rederive_or_are_prepended(self):
         """LOOP_DIR 파생 상태를 쓰는 블록은 포인터에서 재유도하거나 프리앰블을 붙여야 한다.
@@ -936,6 +971,57 @@ class TestLoopReview(BlockCase):
         r = self.run_block("lv-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertFalse(f.exists(), "채점 후 findings 파일이 남았다")
+
+
+# ── 11. 엔진 경로 유도 대조군 ───────────────────────────────────────────────
+
+# 0.9.8 까지의 엔진 유도. 시험 하네스가 `CLAUDE_PLUGIN_ROOT` 를 직접 주입해서 초록이었고,
+# 실제 Bash 도구 셸에는 그 변수가 없어 `ENG=/_loop-engine` 으로 돌았다 — 대조군으로만 쓴다.
+OLD_ENGINE_DERIVATION = '''\
+ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+[ -f "$ENG/lib.sh" ] || { echo "loop: 채점 엔진을 못 찾았다 ($ENG)" >&2; exit 65; }
+echo "엔진 찾음: $ENG"
+'''
+
+
+class TestControlGroups(BlockCase):
+    """이 하네스가 실제로 무언가를 잡고 있다는 증거.
+
+    검사가 아예 안 돈 것과 아무것도 못 찾은 것은 출력이 같다. 그래서 "잡혀야 하는 것" 을 일부러
+    넣어 매번 확인한다. 여기 둘은 엔진 경로 유도 한 자리를 서로 다른 방향에서 잠근다.
+    """
+
+    def test_unsubstituted_placeholder_dies_loud(self):
+        """자리표시자를 안 붙여 넣고 돌리면 그 자리에서 비0 으로 죽어야 한다.
+
+        블록의 `[ -f "$ENG/lib.sh" ]` 가드가 이걸 보장한다. 가드를 빼면 빈 경로가 조용히 흘러가
+        `loop_param` 이 빈 값을 내고 brake 가 무력화된다 — 그때 이 시험이 먼저 빨개진다.
+        """
+        targets = [bid for bid, body in BLOCKS.items() if SKILL_DIR_PLACEHOLDER in body]
+        self.assertTrue(targets, "자리표시자를 쓰는 블록이 하나도 없다 — 문서가 바뀠다")
+        for bid in targets:
+            with self.subTest(block=bid):
+                r = self.run_block(bid, keep_placeholder=True)
+                self.assertNotEqual(r.rc, 0, f"{bid} 가 치환 없이도 통과했다\n{r}")
+                self.assertIn("채점 엔진을 못 찾았다", r.err, repr(r))
+
+    def test_substituted_placeholder_finds_the_engine(self):
+        """대조군의 대조군 — 붙여 넣으면 실제로 엔진을 찾는다(위 실패가 늘 죽는 블록 탓이 아니다)."""
+        (self.work / "Changed.kt").write_text("class Changed\n")   # 빈 diff 가드를 통과할 변경
+        r = self.run_block("lv-detect")
+        self.assertNotIn("채점 엔진을 못 찾았다", r.err, repr(r))
+        self.assertIn(str(ENGINE / "rubric.base.md"), r.out, repr(r))
+
+    def test_old_plugin_root_derivation_finds_nothing(self):
+        """옛 표기는 이 셸에서 아무것도 못 찾는다 — 하네스가 그 변수를 주입하지 않기 때문이다.
+
+        **이 시험이 `env()` 의 주입 삭제를 잠근다.** 누가 `CLAUDE_PLUGIN_ROOT` 주입을 되살리면
+        옛 표기가 다시 도는 것처럼 보이면서 여기가 빨개진다. 주입이 있던 동안 실제 환경에서는
+        안 도는 블록이 시험에서만 초록이었고, 그게 이 결함이 오래 산 이유다.
+        """
+        r = self.run_block("old-engine", body=OLD_ENGINE_DERIVATION)
+        self.assertEqual(r.rc, 65, f"셸에 CLAUDE_PLUGIN_ROOT 가 있다 — 주입이 되살아났나\n{r}")
+        self.assertIn("(/_loop-engine)", r.err, repr(r))
 
 
 if __name__ == "__main__":

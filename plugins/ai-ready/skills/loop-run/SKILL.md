@@ -65,8 +65,12 @@ brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)
 ```bash
 # 대상 프로젝트 루트: plugin 은 $CLAUDE_PROJECT_DIR 를 제공. 없으면(직접 실행 등) git 루트로 fallback.
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"; cd "$PROJECT_ROOT"
-# 채점 엔진: plugin 번들. $CLAUDE_PLUGIN_ROOT 는 ai-ready plugin 설치 위치.
-ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+# 채점 엔진: plugin 번들. **$CLAUDE_PLUGIN_ROOT 는 Bash 도구의 셸에 없다** — 스킬 본문을 만들 때
+# 치환되는 값이라 자식 셸로 안 내려간다(실측). 그대로 쓰면 ENG=/_loop-engine 이 되어 조용히 없는
+# 경로를 가리킨다. 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 그대로 넣는다.
+SKILL_DIR="<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"
+ENG="$(cd "$SKILL_DIR/../.." && pwd)/_loop-engine"
+[ -f "$ENG/lib.sh" ] || { echo "loop: 채점 엔진을 못 찾았다 ($ENG) — base directory 확인" >&2; exit 65; }
 # 프로젝트 사실을 런타임 감지(읽기 전용 — 파일 안 만든다). detect_build.py 는 매니페스트·브랜치만 읽어 JSON 을 낸다.
 DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
 LOOP_BUILD_CMD="$(printf '%s' "$DET" | jq -r '.build_cmd // ""')"

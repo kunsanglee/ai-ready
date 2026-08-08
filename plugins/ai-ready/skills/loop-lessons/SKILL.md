@@ -37,7 +37,12 @@ description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 �
 
 - **출처1 (loop 가 잡고 maker 가 고친 실수)**: `loop-lesson-synthesizer` 가 받을 JSON. 없으면 history 경로로 직접 만든다.
   ```bash
-  ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
+  # 엔진: plugin 번들. **$CLAUDE_PLUGIN_ROOT 는 Bash 도구의 셸에 없다** — 스킬 본문을 만들 때
+  # 치환되는 값이라 자식 셸로 안 내려간다(실측). 그대로 쓰면 ENG=/_loop-engine 이 되어 조용히 없는
+  # 경로를 가리킨다. 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 그대로 넣는다.
+  SKILL_DIR="<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"
+  ENG="$(cd "$SKILL_DIR/../.." && pwd)/_loop-engine"
+  [ -f "$ENG/lib.sh" ] || { echo "loop: 엔진을 못 찾았다 ($ENG) — base directory 확인" >&2; exit 65; }
   PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
   # 반영 대상 경로를 런타임 감지(읽기 전용, 어댑터 파일 없음).
   DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
@@ -89,7 +94,7 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 
 - **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(ai-ready 가 만든 `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 *덧붙인다*(append, 통째 덮어쓰기 금지 — ai-ready 와 공동 저작하는 문서). 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다. 감지된 지식층 경로가 비어 있으면(프로젝트에 `docs/ANTIPATTERNS.md` 부재) 사용자에게 어디에 둘지 묻는다 — 임의 생성 금지.
 - **모듈 CLAUDE.md 추가**(문턱 미달·모듈 고유): 해당 `{module}/CLAUDE.md` "절대 금지" 섹션에 짧게.
-- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다(이것이 스택 특유 종류가 자라는 유일한 경로 — 별도 생성기 없음). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "$CLAUDE_PLUGIN_ROOT/_loop-engine/test.sh"` 로 BASE 채점 회귀 0 확인.
+- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다(이것이 스택 특유 종류가 자라는 유일한 경로 — 별도 생성기 없음). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "<엔진 경로>/test.sh"` 로 BASE 채점 회귀 0 확인 — 엔진 경로는 Step 1 이 창에 낸 "lessons 값:" 줄의 `engine=` 값이다(`$CLAUDE_PLUGIN_ROOT` 는 Bash 도구의 셸에 없고, 셸 변수도 호출을 건너 남지 않는다).
 - 반영 후 변경 파일·추가 항목을 사용자에게 1줄로 보고한다. 커밋은 사용자/별도 절차가 한다(이 스킬은 파일 기록까지).
 
 ## 트러블슈팅
