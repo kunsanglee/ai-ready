@@ -243,6 +243,7 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 | stall_threshold_critical | 2 |
 | stall_threshold_major | 2 |
 | regress_consecutive | 2 |
+| repeated_kind_cycles | 3 |
 | max_iterations | 5 |
 | budget_usd | 500 |
 | budget_tokens | 5000000 |
@@ -252,6 +253,9 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 
 > 정체 파라미터와 brake 파라미터를 한 표에 둔다 — 이 표가 loop 설정 전체의 단일 원천이다.
 > 정체 파라미터(`stall_threshold_*`, `regress_consecutive`)는 `stall.sh` 가 `loop_param` 으로 읽는다.
+> `repeated_kind_cycles` 는 `kindstreak.sh` 가 같은 방식으로 읽는다 — 같은 **종류**의 finding 이 몇 사이클
+> 연속으로 그 사이클을 지배하면 사람을 부를지다. 3인 이유는 두 번은 우연일 수 있고 세 번이면 코드가 아니라
+> 목표를 의심할 근거이기 때문이다(끝나는 지점이 없는 목표는 하나를 고칠 때마다 checker 가 다음 하나를 찾는다).
 > brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
 > 같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
 > 값은 단일 통일(5회 / $500 / 5M 토큰 / 120분) — 무인(케이스2)·핸드오프(케이스3) 같은 상한. 케이스별 프로파일은 두지 않는다.
