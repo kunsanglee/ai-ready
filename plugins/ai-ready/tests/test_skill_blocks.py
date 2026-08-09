@@ -526,9 +526,9 @@ class TestLoopBuildSetup(BlockCase):
         self.assertEqual(self.param("BUDGET_MIN"), str(per_phase * 2))
 
     # phases.json 스키마 위반 — 무인 순회 직전 fail-loud 로 걸러야 하는 것들.
+    # `.phases` 자체가 없거나 빈 경우는 여기 없다 — 그건 앞선 (1a) 스펙 검사가 먼저 잡고,
+    # 아래 test_empty_or_nonarray_phases_named_by_the_spec_gate 가 그 자리를 지킨다.
     SCHEMA_VIOLATIONS = {
-        "phases 비배열": {"phases": {}},
-        "phases 빈배열": {"phases": []},
         "name 누락": {"phases": [{"status": "pending",
                                 "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
         "name 에 슬래시": {"phases": [{"name": "a/b", "status": "pending",
@@ -569,6 +569,24 @@ class TestLoopBuildSetup(BlockCase):
                 r = self.run_block("b-budget")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 통과시켰다\n{r}")
                 self.assertIn("phases.json 스키마 위반", r.err)
+
+    def test_empty_or_nonarray_phases_named_by_the_spec_gate(self):
+        """`.phases` 가 배열이 아니거나 비면 (1a) 스펙 검사가 먼저 잡고 이름을 댄다.
+
+        `all(.phases[]; ...)` 는 빈 배열에서 **공허하게 참**이라, (1a)에 배열 조건이 없으면
+        이 경우가 그 검사를 그냥 지나가 (1b)의 "스키마 위반" 한 줄로 떨어진다. 그러면 무엇이
+        빠졌는지 이름으로 알려주려고 두 검사를 나눈 목적이 이 경우에만 죽는다. Step 1 의
+        같은 검사에는 원래 배열 조건이 있었고 Step 2 사본에만 없던 것이라, 두 사본이 어긋난
+        자리이기도 했다.
+        """
+        self.setup_loop()
+        for label, data in (("비배열", {"phases": {}}), ("빈배열", {"phases": []})):
+            with self.subTest(violation=label):
+                self.setup_phases(self.with_spec_fields(data))
+                r = self.run_block("b-budget")
+                self.assertEqual(r.rc, 65, f"[{label}] 를 통과시켰다\n{r}")
+                self.assertIn("착수 전 스펙 검사 셋이 없다", r.err, repr(r))
+                self.assertIn("exit_criteria", r.err, "무엇이 빠졌는지 이름으로 안 나온다")
 
     # 착수 전 검사 셋이 빠지거나 정보가 없는 판 — 0.9.11 까지는 순회가 이걸 그대로 받았다.
     # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)

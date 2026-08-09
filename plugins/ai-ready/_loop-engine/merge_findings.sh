@@ -20,31 +20,33 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 expect=""
-lenses=""   # 공백 구분 렌즈 이름 (bash 3.2 라 연관 배열을 안 쓴다 — lib.sh 호환 규약)
-paths=""
+# **배열로 모은다.** 공백으로 이어 붙인 뒤 단어 분할로 되돌리면 경로에 공백이 있을 때 한 인자가
+# 둘로 쪼개져 개수 검사가 엉뚱하게 어긋난다(macOS 에서 `~/My Projects/repo` 는 흔하다 — 실측으로
+# exit 65 를 냈다). bash 3.2 가 막는 것은 **연관** 배열(declare -A)이고 일반 배열은 쓴다.
+lenses=()
+paths=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --expect) expect="${2:-}"; shift 2 ;;
     --expect=*) expect="${1#--expect=}"; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *)
       case "$1" in
         *=*) : ;;
         *) echo "merge_findings: 인자는 '렌즈이름=경로' 형식이어야 한다: $1" >&2; exit 64 ;;
       esac
+      # 경로 쪽에 `=` 가 더 있어도 안전하다 — 이름은 첫 `=` 앞까지, 경로는 첫 `=` 뒤 전부.
       lens_name="${1%%=*}"; lens_path="${1#*=}"
       if [ -z "$lens_name" ] || [ -z "$lens_path" ]; then
         echo "merge_findings: 렌즈 이름과 경로가 모두 필요하다: $1" >&2; exit 64
       fi
-      lenses="$lenses $lens_name"; paths="$paths $lens_path"
+      lenses+=("$lens_name"); paths+=("$lens_path")
       shift ;;
   esac
 done
 
-# shellcheck disable=SC2086
-set -- $paths
-given=$#
+given=${#paths[@]}
 
 if [ -z "$expect" ]; then
   echo "merge_findings: --expect N 이 필요하다 (몇 개의 렌즈가 쓸 예정이었나)." >&2
@@ -54,6 +56,10 @@ fi
 case "$expect" in
   ''|*[!0-9]*) echo "merge_findings: --expect 는 정수여야 한다: $expect" >&2; exit 64 ;;
 esac
+# 0 개를 기대하는 병합은 없다. 통과시키면 jq 가 파일 인자 없이 떠 stdin 을 기다리며 멈춘다.
+if [ "$expect" -eq 0 ]; then
+  echo "merge_findings: --expect 0 은 받지 않는다 — 합칠 렌즈가 없으면 채점할 것도 없다." >&2; exit 64
+fi
 
 # 기대한 만큼의 렌즈 결과가 실제로 왔나 — 이 셸의 핵심 게이트.
 if [ "$given" -ne "$expect" ]; then
@@ -66,9 +72,9 @@ fi
 # 파일마다 존재·비어있지 않음·형식을 따로 본다. 어느 렌즈가 문제인지 이름으로 말해야
 # 사람이 그 축만 다시 돌릴 수 있다 — "입력 오류" 한 줄이면 셋을 다 뒤지게 된다.
 i=0
-for lens in $lenses; do
+while [ "$i" -lt "$given" ]; do
+  lens="${lenses[$i]}"; p="${paths[$i]}"
   i=$((i + 1))
-  p="$(eval "echo \${$i}")"
   if [ ! -s "$p" ]; then
     echo "merge_findings: 렌즈 '$lens' 의 결과 파일이 비었거나 없다 ($p) — 그 축 checker 실패. 멈추고 사람 호출." >&2
     exit 65
@@ -78,26 +84,19 @@ for lens in $lenses; do
     "merge_findings: 렌즈 '$lens' 의 결과가 {\"findings\":[...]} 객체가 아니다 ($p) — 그 축 checker 출력 계약 위반"
 done
 
-# 렌즈들이 서로 다른 비교 베이스를 봤으면 판정이 어긋난다 — 한 축은 origin/main, 다른 축은
-# 엉뚱한 ref 를 본 diff 를 합쳐 놓고 하나의 verdict 를 내면 그 verdict 가 무엇에 대한 것인지 없다.
-# **판정은 jq 로, 종료는 셸로 한다.** jq 의 `error` 로 죽이면 종료코드가 5 라, 오케스트레이터가
-# 사람 대기 신호로 아는 65 와 달라져 "입력 오류" 분기가 안 탄다(실측).
-# shellcheck disable=SC2086
-bases="$(jq -s -r '[ .[] | .base // empty ] | map(select(. != "")) | unique | join(", ")' "$@")"
-case "$bases" in
-  *", "*)
-    echo "merge_findings: 렌즈마다 비교 베이스가 다르다 ($bases) — 같은 base 를 프롬프트로 넘겼는지 확인." >&2
-    echo "                서로 다른 diff 를 본 결과를 합쳐 하나의 verdict 를 내면 그 판정이 무엇에 대한 것인지 없다." >&2
-    exit 65 ;;
-esac
-
-# shellcheck disable=SC2086
-jq -s --argjson lenses "$(printf '%s\n' $lenses | jq -R . | jq -s .)" '
+jq -s --argjson lenses "$(printf '%s\n' "${lenses[@]}" | jq -R . | jq -s .)" '
   def norm: if type=="array" then . else [] end;
   # score.sh 와 같은 판정을 쓴다 — 거짓이라고 분명히 말한 값만 거짓. 오타는 사람을 부르는 쪽으로.
   def truthy: . != false and . != null and . != "false" and . != "no" and . != "";
 
   ([ .[] | .base // empty ] | map(select(. != "")) | unique) as $bases
+  # 렌즈들이 서로 다른 비교 베이스를 봤으면 판정이 어긋난다 — 한 축은 origin/main, 다른 축은
+  # 엉뚱한 ref 를 본 diff 를 합쳐 놓고 하나의 verdict 를 내면 그 판정이 무엇에 대한 것인지 없다.
+  # `error` 가 아니라 `halt_error(65)` 다 — 전자는 종료코드 5 라 오케스트레이터가 사람 대기
+  # 신호로 아는 65 와 달라져 "입력 오류" 분기가 안 탄다.
+  | (if ($bases | length) > 1
+     then ("merge_findings: 렌즈마다 비교 베이스가 다르다 (\($bases | join(", "))) — 같은 base 를 프롬프트로 넘겼는지 확인.\n                서로 다른 diff 를 본 결과를 합쳐 하나의 verdict 를 내면 그 판정이 무엇에 대한 것인지 없다.\n" | halt_error(65))
+     else . end)
   # id 는 렌즈 안에서만 고유하다("c1" 을 두 렌즈가 낼 수 있다). 접두를 붙여 전역 고유로 만든다 —
   # 안 붙이면 반복 표시(kind@location 집계)와 maker 지시가 서로 다른 finding 을 같은 이름으로 가리킨다.
   | [ to_entries[] | .key as $i | ($lenses[$i]) as $lens
@@ -119,4 +118,4 @@ jq -s --argjson lenses "$(printf '%s\n' $lenses | jq -R . | jq -s .)" '
             })) as $findings
 
   | { base: ($bases[0] // "unknown"), reviewed: $reviewed, findings: $findings }
-' "$@"
+' "${paths[@]}"

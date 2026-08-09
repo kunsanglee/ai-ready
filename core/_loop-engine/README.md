@@ -24,7 +24,7 @@ checker 를 한 명만 띄우는 호출(`/review`)은 그 결과 파일을 `scor
 루프가 끝나면(PASS 또는 사람 대기) 사이클 로그를 종합해 선순환을 닫는다:
 
 ```
-history.jsonl  (오케스트레이터가 사이클마다 append: { iteration, verdict, findings:[scored...] })
+history-{phase}.jsonl  (오케스트레이터가 사이클마다 append: { iteration, verdict, findings:[scored...] })
    ▼
 lessons.sh     마지막 사이클 대비 diff → "출처1" 실수(떴다가 고쳐진 finding) 추출
    ▼
@@ -45,7 +45,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 | `score.sh` | 깨끗함↔안 봄 게이트(findings·reviewed 둘 다 비면 exit 65), 종류 lookup → base severity, 경로 유도 + checker 가중 합집합으로 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
 | `decide.sh` | severity 집계 → 종료 verdict | scored JSON → `{verdict, counts, await}` |
 | `stall.sh` | 사전식 벡터 + best-ever floor 정체 판정 | decide JSON + `--state <file>` → 갱신된 상태 |
-| `lessons.sh` | 루프 종료 후 history.jsonl diff → 출처1 실수(고쳐진 finding) 추출 | `--history <file>` → mistakes JSON |
+| `lessons.sh` | 루프 종료 후 history-{phase}.jsonl diff → 출처1 실수(고쳐진 finding) 추출 | `--history <file>` → mistakes JSON |
 | `test.sh` | 결정론 채점 회귀 테스트: 정상 채점 고정 + 변질 입력 fail-loud + lessons 결정론 | (인자 없음) → 통과/실패, exit 0=전부 통과 |
 
 ## 사용 예

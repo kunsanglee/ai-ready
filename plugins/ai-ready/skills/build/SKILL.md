@@ -140,7 +140,11 @@ fi
 # **재개**(사람 멈춤 AWAIT_USER/STALLED/brake 후 이어가기)는 이 Step 0 자체를 다시 실행하지 않는다 —
 # 아래 초기화와 params.env 재작성이 재개 상태(회차·정체·phase 진행도)를 파괴한다.
 # 재개는 브랜치별 포인터(.loop/run/.active-{브랜치})와 params.env 가 살아 있는지 확인하고 곧장 Step 2 로 간다.
-rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history-*.jsonl "$LOOP_DIR"/stall-*.json
+# 글롭에 하이픈을 넣지 않는다 — `history*.jsonl` 이 phase 별 파일과 **접미 없는 옛 판**
+# (`history.jsonl`·`stall.json`)을 함께 잡는다. 0.9.x 루프가 완주 전에 멈췄으면 같은 티켓
+# 디렉터리에 그 파일이 남아 있고, `history-*` 만 지우면 살아남아 종료 후 lesson 수확이
+# 글롭으로 그것까지 읽어 옛 루프의 실수가 이번 교훈 후보에 섞인다.
+rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -304,8 +308,12 @@ set -a; . "$LOOP_DIR/params.env"; set +a
 #      이 자리에 오는 파일은 정의상 Step 1 을 **안 거친** 것이다: 진행 중이던 옛 phases.json 이거나,
 #      Step 1 뒤에 손으로 편집된 것. 그래서 "스키마 위반" 한 줄로 끝내면 사람이 status 오타부터
 #      찾게 된다. 아래 (1b)와 나눠 두는 이유가 그 진단이다.
+# `.phases` 배열 조건을 Step 1 과 **똑같이** 건다. 빼면 빈 배열에서 `all()` 이 공허하게 참이 되어
+# 이 검사를 통과하고, 아래 (1b)가 대신 걸려 "스키마 위반" 한 줄로 끝난다 — 무엇이 빠졌는지
+# 이름으로 알려주려고 (1a)와 (1b)를 나눈 목적이 그 경우에만 죽는다.
 MISSING=""
-jq -e 'all(.phases[]; .exit_criteria | type=="array" and length>0 and all(.[]; type=="string" and test("\\S")))' \
+jq -e '(.phases | type=="array" and length>0) and all(.phases[];
+        .exit_criteria | type=="array" and length>0 and all(.[]; type=="string" and test("\\S")))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING exit_criteria"
 jq -e 'all(.phases[]; (.irreversible | type) as $t
         | ($t=="boolean" and .irreversible==false) or ($t=="string" and (.irreversible | test("\\S"))))' \

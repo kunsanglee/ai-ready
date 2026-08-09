@@ -590,6 +590,18 @@ assert_eq "merge: findings 비배열이면 exit 65" "$(merge_rc --expect 3 \
   "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json" "quality=$mgtmp/bad.json")" "65"
 # --expect 를 안 주면 개수 검사가 통째로 사라진다 — 그 호출 자체를 거부한다(사용법 오류 64).
 assert_eq "merge: --expect 없으면 거부" "$(merge_rc "contract=$mgtmp/contract.json")" "64"
+# 0 개를 기대하는 병합은 없다. 통과시키면 jq 가 파일 인자 없이 떠 stdin 을 기다리며 멈춘다.
+assert_eq "merge: --expect 0 거부" "$(merge_rc --expect 0)" "64"
+
+# **경로에 공백이 있어도 돌아야 한다.** 인자를 공백으로 이어 붙였다가 단어 분할로 되돌리면
+# `~/My Projects/repo` 같은 경로가 두 인자로 쪼개져 개수 검사가 엉뚱하게 어긋난다(실측 exit 65).
+# macOS 에서 흔한 경로라 이 시험이 그 회귀를 잠근다. `=` 가 경로 쪽에 더 있는 경우도 함께 본다 —
+# 이름은 첫 `=` 앞까지, 경로는 첫 `=` 뒤 전부여야 한다.
+mkdir -p "$mgtmp/sp ace" "$mgtmp/a=b"
+cp "$mgtmp/contract.json" "$mgtmp/sp ace/f.json"
+cp "$mgtmp/contract.json" "$mgtmp/a=b/f.json"
+assert_eq "merge: 경로에 공백이 있어도 돈다" "$(merge_rc --expect 1 "lens=$mgtmp/sp ace/f.json")" "0"
+assert_eq "merge: 경로에 = 가 있어도 돈다" "$(merge_rc --expect 1 "lens=$mgtmp/a=b/f.json")" "0"
 
 # 같은 (차원·종류·위치)를 두 렌즈가 냈으면 하나로 접되, 가중은 합집합·사람 대기는 OR 로 보수적으로.
 cat > "$mgtmp/dup.json" <<'J'

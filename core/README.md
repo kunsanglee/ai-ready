@@ -6,7 +6,7 @@ ai-ready 의 loop 계열(build·review·lessons)을 Claude·codex 두 호스트�
 
 ```
 core/                        ← 중립 단일 진실(수정은 여기서만)
-  _loop-engine/              결정론 판정 셸(score/decide/stall/lessons/lib + rubric.base + detect_build). 이미 공급자 무관.
+  _loop-engine/              결정론 판정 셸(score/decide/stall/kindstreak/lessons/lib + 렌즈 결과 병합 merge_findings + rubric.base + detect_build + gate_parse). 이미 공급자 무관.
   effort-ladder.md           reasoning-effort 중립 사다리 + 호스트 변환표(공유 계약). 역할은 등급만 선언, 어댑터가 토큰으로 해소.
   (호스트별 손작성) skills/·역할 계약  D3′ 로 core 화 안 함 — 각 트리에 손으로 둠(스폰이 호스트별로 달라 자리표시자 이득 작음)
 adapters/
