@@ -291,11 +291,20 @@ jq -nc --argjson it "$ITER" \
        --argjson v "$VERDICT" \
        --argjson s "$SCORED" \
   '{iteration:$it, verdict:$v.verdict, findings:($s.findings // [])}' >> "$HIST"   # 한 줄 = 한 사이클
+# 같은 **종류**가 사이클을 연속 지배하는지. stall.sh 는 등급 개수만 봐서 이걸 못 본다.
+# **반드시 위 append 뒤에** 부른다 — 이번 회차가 이력에 들어간 뒤라야 이번 회차가 판정에 포함된다.
+KINDST=$(bash "$ENG/kindstreak.sh" --history "$HIST") || {
+  echo "loop: 반복 종류 감지가 이력을 거부했다(exit 65) — history 파일 확인. 멈춰 사람 호출" >&2
+  exit 65
+}
 printf '%s' "$SCORED" > "$LOOP_DIR/scored.json"   # maker 단계(Step 6)가 finding 단위로 여는 정본 — 셸 변수 carry-over 대체
 # $F 는 지우지 않는다 — 다음 사이클 Step 2 가 스핀 직전 비운다. 남겨두면 이번 사이클 findings 를 디버깅에 쓸 수 있다(gitignore).
 V=$(printf  '%s' "$VERDICT" | jq -r .verdict)
 ST=$(printf '%s' "$STALL"   | jq -r .status)
+KS=$(printf '%s' "$KINDST"  | jq -r .status)
 echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDICT" | jq -c .counts)"
+# 반복 종류도 창에는 상태 한 줄만. 전문은 안 편다.
+echo "반복 종류: $(printf '%s' "$KINDST" | jq -r '"\(.status) kind=\(.kind // "-") streak=\(.streak)/\(.threshold)"')"
 # 오케스트레이터 컨텍스트 위생: findings 의 evidence 전문을 cat/Read 로 창에 끌어들이지 않는다.
 # 아래 한 줄 목록(등급·종류·위치)까지만 보고, 전문은 maker 단계(Step 6)에서 finding 단위로만 연다.
 printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kind)\t\(.location)"'
@@ -310,13 +319,14 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 1. `V == AWAIT_USER` → **멈춤, 사람 호출.** 비가역·자동화 금지 영역(BLOCKER/force_await). maker 가 손대면 안 된다.
 2. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `ITER + GFAIL >= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN` — Step 1 과 동일하게 게이트 실패 합산) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다.
 3. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시.
-4. `V == PASS` → **종료(수렴).** Step 5 로.
-5. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall 미도달) → **Step 6(maker 스핀)** 로 가서 finding 을 고치고 Step 1 로 루프.
+4. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 3번과 **전할 말이 다르다.** 3번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 사이클을 지배했다 — 코드가 아니라 작업 목표를 의심하라"** 다. 종류·연속 횟수와 함께 사람에게 물을 것 두 가지를 같이 낸다: 이 목표가 **열거 가능한가**(고칠 대상이 유한한 목록인가, 아니면 checker 가 언제나 다음 하나를 더 찾는 형태인가), **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다 — 하나를 잠그면 다음 안 잠긴 것이 나온다.
+5. `V == PASS` → **종료(수렴).** Step 5 로.
+6. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall/반복 종류 미도달) → **Step 6(maker 스핀)** 로 가서 finding 을 고치고 Step 1 로 루프.
 
 ### Step 5. 종료 처리
 
 - **PASS(수렴)**: 사람에게 결과 보고 — 통과 verdict, 사이클 수, 남은 MINOR(기록만), 변경 요약. **변경 요약은 maker 보고를 모아 쓰지 않고 `git diff "$LOOP_BASE_BRANCH"...HEAD --stat` 과 `git status --short` 에서 뽑는다** — maker 는 회차마다 새로 띄워져 전체를 아는 주체가 없고, 트리가 유일한 정본이다. PR 인계는 **보류 합의 사항**이라 자동으로 올리지 않는다(spec). 프로젝트의 마감 스킬(예: c8c-api `/finalize`) 또는 `/pr` 로 사람이 마감하도록 제안하고, 원하면 그때 진행.
-- **AWAIT_USER / STALLED / REGRESS / brake**: 멈춘 이유 + 현재 남은 finding(등급 내림차순) + 다음 행동 후보(고쳐서 재개 / 이 등급 안고 통과 승인 / 작업 정의 재정렬)를 사람에게 핑. 이 경우 코드는 마지막 maker 시도 상태로 워크트리에 남는다.
+- **AWAIT_USER / STALLED / REGRESS / REPEATED_KIND / brake**: 멈춘 이유 + 현재 남은 finding(등급 내림차순) + 다음 행동 후보(고쳐서 재개 / 이 등급 안고 통과 승인 / 작업 정의 재정렬)를 사람에게 핑. `REPEATED_KIND` 면 후보의 무게가 다르다 — 고쳐서 재개가 아니라 **작업 정의 재정렬**이 기본 후보다. 이 경우 코드는 마지막 maker 시도 상태로 워크트리에 남는다.
 - 종료 후(특히 PASS·사람 멈춤 모두) `/loop-lessons` 로 이 루프의 `history.jsonl` 에서 잡힌 실수를 ANTIPATTERNS 후보로 올릴지 사람에게 제안한다(선순환 닫기). 강제 아님.
 
 ### Step 5-1. 종료 정리 (런타임 상태 폐기)
