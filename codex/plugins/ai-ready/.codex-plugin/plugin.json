@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
-  "version": "0.9.13+codex.1",
-  "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (loop-run/build/review/lessons) in Codex. Severity is assigned by a deterministic rubric shell, not by the model. Release history lives in CHANGELOG.md.",
+  "version": "1.0.0+codex.1",
+  "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (build/review/lessons) in Codex. Checker lenses split by axis and review in parallel without seeing each other; severity is assigned by a deterministic rubric shell, not by the model. Release history lives in CHANGELOG.md.",
   "author": {
     "name": "kunsanglee",
     "url": "https://github.com/kunsanglee"
@@ -31,8 +31,7 @@
       "Audit this repository for AI-agent readiness.",
       "Plan the approved improvements from the latest AI-Ready audit.",
       "Check whether this repository's guidance documents are stale.",
-      "Use loop-run to converge this change to a PASS verdict.",
-      "Use loop-build to build out this approved design across phases."
+      "Use build to build out this approved design across phases and converge it to a PASS verdict."
     ]
   }
 }

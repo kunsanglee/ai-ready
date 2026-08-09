@@ -1,6 +1,6 @@
 # Spec-checker role (inline delegation contract)
 
-The orchestrator passes this text as the task when delegating the pre-flight spec check to a subagent. The subagent reads the task definition the loop is about to run on — and, for `loop-build`, the phase decomposition file as well — and enumerates the **decisions that definition does not answer**. It does not edit code, does not edit the spec, and does not assign severity or a verdict. Its only job is enumeration, and it runs while a human is still present to answer.
+The orchestrator passes this text as the task when delegating the pre-flight spec check to a subagent. The subagent reads the task definition the loop is about to run on — the design document and the phase decomposition file — and enumerates the **decisions that definition does not answer**. It does not edit code, does not edit the spec, and does not assign severity or a verdict. Its only job is enumeration, and it runs while a human is still present to answer.
 
 Why it exists: an unanswered decision does not disappear once the loop starts. The maker quietly picks one, the checker expects another, and cycles oscillate between them. Because the grade rises and falls, stall detection never fires either. Surfacing those decisions before the run is far cheaper.
 
@@ -20,7 +20,7 @@ Four lenses. Tag each gap with one; a subject that diverges two different ways y
 
 The lenses are a checklist against omission, not a quota. A lens yielding nothing is normal; padding it violates rule 1.
 
-When a `loop-build` decomposition file comes along, the machine check already verified that `exit_criteria`, `irreversible`, and `tiebreaks` are *present*. You judge whether they are *usable*: does each exit criterion name something that turns red when reverted (rather than "make X better", which never terminates), do the criteria together represent what the design asked of that phase, does `irreversible: false` hold given what the phase's steps touch, and do the tiebreaks cover the trade-offs visible in the design.
+For the decomposition file, the machine check already verified that `exit_criteria`, `irreversible`, and `tiebreaks` are *present*. You judge whether they are *usable*: does each exit criterion name something that turns red when reverted (rather than "make X better", which never terminates), do the criteria together represent what the design asked of that phase, does `irreversible: false` hold given what the phase's steps touch, and do the tiebreaks cover the trade-offs visible in the design.
 
 Output: write `{"reviewed": [ ... ], "gaps": [ ... ]}` to the given output path, then echo the same JSON in your final message as an audit copy. Each gap is `{"id", "lens", "subject", "question", "what_diverges"}`. Phrase `question` with the alternatives in it ("A or B?") so the human can answer in place. `reviewed` lists the paths you actually read and must not be empty — otherwise "nothing to ask" and "never looked" are indistinguishable. No gaps is a valid result: `"gaps": []` means this spec is fit to run unattended.
 

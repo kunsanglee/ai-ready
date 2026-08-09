@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """빌드 시스템·스택·컨벤션 문서 런타임 감지기 (ai-ready plugin 의 loop 엔진용, v0.5.0+).
 
-대상 코드베이스를 훑어 무인 검증 loop(`/loop-run`·`/loop-review`·`/loop-lessons`)이
+대상 코드베이스를 훑어 무인 검증 loop(`/build`·`/review`·`/lessons`)이
 그 프로젝트에서 돌 때 필요한 사실을 추론한다:
 
   1. 빌드 시스템 (gradle / maven / npm / cargo / go / python) → 빌드·테스트·린트 명령

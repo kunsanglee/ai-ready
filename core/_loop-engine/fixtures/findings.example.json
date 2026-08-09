@@ -1,4 +1,5 @@
 {
+  "base": "origin/main",
   "ticket": "EXAMPLE-1",
   "iteration": 1,
   "reviewed": [

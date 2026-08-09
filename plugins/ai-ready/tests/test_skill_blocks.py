@@ -15,7 +15,7 @@
 
 블록은 문서에서 뽑아 쓴다 — 여기에 다시 타이핑하면 문서가 아니라 이 파일의 기억을 시험한다.
 
-범위는 claude 트리의 `loop-run`·`loop-build`·`loop-review` 셋이다. codex 트리의 같은 스킬은
+범위는 claude 트리의 `build`·`review` 둘이다. codex 트리의 같은 스킬은
 셸 블록이 하나도 없어 전부 산문 계약이고, `audit`·`apply` 의 블록은 파이썬 스크립트 호출이라
 `test_smoke.py` 가 그 스크립트를 직접 시험한다.
 
@@ -45,34 +45,34 @@ SKILLS = TREE / "skills"
 ENGINE = TREE / "_loop-engine"
 
 # ── 블록 추출 ────────────────────────────────────────────────────────────────
-# 들여쓴 펜스도 받는다 — loop-run Step 1 의 게이트 실패 카운터는 불릿 안에 2칸 들여쓰여 있고,
+# 들여쓴 펜스도 받는다 — 게이트 실패 카운터 블록은 불릿 안에 2칸 들여쓰여 있고,
 # 들여쓰기를 무시하는 정규식은 그 블록을 조용히 빠뜨린다(그게 여덟 번째 블록이다).
 _FENCE = re.compile(r"^(?P<indent>[ \t]*)```bash\n(?P<body>.*?)^(?P=indent)```", re.S | re.M)
 
 # 문서에 있어야 하는 bash 블록 수. 늘거나 줄면 fail-loud — 새 블록은 이 하네스에 항목을 더할
 # 신호이고, 준 블록은 앵커가 죽었다는 신호다. "16개 통과" 가 "16개를 봤다" 를 뜻하게 하는 장치.
-EXPECTED_BLOCK_COUNTS = {"loop-run": 8, "loop-build": 6, "loop-review": 3}
+EXPECTED_BLOCK_COUNTS = {"build": 12, "review": 3}
 
 # 블록 식별은 순번이 아니라 내용 앵커로 한다 — 블록이 하나 끼어들어도 나머지 항목이 밀리지 않는다.
 # 앵커는 그 블록의 기능 핵심 한 줄이라, 그 줄이 사라지면 시험이 먼저 멈춘다.
 ANCHORS = {
-    "lr-setup":      ("loop-run", 'LOOP_DIR="$PROJECT_ROOT/.loop/run/$TICKET"'),
-    "lr-gate":       ("loop-run", "run_gate BUILD"),
-    "lr-gatefail":   ("loop-run", 'G="$LOOP_DIR/gate.fail"'),
-    "lr-checker":    ("loop-run", "checker 프롬프트 값:"),
-    "lr-score":      ("loop-run", 'SCORED=$(bash "$ENG/score.sh"'),
-    "lr-cleanup":    ("loop-run", 'PTR="$PROJECT_ROOT/.loop/run/.active-$BR"'),
-    "lr-makerinput": ("loop-run", "MAKER_INPUT="),
-    "lr-tree":       ("loop-run", "tree.snapshot"),
-    "lb-setup":      ("loop-build", "printf 'PHASES=%q"),
-    "lb-specgate":   ("loop-build", "착수 전 스펙 검사 실패"),
-    "lb-budget":     ("loop-build", "BUDGET_MIN_PHASE"),
-    "lb-phase":      ("loop-build", 'PHASE="<이 phase 의 name>"'),
-    "lb-done":       ("loop-build", '.status = "done"'),
-    "lb-cleanup":    ("loop-build", 'PTR="$PROJECT_ROOT/.loop/run/.active-$BR"'),
-    "lv-detect":     ("loop-review", "review 값:"),
-    "lv-findings":   ("loop-review", ': > "$F"'),
-    "lv-score":      ("loop-review", 'rm -f "$F"'),
+    # build — 실행층 하나로 통합된 뒤 블록 12개. 앞의 lr-*(loop-run)/lb-*(loop-build) 구분은
+    # 스킬이 합쳐지며 사라졌다.
+    "b-setup":      ("build", 'LOOP_DIR="$PROJECT_ROOT/.loop/run/$TICKET"'),
+    "b-specgate":   ("build", "착수 전 스펙 검사 실패"),
+    "b-budget":     ("build", "BUDGET_MIN_PHASE"),
+    "b-phase":      ("build", 'PHASE="<이 phase 의 name>"'),
+    "b-gate":       ("build", "run_gate BUILD"),
+    "b-gatefail":   ("build", 'G="$LOOP_DIR/gate.fail"'),
+    "b-lens":       ("build", "checker 렌즈:"),
+    "b-score":      ("build", 'SCORED=$(bash "$ENG/score.sh"'),
+    "b-done":       ("build", '.status = "done"'),
+    "b-makerinput": ("build", "MAKER_INPUT="),
+    "b-tree":       ("build", "tree.snapshot"),
+    "b-cleanup":    ("build", 'PTR="$PROJECT_ROOT/.loop/run/.active-$BR"'),
+    "v-detect":     ("review", "review 값:"),
+    "v-findings":   ("review", ': > "$F"'),
+    "v-score":      ("review", 'rm -f "$F"'),
 }
 
 # 스킬 폴더 자리표시자. 호스트가 스킬 본문 첫머리에 텍스트로 주입하는 "Base directory for this
@@ -83,7 +83,7 @@ ANCHORS = {
 SKILL_DIR_PLACEHOLDER = '"<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"'
 
 # 문서가 "재유도 프리앰블 뒤에" 라고 지시하는 블록. 프리앰블은 lr-gate 에서 뽑아 붙인다.
-NEEDS_PREAMBLE = {"lr-makerinput", "lr-tree"}
+NEEDS_PREAMBLE = {"b-makerinput", "b-tree"}
 
 # 프리앰블 마지막 줄 — 이 줄까지가 재유도 프리앰블이다.
 _PREAMBLE_END = 'set -a; . "$LOOP_DIR/params.env"; set +a'
@@ -120,10 +120,10 @@ def _pick(block_id: str) -> str:
 
 BLOCKS: dict[str, str] = {bid: _pick(bid) for bid in ANCHORS}
 
-_pre_lines = BLOCKS["lr-gate"].splitlines(keepends=True)
+_pre_lines = BLOCKS["b-gate"].splitlines(keepends=True)
 _pre_idx = [i for i, ln in enumerate(_pre_lines) if _PREAMBLE_END in ln]
 if len(_pre_idx) != 1:
-    raise AssertionError("lr-gate 에서 재유도 프리앰블 끝(set -a … params.env)을 못 찾음")
+    raise AssertionError("b-gate 에서 재유도 프리앰블 끝(set -a … params.env)을 못 찾음")
 PREAMBLE = "".join(_pre_lines[: _pre_idx[0] + 1])
 
 
@@ -275,7 +275,7 @@ class BlockCase(unittest.TestCase):
             # CLAUDE_PLUGIN_ROOT 는 **일부러 안 넣는다.** Bash 도구가 띄우는 셸에 그 변수가 없다는
             # 것이 실측이고, 여기서 주입하면 블록이 실제 환경에서는 안 도는데 시험만 초록이 된다.
             # 그 주입이 `ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"` 을 오래 살려 뒀다(TestControlGroups).
-            # 실제 /tmp 를 오염시키지 않는다 — loop-review 블록이 TMPDIR 하위에 findings 를 쓴다.
+            # 실제 /tmp 를 오염시키지 않는다 — review 블록이 TMPDIR 하위에 findings 를 쓴다.
             "TMPDIR": str(self.scratch / "tmpdir"),
         }
         (self.scratch / "tmpdir").mkdir(exist_ok=True)
@@ -327,17 +327,21 @@ class BlockCase(unittest.TestCase):
 
     # -- 준비 ---------------------------------------------------------------
     def setup_loop(self, **extra: str) -> Run:
-        r = self.run_block("lr-setup", env=self.env(**extra))
-        self.assertEqual(r.rc, 0, f"lr-setup 실패\n{r}")
+        r = self.run_block("b-setup", env=self.env(**extra))
+        self.assertEqual(r.rc, 0, f"b-setup 실패\n{r}")
         return r
 
     def setup_phases(self, data: dict | None = None) -> None:
-        self.run_block("lb-setup")
+        """분해 결과를 놓는다. **Step 0 을 다시 돌리지 않는다** — PHASES 는 Step 0 이 이미
+        영속했고, 재실행하면 그 블록이 params.env 를 통째로 새로 써 앞서 준 MAX_ITER 같은
+        값이 기본값으로 되돌아간다(loop-build 가 따로 두던 'Step 0 추가' 블록이 Step 0 본체로
+        흡수되면서 생긴 차이다). 실제 루프에서도 Step 0 은 루프당 한 번만 돈다.
+        """
         (self.loop_dir / "phases.json").write_text(
             json.dumps(data if data is not None else PHASES_2, ensure_ascii=False))
 
     def enter_phase(self, name: str) -> Run:
-        return self.run_block("lb-phase", subst={'"<이 phase 의 name>"': f'"{name}"'})
+        return self.run_block("b-phase", subst={'"<이 phase 의 name>"': f'"{name}"'})
 
 
 # ── 1. 블록 목록·문법·구조 ───────────────────────────────────────────────────
@@ -398,7 +402,7 @@ class TestBlockInventory(unittest.TestCase):
                     f"프레시 셸에서 빈 값으로 돈다. NEEDS_PREAMBLE 에 넣거나 프리앰블을 블록에 넣는다.")
 
 
-# ── 2. loop-run Step 0 (셋업) ───────────────────────────────────────────────
+# ── 2. build Step 0 (셋업) ─────────────────────────────────────────────────
 
 class TestLoopRunSetup(BlockCase):
     def test_setup_creates_state(self):
@@ -415,7 +419,22 @@ class TestLoopRunSetup(BlockCase):
         self.assertEqual(self.param("LOOP_KNOWLEDGE_LAYER"), "docs/ANTIPATTERNS.md")
         self.assertTrue(self.param("LOOP_BUILD_CMD").startswith("./gradlew"))
         self.assertTrue((self.loop_dir / "started.epoch").is_file())
-        self.assertEqual((self.loop_dir / "history.jsonl").read_text(), "")
+        self.assertEqual(self.param("PHASES"), str(self.loop_dir / "phases.json"))
+
+    def test_setup_clears_previous_phase_history(self):
+        """앞 루프의 phase 별 이력이 남으면 회차 수(=history 줄 수)가 이어져 brake 가 즉시 문다.
+
+        history 가 phase 별 파일로 갈리면서 Step 0 의 초기화 대상이 글롭이 됐다 — 단일
+        `history.jsonl` 을 지우던 판을 그대로 두면 `history-foundation.jsonl` 이 살아남는다.
+        """
+        self.setup_loop()
+        stale = self.loop_dir / "history-foundation.jsonl"
+        stale.write_text('{"iteration":1}\n{"iteration":2}\n')
+        (self.loop_dir / "stall-foundation.json").write_text("{}")
+        self.setup_loop()
+        self.assertFalse(stale.exists(), "앞 루프의 phase 이력이 남았다 — 회차가 이어져 세진다")
+        self.assertFalse((self.loop_dir / "stall-foundation.json").exists(),
+                         "앞 루프의 정체 상태가 남았다 — 거짓 STALLED 를 낸다")
 
     def test_gitignore_gets_loop_run_and_is_idempotent(self):
         self.setup_loop()
@@ -438,44 +457,51 @@ class TestLoopRunSetup(BlockCase):
         self.assertIn("천장 10 로 제한", r.out, repr(r))
         self.assertEqual(self.param("MAX_ITER"), "10")
 
-    def test_design_ref_missing_falls_back_to_brief(self):
+    def test_design_ref_absent_is_not_an_error(self):
+        """설계 문서를 안 주는 것은 정상이다 — 그때는 phases.json 의 step·exit_criteria 가 근거다.
+
+        종전에는 여기서 brief.md 를 만들어 사람 확인을 받았다. 그 자리는 phases.json 분해 승인이
+        대신하므로 폴백이 없어졌고, 안 준 경우는 빈 값으로 영속돼 그대로 진행한다.
+        """
         r = self.setup_loop()
-        self.assertIn("작업 지시 파일 없음", r.err, repr(r))
-        self.assertEqual(self.param("LOOP_DESIGN_REF"), str(self.loop_dir / "brief.md"))
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertEqual(self.param("LOOP_DESIGN_REF"), "")
 
     def test_design_ref_nonexistent_path_stops(self):
-        r = self.run_block("lr-setup", env=self.env(LOOP_DESIGN_REF="/nope/spec.md"))
+        """준 경로가 없으면 멈춘다. 조용히 넘기면 checker 가 정합 판정의 기준을 잃는데,
+        그 실패는 소리가 안 난다 — 없는 파일을 못 읽었다고 아무도 말하지 않는다."""
+        r = self.run_block("b-setup", env=self.env(LOOP_DESIGN_REF="/nope/spec.md"))
         self.assertEqual(r.rc, 3, repr(r))
-        self.assertIn("작업 지시 파일", r.err)
+        self.assertIn("지정한 설계 문서", r.err)
         self.assertFalse(self.pointer.exists(), "exit 3 인데 포인터가 남았다")
 
     def test_design_ref_existing_path_used(self):
         spec = self.work / "docs" / "design.md"
         r = self.setup_loop(LOOP_DESIGN_REF=str(spec))
-        self.assertNotIn("작업 지시 파일 없음", r.err, repr(r))
+        self.assertEqual(r.rc, 0, repr(r))
         self.assertEqual(self.param("LOOP_DESIGN_REF"), str(spec))
 
     def test_works_without_claude_project_dir(self):
         """plugin 밖 직접 실행 — PROJECT_ROOT 가 git 루트 폴백으로 잡혀야 한다."""
         env = self.env()
         env.pop("CLAUDE_PROJECT_DIR")
-        r = self.run_block("lr-setup", env=env)
+        r = self.run_block("b-setup", env=env)
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("ticket=CCE-999", r.out)
 
 
-# ── 3. loop-build Step 0 추가 + phases.json 검증 ────────────────────────────
+# ── 3. 순회 진입 + phases.json 검증 ─────────────────────────────────────────
 
 class TestLoopBuildSetup(BlockCase):
-    def test_phases_path_persisted(self):
-        self.setup_loop()
-        r = self.run_block("lb-setup")
-        self.assertEqual(r.rc, 0, repr(r))
-        self.assertEqual(self.param("PHASES"), str(self.loop_dir / "phases.json"))
+    def test_budget_block_without_pointer_fails_loud(self):
+        """포인터가 없으면 멈춘다. 재유도 없이 돌면 BUDGET_MIN 이 미정의라 0 이 영속되고,
+        그러면 모든 사이클이 즉시 brake 된다 — 조용히 도는 것보다 여기서 죽는 편이 낫다.
 
-    def test_setup_without_pointer_fails_loud(self):
-        """포인터가 없으면 멈춘다. 재유도 없이 돌던 판(0.9.4)은 PHASES 가 '/phases.json' 이 됐다."""
-        r = self.run_block("lb-setup")
+        종전에는 이 검사가 loop-build 의 Step 0 '추가' 블록에 붙어 있었다. 그 블록이 Step 0 본체로
+        흡수되면서(PHASES 를 거기서 영속) 검사 자리가 순회 진입 블록으로 옮겨졌다 — Step 0 은
+        포인터를 *만드는* 쪽이라 포인터 부재를 검사할 수 없다.
+        """
+        r = self.run_block("b-budget")
         self.assertEqual(r.rc, 65, repr(r))
         self.assertIn("params.env 없음", r.err)
 
@@ -483,7 +509,7 @@ class TestLoopBuildSetup(BlockCase):
         self.setup_loop()
         per_phase = int(self.param("BUDGET_MIN"))
         self.setup_phases()
-        r = self.run_block("lb-budget")
+        r = self.run_block("b-budget")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn(f"{per_phase * 2}분 (phase 당 {per_phase} × 2개)", r.out, repr(r))
         self.assertEqual(self.param("BUDGET_MIN"), str(per_phase * 2))
@@ -494,15 +520,15 @@ class TestLoopBuildSetup(BlockCase):
         self.setup_loop()
         per_phase = int(self.param("BUDGET_MIN"))
         self.setup_phases()
-        self.run_block("lb-budget")
-        r = self.run_block("lb-budget")
+        self.run_block("b-budget")
+        r = self.run_block("b-budget")
         self.assertIn(f"{per_phase * 2}분 (phase 당 {per_phase} × 2개)", r.out, repr(r))
         self.assertEqual(self.param("BUDGET_MIN"), str(per_phase * 2))
 
     # phases.json 스키마 위반 — 무인 순회 직전 fail-loud 로 걸러야 하는 것들.
+    # `.phases` 자체가 없거나 빈 경우는 여기 없다 — 그건 앞선 (1a) 스펙 검사가 먼저 잡고,
+    # 아래 test_empty_or_nonarray_phases_named_by_the_spec_gate 가 그 자리를 지킨다.
     SCHEMA_VIOLATIONS = {
-        "phases 비배열": {"phases": {}},
-        "phases 빈배열": {"phases": []},
         "name 누락": {"phases": [{"status": "pending",
                                 "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
         "name 에 슬래시": {"phases": [{"name": "a/b", "status": "pending",
@@ -540,9 +566,27 @@ class TestLoopBuildSetup(BlockCase):
         for label, data in self.SCHEMA_VIOLATIONS.items():
             with self.subTest(violation=label):
                 self.setup_phases(self.with_spec_fields(data))
-                r = self.run_block("lb-budget")
+                r = self.run_block("b-budget")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 통과시켰다\n{r}")
                 self.assertIn("phases.json 스키마 위반", r.err)
+
+    def test_empty_or_nonarray_phases_named_by_the_spec_gate(self):
+        """`.phases` 가 배열이 아니거나 비면 (1a) 스펙 검사가 먼저 잡고 이름을 댄다.
+
+        `all(.phases[]; ...)` 는 빈 배열에서 **공허하게 참**이라, (1a)에 배열 조건이 없으면
+        이 경우가 그 검사를 그냥 지나가 (1b)의 "스키마 위반" 한 줄로 떨어진다. 그러면 무엇이
+        빠졌는지 이름으로 알려주려고 두 검사를 나눈 목적이 이 경우에만 죽는다. Step 1 의
+        같은 검사에는 원래 배열 조건이 있었고 Step 2 사본에만 없던 것이라, 두 사본이 어긋난
+        자리이기도 했다.
+        """
+        self.setup_loop()
+        for label, data in (("비배열", {"phases": {}}), ("빈배열", {"phases": []})):
+            with self.subTest(violation=label):
+                self.setup_phases(self.with_spec_fields(data))
+                r = self.run_block("b-budget")
+                self.assertEqual(r.rc, 65, f"[{label}] 를 통과시켰다\n{r}")
+                self.assertIn("착수 전 스펙 검사 셋이 없다", r.err, repr(r))
+                self.assertIn("exit_criteria", r.err, "무엇이 빠졌는지 이름으로 안 나온다")
 
     # 착수 전 검사 셋이 빠지거나 정보가 없는 판 — 0.9.11 까지는 순회가 이걸 그대로 받았다.
     # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)
@@ -587,7 +631,7 @@ class TestLoopBuildSetup(BlockCase):
         for label, (data, expected) in self.SPEC_FIELD_VIOLATIONS.items():
             with self.subTest(violation=label):
                 self.setup_phases(data)
-                r = self.run_block("lb-budget")
+                r = self.run_block("b-budget")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 순회에 태웠다\n{r}")
                 self.assertIn("착수 전 스펙 검사 셋이 없다", r.err, repr(r))
                 named = {f for f in TestSpecGate.FIELDS if f in r.err}
@@ -598,7 +642,7 @@ class TestLoopBuildSetup(BlockCase):
         """대조군 — 위 위반들이 검사 때문에 죽은 것이지, 블록이 늘 죽는 게 아니다."""
         self.setup_loop()
         self.setup_phases()
-        self.assertEqual(self.run_block("lb-budget").rc, 0)
+        self.assertEqual(self.run_block("b-budget").rc, 0)
 
 
 # ── 3-1. 착수 전 스펙 검사 (Step 1) ────────────────────────────────────────
@@ -697,7 +741,7 @@ class TestSpecGate(BlockCase):
             with self.subTest(violation=label):
                 self.setUp()          # 사례마다 새 레포 사본 — 앞 사례의 params.env 가 안 섞이게
                 self.prepare(data)
-                r = self.run_block("lb-specgate")
+                r = self.run_block("b-specgate")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 시작 가능으로 통과시켰다\n{r}")
                 self.assertIn("착수 전 스펙 검사 실패", r.err, repr(r))
                 named = {f for f in self.FIELDS if f in r.err}
@@ -707,13 +751,13 @@ class TestSpecGate(BlockCase):
     def test_complete_spec_passes(self):
         """대조군 — 위 아홉 건이 셋의 부재로 죽은 것이지, 블록이 늘 죽는 게 아니다."""
         self.prepare(PHASES_2)
-        r = self.run_block("lb-specgate")
+        r = self.run_block("b-specgate")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("착수 전 스펙 검사 통과", r.out, repr(r))
 
     def test_gate_without_pointer_fails_loud(self):
         """Step 0 없이 이 블록만 돌면 빈 PHASES 로 jq 가 돌아 '통과' 로 보일 자리다."""
-        r = self.run_block("lb-specgate")
+        r = self.run_block("b-specgate")
         self.assertEqual(r.rc, 65, repr(r))
         self.assertIn("params.env 없음", r.err, repr(r))
 
@@ -724,7 +768,7 @@ class TestPhaseScope(BlockCase):
     def prepare(self) -> None:
         self.setup_loop()
         self.setup_phases()
-        self.run_block("lb-budget")
+        self.run_block("b-budget")
 
     def test_phase_entry_scopes_state(self):
         self.prepare()
@@ -732,9 +776,12 @@ class TestPhaseScope(BlockCase):
         r = self.enter_phase("foundation")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("phase 진입: foundation", r.out)
-        self.assertIn("docs/CONVENTIONS.md", r.out, "checker 프롬프트 값이 창에 안 나왔다")
         self.assertFalse((self.loop_dir / "gate.fail").exists(),
                          "phase 진입이 게이트 실패 카운터를 리셋하지 않았다")
+        # 회차 세기(brake)가 `wc -l < "$HIST"` 라, 파일이 없으면 첫 사이클에서 stderr 가 새고
+        # ITER 이 빈 값이 된다. 진입이 빈 파일을 만들어 그 자리를 막는다.
+        self.assertTrue((self.loop_dir / "history-foundation.jsonl").is_file(),
+                        "phase 진입이 그 phase 의 history 파일을 만들지 않았다")
         self.assertEqual(self.param("PHASE"), "foundation")
         self.assertEqual(self.param("HIST"), str(self.loop_dir / "history-foundation.jsonl"))
         self.assertEqual(self.param("STATE"), str(self.loop_dir / "stall-foundation.json"))
@@ -793,7 +840,7 @@ class TestPhaseScope(BlockCase):
     def test_done_update_and_verification(self):
         self.prepare()
         self.enter_phase("foundation")
-        r = self.run_block("lb-done")
+        r = self.run_block("b-done")
         self.assertEqual(r.rc, 0, repr(r))
         phases = json.loads((self.loop_dir / "phases.json").read_text())
         self.assertEqual([p["status"] for p in phases["phases"]], ["done", "pending"])
@@ -802,7 +849,7 @@ class TestPhaseScope(BlockCase):
         """jq 는 매칭 0건에도 exit 0 이라, 검증 줄이 없으면 조용한 no-op 이 된다."""
         self.prepare()
         self.enter_phase("nosuchphase")
-        r = self.run_block("lb-done")
+        r = self.run_block("b-done")
         self.assertEqual(r.rc, 65, repr(r))
         self.assertIn("done 갱신 실패", r.err)
 
@@ -811,13 +858,13 @@ class TestPhaseScope(BlockCase):
         dup = {"phases": [dict(PHASES_2["phases"][0]), dict(PHASES_2["phases"][0])]}
         (self.loop_dir / "phases.json").write_text(json.dumps(dup, ensure_ascii=False))
         self.enter_phase("foundation")
-        r = self.run_block("lb-done")
+        r = self.run_block("b-done")
         self.assertEqual(r.rc, 65, repr(r))
 
     def test_resume_query_picks_first_unfinished_phase(self):
         self.prepare()
         self.enter_phase("foundation")
-        self.run_block("lb-done")
+        self.run_block("b-done")
         r = self.sh(f'''jq -r '.phases[] | select(.status != "done") | .name' '''
                     f'"{self.loop_dir}/phases.json" | head -1')
         self.assertEqual(r.out.strip(), "wiring", repr(r))
@@ -829,7 +876,7 @@ class TestGateLayer(BlockCase):
     def test_gate_pass_runs_build_then_test(self):
         self.setup_loop()
         log = self.scratch / "gate.log"
-        r = self.run_block("lr-gate", env=self.env(GATE_MODE="pass", GATE_LOG=str(log)))
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass", GATE_LOG=str(log)))
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("게이트 BUILD 통과", r.out)
         self.assertIn("게이트 TEST 통과", r.out)
@@ -839,7 +886,7 @@ class TestGateLayer(BlockCase):
     def test_gate_failure_fills_queue_and_skips_test(self):
         self.setup_loop()
         log = self.scratch / "gate.log"
-        r = self.run_block("lr-gate", env=self.env(GATE_MODE="fail-build", GATE_LOG=str(log)))
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="fail-build", GATE_LOG=str(log)))
         # 게이트 실패 경로의 종료코드는 1 이다 — 블록 마지막 줄 `[ "$TOTAL" -gt 20 ] && echo …` 가
         # 20건 이하일 때 거짓이라 그 값이 그대로 블록 rc 가 된다. 실패 자체가 정상 분기라 출력으로
         # 판단하면 되지만, 값이 바뀌면(예: || true 추가) 여기서 먼저 드러나게 박아 둔다.
@@ -857,24 +904,29 @@ class TestGateLayer(BlockCase):
 
     def test_gate_queue_is_refilled_each_cycle(self):
         self.setup_loop()
-        self.run_block("lr-gate", env=self.env(GATE_MODE="fail-build"))
-        self.run_block("lr-gate", env=self.env(GATE_MODE="pass"))
+        self.run_block("b-gate", env=self.env(GATE_MODE="fail-build"))
+        self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
         self.assertEqual((self.loop_dir / "gate-queue.jsonl").read_text(), "",
                          "통과 사이클이 앞 회차 항목을 지우지 않았다 — maker 가 고쳐진 오류를 쫓는다")
 
     def test_gate_fail_counter_increments_across_shells(self):
         self.setup_loop()
-        first = self.run_block("lr-gatefail")
-        second = self.run_block("lr-gatefail")
+        first = self.run_block("b-gatefail")
+        second = self.run_block("b-gatefail")
         self.assertEqual(first.out.strip(), "1", repr(first))
         self.assertEqual(second.out.strip(), "2",
                          f"카운터가 프레시 셸에서 리셋됐다 — brake 가 무력화된다\n{second}")
 
     def test_brake_fires_on_iteration_ceiling(self):
         self.setup_loop(MAX_ITER="2")
-        (self.loop_dir / "history.jsonl").write_text('{"iteration":1}\n')
+        self.setup_phases()
+        self.run_block("b-budget")
+        self.enter_phase("foundation")
+        # 회차는 그 phase 의 history 줄 수로 센다 — phase 별 파일이라 앞 phase 가 쓴 회차가
+        # 다음 phase 의 brake 를 미리 물지 않는다.
+        (self.loop_dir / "history-foundation.jsonl").write_text('{"iteration":1}\n')
         (self.loop_dir / "gate.fail").write_text("1\n")
-        r = self.run_block("lr-gate", env=self.env(GATE_MODE="pass"))
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
         self.assertIn("brake 도달", r.err, repr(r))
         self.assertIn("완료 1 회 + 게이트 실패 1 회", r.out)
 
@@ -884,14 +936,14 @@ class TestGateLayer(BlockCase):
         # .gitignore 를 커밋해 origin/main 까지 올리면 diff 도 트리도 깨끗해진다.
         self.sh("git add -A && git commit -qm 'chore: gitignore' && "
                 "git push -q origin HEAD:main && git fetch -q origin")
-        r = self.run_block("lr-gate", env=self.env(GATE_MODE="pass"))
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
         self.assertIn("점검 대상 변경 0건", r.err, repr(r))
 
     def test_change_set_present_is_quiet(self):
         """대조군 — 변경이 있으면 위 경고가 안 나온다."""
         self.setup_loop()
         self.sh("echo '// 변경' >> src/Main.kt")
-        r = self.run_block("lr-gate", env=self.env(GATE_MODE="pass"))
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
         self.assertNotIn("점검 대상 변경 0건", r.err, repr(r))
 
 
@@ -899,47 +951,93 @@ class TestGateLayer(BlockCase):
 
 class TestCheckerAndScoring(BlockCase):
     FIXTURE = ENGINE / "fixtures" / "findings.example.json"
+    LENSES = ("contract", "safety", "quality")
+    CLEAN = '{"base":"origin/main","findings":[],"reviewed":["src/Main.kt"]}'
 
-    def test_checker_findings_path_is_deterministic_and_emptied(self):
+    def prepare(self) -> None:
+        """실제 순회는 언제나 phase 안에서 돈다 — 상태가 phase 스코프라 진입이 전제다."""
         self.setup_loop()
-        f = self.loop_dir / "checker-findings.json"
-        f.write_text('{"findings":[{"id":"stale"}]}')
-        r = self.run_block("lr-checker")
+        self.setup_phases()
+        self.run_block("b-budget")
+        self.enter_phase("foundation")
+
+    def lens_path(self, lens: str) -> Path:
+        return self.loop_dir / f"checker-foundation-{lens}.json"
+
+    def write_lenses(self, *, findings_in: str | None = None, skip: str | None = None) -> None:
+        """렌즈 셋의 결과 파일을 채운다. findings_in 렌즈만 fixture, 나머지는 깨끗한 결과.
+
+        한 렌즈에만 finding 을 두는 이유는 병합 dedup 때문이다 — 같은 fixture 를 세 벌 넣으면
+        (차원·종류·위치)가 같아 하나로 접혀, 무엇을 세고 있는지가 흐려진다.
+        """
+        for lens in self.LENSES:
+            if lens == skip:
+                continue
+            if lens == findings_in:
+                shutil.copy(self.FIXTURE, self.lens_path(lens))
+            else:
+                self.lens_path(lens).write_text(self.CLEAN)
+
+    def test_lens_paths_are_deterministic_and_emptied(self):
+        """렌즈마다 결정적 경로를 잡고 스핀 직전 비운다. 잔여가 남으면 그 축이 이번 사이클에
+        안 돌았는데도 옛 결과가 채점돼, 미점검 phase 가 통과로 둔갑한다."""
+        self.prepare()
+        stale = self.lens_path("safety")
+        stale.write_text('{"findings":[{"id":"stale"}]}')
+        r = self.run_block("b-lens")
         self.assertEqual(r.rc, 0, repr(r))
-        self.assertIn("checker 프롬프트 값: base=origin/main", r.out)
-        self.assertIn(str(f), r.out, "findings 경로가 창에 안 나왔다 — 프롬프트에 넣을 값이 없다")
-        self.assertEqual(f.read_text(), "", "스핀 직전 비우기가 안 됐다 — 잔여가 거짓 통과를 가린다")
+        self.assertIn("checker 렌즈: contract safety quality", r.out, repr(r))
+        self.assertIn("checker 공통 값: base=origin/main", r.out)
+        self.assertIn("docs/CONVENTIONS.md", r.out, "컨벤션 문서 값이 창에 안 나왔다")
+        for lens in self.LENSES:
+            self.assertIn(str(self.lens_path(lens)), r.out,
+                          f"{lens} 렌즈 출력 경로가 창에 안 나왔다 — 프롬프트에 넣을 값이 없다")
+        self.assertEqual(stale.read_text(), "",
+                         "스핀 직전 비우기가 안 됐다 — 잔여가 거짓 통과를 가린다")
 
-    def test_scoring_stops_when_checker_wrote_nothing(self):
-        self.setup_loop()
-        self.run_block("lr-checker")  # $F 를 빈 파일로 만든다
-        r = self.run_block("lr-score")
+    def test_scoring_stops_when_a_lens_is_missing(self):
+        """축 하나가 안 돌면 남은 둘로 채점하지 않는다. **병렬화가 만든 가장 큰 구멍이 여기다** —
+        렌즈가 죽어도 남은 결과의 형식은 멀쩡해서, 개수를 안 세면 그 차원이 통과로 읽힌다."""
+        self.prepare()
+        self.write_lenses(findings_in="contract", skip="quality")
+        r = self.run_block("b-score")
         self.assertEqual(r.rc, 65, repr(r))
-        self.assertIn("checker 가 findings 를", r.err)
-        self.assertEqual((self.loop_dir / "history.jsonl").read_text(), "",
+        self.assertIn("병합 실패", r.err, repr(r))
+        self.assertFalse((self.loop_dir / "history-foundation.jsonl").read_text(),
+                         "실패했는데 history 에 회차가 쌓였다")
+
+    def test_scoring_stops_when_a_lens_wrote_nothing(self):
+        self.prepare()
+        self.run_block("b-lens")   # 렌즈 파일 셋을 빈 파일로 만든다
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 65, repr(r))
+        self.assertFalse((self.loop_dir / "history-foundation.jsonl").read_text(),
                          "실패했는데 history 에 회차가 쌓였다")
 
     def test_scoring_appends_history_and_scored(self):
-        self.setup_loop()
-        shutil.copy(self.FIXTURE, self.loop_dir / "checker-findings.json")
-        r = self.run_block("lr-score")
+        self.prepare()
+        self.write_lenses(findings_in="contract")
+        r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("사이클 1 → verdict=AWAIT_USER", r.out, repr(r))
-        hist = (self.loop_dir / "history.jsonl").read_text().splitlines()
+        hist = (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()
         self.assertEqual(len(hist), 1)
         self.assertEqual(json.loads(hist[0])["iteration"], 1)
-        scored = json.loads((self.loop_dir / "scored.json").read_text())
+        scored = json.loads((self.loop_dir / "scored-foundation.json").read_text())
         self.assertTrue(all("severity" in f for f in scored["findings"]))
+        # 병합이 렌즈 접두를 붙여야 id 가 전역 고유가 된다 — 안 붙이면 두 렌즈의 "c1" 이 같은
+        # 이름이 되어 반복 표시와 maker 지시가 서로 다른 finding 을 같은 것으로 가리킨다.
+        self.assertTrue(all(f["id"].startswith("contract-") for f in scored["findings"]),
+                        f"렌즈 접두가 안 붙었다: {[f['id'] for f in scored['findings']]}")
 
-    def test_empty_findings_array_scores_as_pass(self):
-        """대조군 — 정상 '발견 없음' 은 -s 가드를 통과해 PASS 로 채점돼야 한다.
+    def test_all_lenses_clean_scores_as_pass(self):
+        """대조군 — 셋 다 정상 '발견 없음' 이면 PASS 로 채점돼야 한다.
 
-        0.9.7 부터 깨끗함을 인정받으려면 `reviewed` 로 무엇을 봤는지 함께 내야 한다.
+        깨끗함을 인정받으려면 `reviewed` 로 무엇을 봤는지 함께 내야 한다.
         """
-        self.setup_loop()
-        (self.loop_dir / "checker-findings.json").write_text(
-            '{"findings":[],"reviewed":["src/A.kt"]}')
-        r = self.run_block("lr-score")
+        self.prepare()
+        self.write_lenses()
+        r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("verdict=PASS", r.out)
 
@@ -949,28 +1047,35 @@ class TestCheckerAndScoring(BlockCase):
         그리고 오케스트레이터가 그 exit 65 를 **삼키지 않아야** 한다. 전에는 SCORED 가 빈 문자열이
         된 채 흘러가 verdict 가 미정의가 되고, history 줄이 안 쌓여 회차 카운터까지 제자리였다.
         """
-        self.setup_loop()
-        (self.loop_dir / "checker-findings.json").write_text('{"findings":[]}')
-        r = self.run_block("lr-score")
+        self.prepare()
+        for lens in self.LENSES:
+            self.lens_path(lens).write_text('{"findings":[]}')
+        r = self.run_block("b-score")
         self.assertNotEqual(r.rc, 0, repr(r))
         self.assertNotIn("verdict=", r.out)
-        hist = self.loop_dir / "history.jsonl"
+        hist = self.loop_dir / "history-foundation.jsonl"
         self.assertFalse(hist.is_file() and hist.read_text().strip(),
                          "거부된 사이클이 history 에 줄을 남기면 안 된다")
 
+    def test_lens_base_mismatch_stops(self):
+        """렌즈마다 다른 diff 를 봤으면 합친 verdict 가 무엇에 대한 것인지 없다."""
+        self.prepare()
+        self.write_lenses(findings_in="contract")
+        self.lens_path("quality").write_text(
+            '{"base":"origin/develop","findings":[],"reviewed":["src/Main.kt"]}')
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 65, repr(r))
+
     def test_scoring_writes_into_phase_scope(self):
-        """loop-build 의 phase 스코프를 loop-run Step 3 이 params.env 로 상속한다."""
-        self.setup_loop()
-        self.setup_phases()
-        self.run_block("lb-budget")
-        self.enter_phase("foundation")
-        shutil.copy(self.FIXTURE, self.loop_dir / "checker-findings.json")
-        r = self.run_block("lr-score")
+        """phase 스코프를 채점 블록이 params.env 로 상속한다 — 앞 phase 와 섞이면 안 된다."""
+        self.prepare()
+        self.write_lenses(findings_in="safety")
+        r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertTrue((self.loop_dir / "history-foundation.jsonl").is_file(),
                         "phase 스코프 history 가 안 생겼다")
-        self.assertFalse((self.loop_dir / "history.jsonl").read_text(),
-                         "phase 진입 후에도 루트 history 에 썼다")
+        self.assertFalse((self.loop_dir / "history.jsonl").exists(),
+                         "phase 스코프인데 루트 history 에 썼다")
 
 
 # ── 7. maker 입력 선택 ─────────────────────────────────────────────────────
@@ -979,31 +1084,43 @@ class TestMakerInput(BlockCase):
     def test_gate_queue_wins_over_scored(self):
         self.setup_loop()
         (self.loop_dir / "scored.json").write_text('{"findings":[]}')
-        self.run_block("lr-gate", env=self.env(GATE_MODE="fail-build"))
-        r = self.run_block("lr-makerinput")
+        self.run_block("b-gate", env=self.env(GATE_MODE="fail-build"))
+        r = self.run_block("b-makerinput")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("maker 입력: 게이트 큐 2건", r.out, repr(r))
 
-    def test_scored_used_when_queue_empty(self):
+    def enter(self) -> None:
         self.setup_loop()
-        (self.loop_dir / "scored.json").write_text('{"findings":[]}')
-        self.run_block("lr-gate", env=self.env(GATE_MODE="pass"))
-        r = self.run_block("lr-makerinput")
-        self.assertIn(f"maker 입력: 채점 큐 {self.loop_dir}/scored.json", r.out, repr(r))
+        self.setup_phases()
+        self.run_block("b-budget")
+        self.enter_phase("foundation")
+
+    def test_scored_used_when_queue_empty(self):
+        self.enter()
+        (self.loop_dir / "scored-foundation.json").write_text('{"findings":[]}')
+        self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        r = self.run_block("b-makerinput")
+        self.assertIn(f"maker 입력: 채점 큐 {self.loop_dir}/scored-foundation.json",
+                      r.out, repr(r))
 
     def test_repeat_table_lists_recurring_findings(self):
-        """회차 간 유일한 기억 — 같은 kind@location 이 몇 회차째인지."""
-        self.setup_loop()
+        """회차 간 유일한 기억 — 같은 kind@location 이 몇 회차째인지.
+
+        집계 대상이 phase 별 history 라, 앞 phase 에서 반복된 finding 이 다음 phase 의 표에
+        섞이지 않는다(섞이면 maker 가 이 phase 와 무관한 이력을 근거로 받는다).
+        """
+        self.enter()
         one = ('{"iteration":%d,"verdict":"RETRY","findings":'
                '[{"kind":"n-plus-1","location":"src/Main.kt:8"}]}')
-        (self.loop_dir / "history.jsonl").write_text((one % 1) + "\n" + (one % 2) + "\n")
-        r = self.run_block("lr-makerinput")
+        (self.loop_dir / "history-foundation.jsonl").write_text(
+            (one % 1) + "\n" + (one % 2) + "\n")
+        r = self.run_block("b-makerinput")
         self.assertIn("2회차째", r.out, repr(r))
         self.assertIn("n-plus-1@src/Main.kt:8", r.out)
 
     def test_repeat_table_quiet_on_first_cycle(self):
         self.setup_loop()
-        r = self.run_block("lr-makerinput")
+        r = self.run_block("b-makerinput")
         self.assertIn("반복 없음", r.out, repr(r))
 
 
@@ -1038,7 +1155,7 @@ class TestTreeSnapshot(BlockCase):
         for label, mutate, expect_stall in TREE_CASES:
             with self.subTest(case=label):
                 self.sh(mutate)
-                r = self.run_block("lr-tree")
+                r = self.run_block("b-tree")
                 self.assertEqual(r.rc, 0, repr(r))
                 got = STALL_MARK in r.err
                 self.assertEqual(got, expect_stall,
@@ -1087,11 +1204,10 @@ class TestCleanup(BlockCase):
         self.assertEqual(again.rc, 0, repr(again))
         self.assertIn("지울 상태가 없다", again.err, repr(again))
 
-    def test_loop_run_cleanup(self):
-        self.check_cleanup("lr-cleanup", "loop-run Step 5-1")
-
-    def test_loop_build_cleanup(self):
-        self.check_cleanup("lb-cleanup", "loop-build Step 3-1")
+    def test_build_cleanup(self):
+        # 종전에는 loop-run Step 5-1 과 loop-build Step 3-1 이 각각 정리 블록을 갖고 있었고
+        # 시험도 둘이었다. 스킬이 합쳐지며 블록이 하나가 되어(앵커도 하나) 검사도 하나다.
+        self.check_cleanup("b-cleanup", "build Step 3-1")
 
     def test_old_cleanup_silently_deleted_nothing(self):
         """대조군 — 프리앰블 없던 판은 rc 0 을 내면서 상태를 그대로 남겼다.
@@ -1107,11 +1223,11 @@ class TestCleanup(BlockCase):
         self.assertTrue(self.pointer.is_file())
 
 
-# ── 10. loop-review ────────────────────────────────────────────────────────
+# ── 10. review ─────────────────────────────────────────────────────────────
 
 class TestLoopReview(BlockCase):
     def review_findings_path(self) -> Path:
-        r = self.sh('echo "${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PWD")-'
+        r = self.sh('echo "${TMPDIR:-/tmp}/review-findings-$(basename "$PWD")-'
                     '$(git rev-parse --abbrev-ref HEAD | cksum | tr \' \' \'-\').json"')
         return Path(r.out.strip())
 
@@ -1119,7 +1235,7 @@ class TestLoopReview(BlockCase):
         # 0.9.7 의 빈 diff 가드가 여기서도 돈다 — 점검 대상이 없으면 멈춘다. 감지 값 출력을 보려면
         # 실제로 볼 변경이 있어야 한다(리뷰는 회차가 없어 이 한 번이 전부라 더 치명적이다).
         (self.work / "Changed.kt").write_text("class Changed\n")
-        r = self.run_block("lv-detect")
+        r = self.run_block("v-detect")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("review 값: base=origin/main", r.out, repr(r))
         self.assertIn("docs/CONVENTIONS.md", r.out)
@@ -1131,7 +1247,7 @@ class TestLoopReview(BlockCase):
 
         loop-run 에는 이 가드가 있었고 loop-review 에는 통째로 없었다.
         """
-        r = self.run_block("lv-detect")
+        r = self.run_block("v-detect")
         self.assertNotEqual(r.rc, 0, repr(r))
         self.assertIn("점검 대상 변경 0건", r.err)
 
@@ -1148,28 +1264,28 @@ class TestLoopReview(BlockCase):
         (self.work / "Changed.kt").write_text("class Changed\n")
         f = self.review_findings_path()
         f.write_text('{"findings":[]}')
-        r = self.run_block("lv-score")
+        r = self.run_block("v-score")
         self.assertNotEqual(r.rc, 0, repr(r))
         self.assertTrue(f.is_file(), "거부됐는데 findings 파일을 지우면 원인을 볼 수 없다")
 
     def test_findings_path_is_deterministic_and_emptied(self):
         expected = self.review_findings_path()
         expected.write_text('{"findings":[{"id":"stale"}]}')
-        r = self.run_block("lv-findings")
+        r = self.run_block("v-findings")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertTrue(expected.is_file(), f"결정적 경로에 파일이 안 생겼다: {expected}")
         self.assertEqual(expected.read_text(), "")
 
     def test_scoring_stops_on_empty_findings_file(self):
-        self.run_block("lv-findings")
-        r = self.run_block("lv-score")
+        self.run_block("v-findings")
+        r = self.run_block("v-score")
         self.assertEqual(r.rc, 65, repr(r))
         self.assertIn("checker 가 findings 를", r.err)
 
     def test_scoring_consumes_and_removes_findings(self):
         f = self.review_findings_path()
         shutil.copy(ENGINE / "fixtures" / "findings.example.json", f)
-        r = self.run_block("lv-score")
+        r = self.run_block("v-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertFalse(f.exists(), "채점 후 findings 파일이 남았다")
 
@@ -1209,7 +1325,7 @@ class TestControlGroups(BlockCase):
     def test_substituted_placeholder_finds_the_engine(self):
         """대조군의 대조군 — 붙여 넣으면 실제로 엔진을 찾는다(위 실패가 늘 죽는 블록 탓이 아니다)."""
         (self.work / "Changed.kt").write_text("class Changed\n")   # 빈 diff 가드를 통과할 변경
-        r = self.run_block("lv-detect")
+        r = self.run_block("v-detect")
         self.assertNotIn("채점 엔진을 못 찾았다", r.err, repr(r))
         self.assertIn(str(ENGINE / "rubric.base.md"), r.out, repr(r))
 

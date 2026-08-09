@@ -23,7 +23,7 @@
 #      모르는 kind 든 floor 와 같은 kind 든 전부 dimension floor 로 채점된다(fallback 아니라 주 메커니즘).
 #      kind·dimension 인덱싱은 null-safe(`// ""`) — 필드 누락이 jq 크래시로 배치 전체를 날리지 않게.
 #      모르는/누락 dimension 은 가장 관대한 MINOR 가 아니라 보수적으로 CRITICAL 로 떨어뜨린다.
-#      (dimension 은 checker 가 5값으로 못박은 닫힌 어휘라, 그 밖의 값은 정당한 신호가 아니라 LLM 오타다.)
+#      (dimension 은 checker 가 6값으로 못박은 닫힌 어휘라, 그 밖의 값은 정당한 신호가 아니라 LLM 오타다.)
 #   2. location 이 rubric PATHWEIGHTS 패턴에 걸리면 셸이 가중을 붙여 checker 것과 합집합한다.
 #      가중은 checker 가 주는 값이라 안 달면 조용히 한 단계 낮게 채점된다 — 경로로 유도되는 것만이라도
 #      모델 밖에서 세운다. 붙인 값은 weights_derived 로 노출한다.

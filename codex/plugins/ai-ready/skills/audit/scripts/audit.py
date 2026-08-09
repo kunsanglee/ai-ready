@@ -1546,8 +1546,8 @@ def render_report(audit: dict) -> str:
     lines.append("")
     lines.append("월 1회 재실행하세요. 절대 점수가 아닌 **점수 추이**에 주목합니다.")
     lines.append("")
-    lines.append("`/ai-ready:apply` 로 액션을 반영한 변경은 `/loop-run`(수렴까지) 또는 1회 점검 `/loop-review` 로 "
-                 "검증하고, 거기서 잡힌 실수는 `/loop-lessons` 로 `docs/ANTIPATTERNS.md` 에 반영해 다음 audit 의 "
+    lines.append("`/ai-ready:apply` 로 액션을 반영한 변경은 `/build`(수렴까지) 또는 1회 점검 `/review` 로 "
+                 "검증하고, 거기서 잡힌 실수는 `/lessons` 로 `docs/ANTIPATTERNS.md` 에 반영해 다음 audit 의 "
                  "입력으로 되돌립니다 — audit→apply→verify→lessons→audit 순환.")
     return "\n".join(lines)
 
@@ -1644,8 +1644,8 @@ def render_readme(audit: dict, out_dir: Path | None = None) -> str:
     lines.append("1. `audit-report.md` 의 **ROI 우선순위 액션** 표를 위에서부터 본다.")
     lines.append("2. `/ai-ready:apply` 로 mechanical 액션을 일괄 실행한다 (모듈 가이드 scaffold, ARCHITECTURE.md 생성, ANTIPATTERNS 시드 등).")
     lines.append("3. judgment 액션은 Claude Code 세션에서 사용자 검수 후 적용한다.")
-    lines.append("4. apply 로 반영한 변경은 `/loop-run`(수렴까지) 또는 `/loop-review`(1회 점검)로 검증하고, "
-                 "잡힌 실수는 `/loop-lessons` 로 `docs/ANTIPATTERNS.md` 에 반영한다 (다음 audit 입력으로 환류).")
+    lines.append("4. apply 로 반영한 변경은 `/build`(수렴까지) 또는 `/review`(1회 점검)로 검증하고, "
+                 "잡힌 실수는 `/lessons` 로 `docs/ANTIPATTERNS.md` 에 반영한다 (다음 audit 입력으로 환류).")
     lines.append("5. 월 1회 재실행해 점수 추이를 `audit.json` 기반으로 비교한다.")
     lines.append("")
     lines.append("## 주의")

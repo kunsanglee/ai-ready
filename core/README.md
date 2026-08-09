@@ -1,12 +1,12 @@
 # core/ — loop 계열 중립 단일원본
 
-ai-ready 의 loop 계열(loop-build·loop-run·loop-lessons·loop-review)을 Claude·codex 두 호스트가 공유하도록, 수정은 여기 `core/` 한 곳에서만 하고 빌드가 각 호스트 설치 트리를 생성한다. 설치본은 호스트별로 유지된다(각자 manifest·root 로 로드하므로 두 호스트가 그대로 읽는 단일 폴더는 불가) — 중립성은 이 소스+빌드 층에 둔다.
+ai-ready 의 loop 계열(build·review·lessons)을 Claude·codex 두 호스트가 공유하도록, 수정은 여기 `core/` 한 곳에서만 하고 빌드가 각 호스트 설치 트리를 생성한다. 설치본은 호스트별로 유지된다(각자 manifest·root 로 로드하므로 두 호스트가 그대로 읽는 단일 폴더는 불가) — 중립성은 이 소스+빌드 층에 둔다.
 
 ## 레이아웃
 
 ```
 core/                        ← 중립 단일 진실(수정은 여기서만)
-  _loop-engine/              결정론 판정 셸(score/decide/stall/lessons/lib + rubric.base + detect_build). 이미 공급자 무관.
+  _loop-engine/              결정론 판정 셸(score/decide/stall/kindstreak/lessons/lib + 렌즈 결과 병합 merge_findings + rubric.base + detect_build + gate_parse). 이미 공급자 무관.
   effort-ladder.md           reasoning-effort 중립 사다리 + 호스트 변환표(공유 계약). 역할은 등급만 선언, 어댑터가 토큰으로 해소.
   (호스트별 손작성) skills/·역할 계약  D3′ 로 core 화 안 함 — 각 트리에 손으로 둠(스폰이 호스트별로 달라 자리표시자 이득 작음)
 adapters/

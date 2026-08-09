@@ -1,11 +1,11 @@
 ---
-name: loop-lessons
-description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 잡은 실수(history.jsonl diff)와 사람·PR 지적을 loop-lesson-synthesizer 가 영구 지식층 후보 초안으로 만들면, 한 번에 하나씩 추가/수정/버림을 사람에게 묻고 승인분만 반영한다. 호출 /loop-lessons [--history <경로>]. Use this skill when the user says "/loop-lessons", "lesson 종합", "교훈 반영", "안티패턴 후보", or wants to harvest a finished loop's mistakes into the knowledge layer. 자동 반영 없음 — 사람 승인이 의무.
+name: lessons
+description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 잡은 실수(history diff)와 사람·PR 지적을 loop-lesson-synthesizer 가 영구 지식층 후보 초안으로 만들면, 한 번에 하나씩 추가/수정/버림을 사람에게 묻고 승인분만 반영한다. 호출 /lessons [--history <경로>]. Use this skill when the user says "/lessons", "lesson 종합", "교훈 반영", "안티패턴 후보", or wants to harvest a finished loop's mistakes into the knowledge layer. 자동 반영 없음 — 사람 승인이 의무.
 ---
 
-# loop-lessons — lesson 승인 게이트
+# lessons — lesson 승인 게이트
 
-> 무인 검증 loop 의 선순환을 닫는 사람 승인 게이트. 호출: `/loop-lessons [--history <경로>]`. 보통 `/loop-run` 종료 후 그 history 로 부른다.
+> 무인 검증 loop 의 선순환을 닫는 사람 승인 게이트. 호출: `/lessons [--history <경로>]`. 보통 `/build` 종료 후 그 history 로 부른다.
 
 무인 검증 loop 의 **선순환을 닫는 사람 승인 게이트**다. loop 가 잡은 실수(+ 사람·PR 이 더한 지적)를 `loop-lesson-synthesizer` 가 ANTIPATTERNS 후보 초안으로 만들면, 이 스킬이 **한 번에 하나씩** 추가/수정/버림을 사람에게 묻고 승인분만 영구 지식층에 반영한다.
 
@@ -27,8 +27,8 @@ description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 �
 ## 호출 예시
 
 ```
-/loop-lessons                                   # 직전 loop 의 history 에서 출처1 자동 추출 → 후보 검토
-/loop-lessons --history .loop/run/{ticket}/history.jsonl    # history 경로 명시
+/lessons                                   # 직전 loop 의 history 에서 출처1 자동 추출 → 후보 검토
+/lessons --history .loop/run/{ticket}/history-{phase}.jsonl    # history 경로 명시
 ```
 
 ## 작업 흐름
@@ -50,9 +50,9 @@ description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 �
   LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"                                # 있으면 병합 대상, 없으면 새 kind 추가 시 생성
   # 감지 값을 창에 출력 — 변수 대입만으론 Step 2 프롬프트에 넣을 값이 오케스트레이터에게 존재하지 않는다.
   echo "lessons 값: knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / local_rubric=$LOOP_RUBRIC_LOCAL / engine=$ENG"
-  bash "$ENG/lessons.sh" --history <history.jsonl>
+  bash "$ENG/lessons.sh" --history <history-{phase}.jsonl>
   ```
-  (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다. loop-build 처럼 history 가 phase 별 여러 파일(`history-*.jsonl`)이면 `lessons.sh` 를 파일마다 반복 호출해 mistake 목록을 합친다(단일 `--history` 입력).
+  (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다. `/build` 는 history 를 phase 별로 가르므로(`history-{phase}.jsonl`) `lessons.sh` 를 파일마다 반복 호출해 mistake 목록을 합친다(`--history` 는 파일 하나만 받는다).
 - **출처2 (checker 가 놓친 것, 선택)**: 사람이 결과 검토 중 "checker 가 여기 놓쳤다/과하게 잡았다" 한 지적(세션 안이면 대화에서), 또는 무인 드라이버면 PR 코멘트 추출 결과. 텍스트로 모은다.
 - 티켓/작업 요약 1~3문장(없으면 "작업 정의 없음").
 
@@ -101,7 +101,7 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| lessons.sh 출력이 비어있음 | history.jsonl 에 "떴다가 사라진 finding" 없음(고친 실수 0) | 정상 — 후보 없음. 억지로 만들지 않는다 |
+| lessons.sh 출력이 비어있음 | history 파일에 "떴다가 사라진 finding" 없음(고친 실수 0) | 정상 — 후보 없음. 억지로 만들지 않는다 |
 | 후보가 전부 "버림/관찰" | 전부 일회성·중복 | 정상. ANTIPATTERNS 는 반복·일반 규칙만. 그대로 종료 |
 | rubric KINDS 추가 후 test 실패 | 표 형식 깨짐(열 수 불일치) | 6열(kind_id\|dimension\|layer\|base_severity\|force_await\|note) 맞췄는지 확인 |
 
