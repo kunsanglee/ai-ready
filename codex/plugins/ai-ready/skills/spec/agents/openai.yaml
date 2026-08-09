@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-Ready Spec"
+  short_description: "무인 루프에 넘길 스펙을 도출합니다 — 안 정해진 결정을 열거해 근거와 함께 닫고, 추측일 수밖에 없는 것만 사람에게 묻습니다"
+  default_prompt: "Use $spec to derive a runnable spec before /build: enumerate the undecided calls, close each with evidence, and ask only where a guess would be invented."

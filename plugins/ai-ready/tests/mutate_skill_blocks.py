@@ -29,6 +29,24 @@ TEST = TREE / "tests" / "test_skill_blocks.py"
 # 각 변이: (라벨, 대상 문서, 지울/바꿀 원문, 바꿀 내용, 깨져야 하는 시험, 왜 이 변이인가)
 MUTATIONS = [
     (
+        "근거 없이 닫은 결정을 통과",
+        "skills/spec/SKILL.md",
+        '[ "$UNGROUNDED" -eq 0 ] || { echo "spec: 근거 없이 닫은 결정이',
+        '[ "$UNGROUNDED" -ge 0 ] || { echo "spec: 근거 없이 닫은 결정이',
+        ["TestSpecLedger.test_exit_rejects_a_decision_closed_without_evidence"],
+        "도출층의 존재 이유 — 지어낸 답이 근거 없이 원장에 앉는 것을 막는 유일한 자리다. "
+        "이 가드가 죽으면 나머지 검사는 전부 통과해서 사람에게 아무 신호도 안 간다.",
+    ),
+    (
+        "개수 출력에서 중괄호 제거",
+        "skills/spec/SKILL.md",
+        'echo "spec: 결정 ${TOTAL}개',
+        'echo "spec: 결정 $TOTAL개',
+        ["TestSpecLedger.test_exit_reports_counts_with_digits"],
+        "변수 뒤에 한글이 붙으면 셸이 그 한글까지 이름으로 읽어 개수가 사라진다. "
+        "실제로 그렇게 나갔던 자리이고, 하필 개수가 필요한 순간은 뭔가 잘못됐을 때다.",
+    ),
+    (
         "정리 블록의 재유도·가드 제거",
         "skills/build/SKILL.md",
         '''LOOP_DIR="$(cat "$PTR" 2>/dev/null)"
