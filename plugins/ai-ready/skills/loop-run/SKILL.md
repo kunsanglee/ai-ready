@@ -16,11 +16,11 @@ description: 무인 검증 loop 의 사람 핸드오프 자동 루프. 사람이
 ## 🔌 plugin / 프로젝트 구조
 
 - 이 스킬은 `ai-ready` plugin 의 일부다(과거 별도 loop-engine plugin 이었으나 v0.6.0 에서 통합). **도구 본체는 유저 레벨**(plugin), **프로젝트별 차이는 런타임 감지**가 채운다 — 별도 어댑터 파일을 만들지 않는다.
-- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param` + `detect_build.py` 감지기 + `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-maker.md`·`agents/loop-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace). `loop-maker` 는 `loop-build` 와 공유한다 — 스핀 패턴만 다르고 행동 규칙은 같은 정의다.
+- plugin 번들(유저 레벨, `$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`lessons` + `lib.sh` 의 `loop_param` + `detect_build.py` 감지기 + `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-maker.md`·`agents/loop-checker.md`·`agents/loop-spec-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace). `loop-maker` 와 `loop-spec-checker` 는 `loop-build` 와 공유한다 — maker 는 스핀 패턴만 다르고 행동 규칙이 같은 정의고, spec-checker 는 두 스킬의 입구가 같은 물음("이 지시로 사람 없이 돌 수 있나")을 갖기 때문이다.
 - 프로젝트 사실(빌드·테스트·린트 명령·티켓 패턴·베이스 브랜치·컨벤션 docs·지식층)은 Step 0 에서 `detect_build.py` 가 매니페스트·브랜치를 *읽어* 감지한다(읽기 전용 — 커밋되는 어댑터 파일은 만들지 않는다. 감지 결과는 루프 한정 휘발 스냅숏 `params.env` 로만 남고 종료 시 폐기된다).
 - 프로젝트 델타(레포에 커밋, 선택): `.loop/rubric.md`(LOCAL rubric — 그 스택 특유 kind. BASE 와 병합 채점). 없어도 BASE 만으로 돈다. 스택 특유 종류(예: ddl-safety)는 사람이 `/loop-lessons` 로 덧붙여 키운다 — 자동 생성하지 않는다.
 - 지식층은 프로젝트의 `docs/ANTIPATTERNS.md`(ai-ready audit/apply 가 만들고 가꾸는 문서). checker 가 판정 기준으로 읽고, `/loop-lessons` 가 잡힌 실수를 거기에 덧붙인다. loop 은 그 문서를 *읽고 보탤* 뿐 따로 생성하지 않는다 — ai-ready 와 loop 이 같은 지식층을 공동 저작한다.
-- 런타임 상태(`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 의 stall·history·started.epoch·params.env·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문·tree.snapshot·brief, 그리고 브랜치별 포인터 `.loop/run/.active-{브랜치}`)는 루프 한정 휘발성 — `.gitignore` 로 `.loop/run/` 추적 제외. `.loop/rubric.md`(있으면)는 추적 대상.
+- 런타임 상태(`$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 의 stall·history·started.epoch·params.env·gate.fail·checker-findings·scored·gate-queue·게이트 출력 원문·tree.snapshot·brief·spec-gaps, 그리고 브랜치별 포인터 `.loop/run/.active-{브랜치}`)는 루프 한정 휘발성 — `.gitignore` 로 `.loop/run/` 추적 제외. `.loop/rubric.md`(있으면)는 추적 대상.
 - 외부 인증 없음(전부 로컬 git + 셸). brake 런별 오버라이드는 `LOOP_*` env 로(아래).
 
 ## 입력
@@ -148,15 +148,25 @@ printf '%s\n' "$LOOP_DIR" > "$PROJECT_ROOT/.loop/run/.active-$BR"
 echo "loop-run 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') max_iter=$MAX_ITER (디폴트 $DEFAULT_ITER) budget_min=$BUDGET_MIN 천장 $ABS_CEIL"
 ```
 
-### Step 0-1. 작업 지시 파일 확보 (없을 때만)
+### Step 0-1. 작업 지시 확보 + 스펙 완전성 점검 (사람 게이트)
 
-Step 0 이 `LOOP_DESIGN_REF` 를 `$LOOP_DIR/brief.md` 로 잡았다면 그 파일이 아직 비어 있다. **채우고 사람 확인을 받기 전에 Step 1 로 넘어가지 않는다.**
+**(a) 브리프 작성 — 작업 지시 파일이 없을 때만.** Step 0 이 `LOOP_DESIGN_REF` 를 `$LOOP_DIR/brief.md` 로 잡았다면 그 파일이 아직 비어 있다. **채우고 사람 확인을 받기 전에 Step 1 로 넘어가지 않는다.**
 
 1. 이 대화에서 합의된 것을 `brief.md` 에 쓴다. 담을 것은 셋이다. **무엇을 만들/고칠지**, **완료 기준**, **건드리지 않을 범위**. 대화 전체를 옮기지 않는다 — maker 가 매 사이클 읽을 파일이라 짧고 확정적이어야 한다.
 2. 그 파일을 사람에게 보여 준다. 경로와 본문을 함께 낸다.
 3. 사람이 확인하면 루프를 시작한다. **작업 지시가 모호하다고 판단되면 루프를 시작하지 않는다** — checker 의 정합 층이 기준을 못 잡아 헛돌고, maker 도 구현 근거가 없다. grill-me 로 완료 기준부터 확정하게 한다.
 
 `brief.md` 는 `$LOOP_DIR` 안이라 Step 5-1 폐기에 함께 사라진다. 남길 값이 있는 지시라면 애초에 grill-me B 흐름의 specs 파일로 있어야 하고, 그때는 그 경로를 `LOOP_DESIGN_REF` 로 주면 브리프를 만들지 않는다.
+
+**(b) 스펙 완전성 점검 — 작업 지시가 파일로 왔든 여기서 썼든 항상.** `Agent` 로 `loop-spec-checker` 를 **한 번** 띄워, 그 지시가 답하지 않은 결정을 열거하게 한다. 사람이 아직 있는 마지막 순간이 여기다 — 루프가 돌기 시작하면 안 정해진 것은 maker 가 조용히 추측으로 메우고, checker 가 다른 추측을 기대하며 finding 을 내고, 사이클이 그 사이를 오간다. 등급이 오르내려 정체 감지에도 안 걸린다.
+
+프롬프트에 담는 것: `$LOOP_DESIGN_REF`(점검 대상), 컨벤션 문서 경로·지식층 값(`$LOOP_CONVENTION_DOCS`·`$LOOP_KNOWLEDGE_LAYER` 값 자체 — **환경변수는 서브에이전트에 전달되지 않는다**), 결과 출력 경로 `$LOOP_DIR/spec-gaps.json`.
+
+- **결과는 경고까지고 시작을 막지 않는다.** 무엇이 load-bearing 인지는 프로젝트마다 달라, 기계가 막으면 거짓 양성으로 사람이 게이트 우회법부터 배운다. 판단은 확인하는 사람이 한다.
+- **답을 기다리는 자리는 (a)가 돌 때 하나뿐이다.** (a)가 돌았으면 `gaps` 를 그 확인과 **한 화면**에 내고 사람 답을 기다린다. 지시가 파일로 와서 (a)가 건너뛰어졌으면 **`gaps` 를 출력하고 그대로 시작한다** — 기다리지 않는다. 이 스킬은 백그라운드 잡으로 도는 것을 권하는데, 거기서 오지 않을 답을 기다리면 에러 없이 조용히 멈춰 사람이 돌아와서야 안다. 사람이 나중에 그 출력을 보고 답하면 작업 지시 파일에 반영하고 다음 사이클부터 반영된다.
+- `gaps` 가 비면 그 사실을 한 줄로 말한다.
+- 이 점검은 **모든 `/loop-run` 이 한 번씩 더 무는 비용**이다(에이전트 하나, `effort: high`). 끄는 스위치는 두지 않았다 — 무인으로 다섯 회차를 돌릴 작업에서 한 번의 열거가 더 싸다는 판단이고, 그 판단이 뒤집히면 그때 스위치를 만든다.
+- 점검 자체가 실패하면(결과 파일이 안 생김) 그 사실만 알리고 시작은 막지 않는다 — 이 절은 경고 층이지 게이트가 아니다.
 
 > Bash 도구 호출은 호출마다 새 셸이라 env 가 안 남는다. 그래서 회차·시작시각뿐 아니라 **brake 값·감지 명령까지 전부 파일로 영속** 한다(`started.epoch`, `history.jsonl` 줄 수, `params.env`). 이후 모든 Step 의 셸 블록은 맨 위의 재유도 프리앰블(브랜치별 포인터 `.loop/run/.active-{브랜치}` → `set -a` 로 `params.env` source)로 시작한다 — 변수 carry-over 를 가정하지 않는다. `set -a` 가 핵심이다: 그냥 source 하면 값만 복원되고 export 속성이 빠져, 채점 자식 프로세스(score/decide/stall)가 `LOOP_RUBRIC_LOCAL` 을 못 읽어 LOCAL rubric 이 조용히 무시된다.
 
