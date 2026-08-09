@@ -544,6 +544,65 @@ else
   echo "SKIP  gate_parse 테스트 — python3 미설치"
 fi
 
+# ── 10. merge_findings.sh 축별 병렬 checker 결과 병합 ─────────────
+# checker 를 축으로 갈라 병렬로 띄우면 결과가 파일 여러 개로 나온다. 그 사이를 잇는 셸이고,
+# **개수 검사가 존재 이유다** — 렌즈 하나가 죽어도 남은 둘의 결과는 형식이 멀쩡해서, 세지 않으면
+# 그 축이 한 번도 점검되지 않은 채 PASS 로 간다. 단일 checker 의 `[ -s "$F" ]` 가드를 N 개로 넓힌 자리.
+mgtmp="$(mktemp -d)"
+cat > "$mgtmp/contract.json" <<'J'
+{"base":"origin/main","reviewed":["src/A.kt"],"findings":[{"id":"c1","kind":"compat-response-break","dimension":"compatibility","location":"src/A.kt:10","evidence":"필드 삭제","weights":[],"force_await":false}]}
+J
+cat > "$mgtmp/safety.json" <<'J'
+{"base":"origin/main","reviewed":["src/A.kt","src/B.kt"],"findings":[{"id":"c1","kind":"n-plus-1","dimension":"runtime","location":"src/B.kt:88","evidence":"루프 안 조회","weights":["hotpath"],"force_await":false}]}
+J
+cat > "$mgtmp/quality.json" <<'J'
+{"base":"origin/main","reviewed":["src/B.kt"],"findings":[{"id":"s1","kind":"speculative-abstraction","dimension":"simplicity","location":"src/B.kt:12","evidence":"구현 하나뿐인 인터페이스","weights":[],"force_await":false}]}
+J
+merge3() { bash "$DIR/merge_findings.sh" --expect 3 \
+  "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json" "quality=$mgtmp/$1"; }
+merge_rc() { bash "$DIR/merge_findings.sh" "$@" >/dev/null 2>&1; echo $?; }
+
+merged="$(merge3 quality.json)"
+# id 는 렌즈 안에서만 고유하다 — 두 렌즈가 "c1" 을 냈고 접두가 없으면 반복 표시와 maker 지시가
+# 서로 다른 finding 을 같은 이름으로 가리킨다.
+assert_eq "merge: id 에 렌즈 접두" \
+  "$(jq -r '[.findings[].id] | sort | join(",")' <<<"$merged")" "contract-c1,quality-s1,safety-c1"
+assert_eq "merge: reviewed 합집합" \
+  "$(jq -r '.reviewed | sort | join(",")' <<<"$merged")" "src/A.kt,src/B.kt"
+# 병합 결과가 score.sh 의 입력 계약을 만족하고, 새 simplicity 차원이 rubric DIMFLOOR 에 실제로
+# 연결돼 있나. floor 가 MAJOR 라야 RETRY_SOFT 가 되어 "고치려 시도하되 정체하면 사람 승인" 이 된다.
+assert_eq "merge→score: simplicity floor = MAJOR" \
+  "$(printf '%s' "$merged" | bash "$DIR/score.sh" | jq -r '.findings[] | select(.dimension=="simplicity") | .severity')" "MAJOR"
+
+# 렌즈가 모자라면 남은 것만으로 채점하지 않는다. 이 한 줄이 병렬화가 만든 가장 큰 구멍을 막는다.
+assert_eq "merge: 렌즈 2/3 이면 exit 65" \
+  "$(merge_rc --expect 3 "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json")" "65"
+# 렌즈마다 다른 diff 를 봤으면 합친 verdict 가 무엇에 대한 것인지 없다.
+sed 's|origin/main|origin/develop|' "$mgtmp/quality.json" > "$mgtmp/badbase.json"
+assert_eq "merge: base 불일치면 exit 65" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json" "quality=$mgtmp/badbase.json")" "65"
+# 빈 파일·형식 위반은 그 축 checker 가 실패한 것이다. 어느 렌즈인지 이름으로 말해야 그 축만 다시 돈다.
+: > "$mgtmp/empty.json"
+assert_eq "merge: 빈 결과 파일이면 exit 65" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json" "quality=$mgtmp/empty.json")" "65"
+echo '{"findings":"nope"}' > "$mgtmp/bad.json"
+assert_eq "merge: findings 비배열이면 exit 65" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json" "quality=$mgtmp/bad.json")" "65"
+# --expect 를 안 주면 개수 검사가 통째로 사라진다 — 그 호출 자체를 거부한다(사용법 오류 64).
+assert_eq "merge: --expect 없으면 거부" "$(merge_rc "contract=$mgtmp/contract.json")" "64"
+
+# 같은 (차원·종류·위치)를 두 렌즈가 냈으면 하나로 접되, 가중은 합집합·사람 대기는 OR 로 보수적으로.
+cat > "$mgtmp/dup.json" <<'J'
+{"base":"origin/main","reviewed":["src/B.kt"],"findings":[{"id":"x9","kind":"n-plus-1","dimension":"runtime","location":"src/B.kt:88","evidence":"나도 봤다","weights":["money"],"force_await":true}]}
+J
+dup_merged="$(merge3 dup.json)"
+assert_eq "merge: 중복 접기 — 건수" "$(jq '.findings | length' <<<"$dup_merged")" "2"
+assert_eq "merge: 중복 접기 — weights 합집합" \
+  "$(jq -r '.findings[] | select(.kind=="n-plus-1") | .weights | sort | join(",")' <<<"$dup_merged")" "hotpath,money"
+assert_eq "merge: 중복 접기 — force_await OR" \
+  "$(jq -r '.findings[] | select(.kind=="n-plus-1") | .force_await' <<<"$dup_merged")" "true"
+rm -rf "$mgtmp"
+
 # ── 결과 ─────────────────────────────────────────────────────────
 echo "────────────────────────"
 echo "통과 $pass / 실패 $fail"

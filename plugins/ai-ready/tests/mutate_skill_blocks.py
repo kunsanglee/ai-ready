@@ -30,31 +30,30 @@ TEST = TREE / "tests" / "test_skill_blocks.py"
 MUTATIONS = [
     (
         "정리 블록의 재유도·가드 제거",
-        "skills/loop-run/SKILL.md",
+        "skills/build/SKILL.md",
         '''LOOP_DIR="$(cat "$PTR" 2>/dev/null)"
 # 폐기는 lesson 종합(또는 사람이 생략 결정) 후에만. 지울 것이 없으면 그렇다고 말하고 끝낸다(재실행 안전).
-[ -n "$LOOP_DIR" ] || { echo "loop: 포인터 없음 — 지울 상태가 없다(이미 폐기됐거나 Step 0 미실행)" >&2; exit 0; }
+[ -n "$LOOP_DIR" ] || { echo "build: 포인터 없음 — 지울 상태가 없다(이미 폐기됐거나 Step 0 미실행)" >&2; exit 0; }
 ''',
         "",
-        ["TestCleanup.test_loop_run_cleanup"],
+        ["TestCleanup.test_build_cleanup"],
         "0.9.4 결함 1 — 빈 LOOP_DIR 로 rm 이 아무것도 못 지우면서 종료코드 0 과 '폐기했다' 출력을 냈다.",
     ),
     (
-        "loop-build Step 0 추가 블록의 재유도 제거",
-        "skills/loop-build/SKILL.md",
-        '''PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
-BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
-LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LOOP_DIR/params.env" ] \\
-  || { echo "loop-build: params.env 없음 — loop-run Step 0 을 먼저 실행" >&2; exit 65; }
-''',
-        "",
+        "순회 진입 블록의 재유도 제거",
+        "skills/build/SKILL.md",
+        '''  || { echo "build: params.env 없음 — Step 0 미실행/폐기됨" >&2; exit 65; }
+set -a; . "$LOOP_DIR/params.env"; set +a
+
+# (1a) 착수 전 스펙 검사 셋 재확인''',
+        "\n# (1a) 착수 전 스펙 검사 셋 재확인",
         ["TestBlockInventory.test_state_blocks_rederive_or_are_prepended",
-         "TestLoopBuildSetup.test_phases_path_persisted"],
-        "0.9.4 결함 2 — Step 0 과 같은 셸이라 가정해 PHASES 가 '/phases.json' 이 되고 루트에 쓰려 했다.",
+         "TestLoopBuildSetup.test_budget_block_without_pointer_fails_loud"],
+        "0.9.4 결함 2 — Step 0 과 같은 셸이라 가정하면 PHASES·BUDGET_MIN 이 빈 값으로 돈다.",
     ),
     (
         "트리 확인을 상태 기반으로 회귀",
-        "skills/loop-run/SKILL.md",
+        "skills/build/SKILL.md",
         '''NOW="$(git rev-parse HEAD):$( { git diff HEAD; git ls-files --others --exclude-standard -z'''
         ''' | xargs -0 shasum 2>/dev/null; } | shasum | cut -d' ' -f1)"''',
         '''NOW="$(git rev-parse HEAD):$(git status --porcelain | shasum | cut -d' ' -f1)"''',
@@ -62,8 +61,22 @@ LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LO
         "0.9.4 결함 3 — porcelain 은 상태만 내므로 같은 파일 재수정을 놓치고 git add 를 오탐했다.",
     ),
     (
+        "렌즈 병합을 건너뛰고 한 축만 채점",
+        "skills/build/SKILL.md",
+        '''bash "$ENG/merge_findings.sh" --expect 3 \\
+  "contract=$LOOP_DIR/checker-$PHASE-contract.json" \\
+  "safety=$LOOP_DIR/checker-$PHASE-safety.json" \\
+  "quality=$LOOP_DIR/checker-$PHASE-quality.json" > "$F" || {
+  echo "build: 렌즈 결과 병합 실패 — 위 메시지가 어느 축인지 말한다. 그 축만 다시 띄우거나 멈춰 사람 호출" >&2
+  exit 65
+}''',
+        '''cp "$LOOP_DIR/checker-$PHASE-contract.json" "$F"''',
+        ["TestCheckerAndScoring.test_scoring_stops_when_a_lens_is_missing"],
+        "병렬화가 만든 구멍 — 개수를 안 세면 축 하나가 안 돌아도 남은 결과가 멀쩡해 보여 통과한다.",
+    ),
+    (
         "시험되지 않는 새 블록 추가",
-        "skills/loop-run/SKILL.md",
+        "skills/build/SKILL.md",
         "## Non-Goals",
         "## 새 절\n\n```bash\necho '아무도 시험하지 않는 블록'\n```\n\n## Non-Goals",
         ["TestBlockInventory.test_block_counts"],

@@ -1,6 +1,6 @@
 # core/ — loop 계열 중립 단일원본
 
-ai-ready 의 loop 계열(loop-build·loop-run·loop-lessons·loop-review)을 Claude·codex 두 호스트가 공유하도록, 수정은 여기 `core/` 한 곳에서만 하고 빌드가 각 호스트 설치 트리를 생성한다. 설치본은 호스트별로 유지된다(각자 manifest·root 로 로드하므로 두 호스트가 그대로 읽는 단일 폴더는 불가) — 중립성은 이 소스+빌드 층에 둔다.
+ai-ready 의 loop 계열(build·review·lessons)을 Claude·codex 두 호스트가 공유하도록, 수정은 여기 `core/` 한 곳에서만 하고 빌드가 각 호스트 설치 트리를 생성한다. 설치본은 호스트별로 유지된다(각자 manifest·root 로 로드하므로 두 호스트가 그대로 읽는 단일 폴더는 불가) — 중립성은 이 소스+빌드 층에 둔다.
 
 ## 레이아웃
 

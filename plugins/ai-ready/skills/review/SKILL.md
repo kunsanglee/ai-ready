@@ -1,13 +1,13 @@
 ---
-name: loop-review
-description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(기본 origin/main..HEAD)을 단일 loop-checker 로 한 번 적대적 점검해 등급 내림차순 보고서를 낸다. 코드를 고치지 않는다(사람이 곧 루프). 채점은 결정론 셸(BASE/LOCAL rubric) — 무인 루프와 같은 판정 기준을 사람이 미리 본다. 호출 /loop-review [--html]. Use this skill when the user says "/loop-review", "loop 리뷰", "검수 한 번", "이 변경 점검", or wants a one-shot adversarial review with the loop's rubric. 수렴까지 맡기면 /loop-run.
+name: review
+description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(기본 origin/main..HEAD)을 loop-checker 한 명이 여섯 차원을 다 보는 단발 점검으로 돌려 등급 내림차순 보고서를 낸다. 코드를 고치지 않는다(사람이 곧 루프). 채점은 결정론 셸(BASE/LOCAL rubric) — 무인 루프와 같은 판정 기준을 사람이 미리 본다. 호출 /review [--html]. Use this skill when the user says "/review", "loop 리뷰", "검수 한 번", "이 변경 점검", or wants a one-shot adversarial review with the loop's rubric. 수렴까지 맡기면 /build.
 ---
 
-# loop-review — 1회 점검 보고서
+# review — 1회 점검 보고서
 
-> 무인 검증 loop 의 사람 입구(human-in-the-loop). 호출: `/loop-review [--html]`. 코드를 고치며 수렴까지 맡기면 `/loop-run`, 종료 후 교훈 수확은 `/loop-lessons`.
+> 무인 검증 loop 의 사람 입구(human-in-the-loop). 호출: `/review [--html]`. 코드를 고치며 수렴까지 맡기면 `/build`, 종료 후 교훈 수확은 `/lessons`.
 
-무인 검증 loop 의 **사람 입구**다. 무인 드라이버가 돌리는 것과 **똑같은 단일 checker(`loop-checker`) + 결정론 채점 셸**을 사람이 한 번 돌려, 등급순 보고서를 받는다. 루프가 아니다 — checker 1회 → 채점 → 보고서로 끝난다. 무엇을 고칠지는 사람이 정한다.
+무인 검증 loop 의 **사람 입구**다. 무인 루프와 **같은 checker(`loop-checker`) + 같은 결정론 채점 셸**을 사람이 한 번 돌려, 등급순 보고서를 받는다. 다른 것은 checker 를 몇 명 띄우느냐 하나다 — `/build` 는 축이 갈린 렌즈 셋(contract·safety·quality)을 서로 모르게 병렬로 띄우고, 여기서는 **한 명이 여섯 차원을 다 본다**(렌즈 지정 없이 부르면 checker 가 그렇게 돈다). 루프가 아니다 — checker 1회 → 채점 → 보고서로 끝난다. 무엇을 고칠지는 사람이 정한다.
 
 ## 🔌 plugin / 프로젝트 구조
 
@@ -17,19 +17,19 @@ description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(
 
 ## `/code-review` 와 차이
 
-| | `/loop-review` | `/code-review` |
+| | `/review` | `/code-review` |
 |---|---|---|
-| 점검자 | 단일 `loop-checker` 1회 | 5개 전문 에이전트 병렬 |
+| 점검자 | `loop-checker` 1회(여섯 차원 전부) | 5개 전문 에이전트 병렬 |
 | severity | 결정론 셸(rubric) — 같은 코드 = 같은 등급 | 각 에이전트가 매김 |
 | 쓰임 | 무인 loop 와 동일 판정을 사람이 미리 봄 | 폭넓은 다관점 진단 |
 
-둘은 보완재다. 무인 loop 에 올릴 코드를 그 loop 의 판정 기준으로 미리 보고 싶으면 `/loop-review`, 다관점 깊이 진단이면 `/code-review`.
+둘은 보완재다. 무인 loop 에 올릴 코드를 그 loop 의 판정 기준으로 미리 보고 싶으면 `/review`, 다관점 깊이 진단이면 `/code-review`.
 
 ## 호출 예시
 
 ```
-/loop-review              # 현재 브랜치 origin/main..HEAD + uncommitted 점검 → markdown 보고서
-/loop-review --html       # 같은 보고서를 자체완결 HTML 파일로
+/review              # 현재 브랜치 origin/main..HEAD + uncommitted 점검 → markdown 보고서
+/review --html       # 같은 보고서를 자체완결 HTML 파일로
 ```
 
 ## 작업 흐름
@@ -55,7 +55,7 @@ git diff "$LOOP_BASE_BRANCH"...HEAD --stat   # 브랜치에서 커밋된 전체 
 git diff --stat                      # uncommitted (unstaged)
 git diff --staged --stat             # uncommitted (staged)
 
-# 점검 대상이 실제로 있나 — loop-run Step 6-1 과 같은 가드. 베이스 오감지면 checker 가 빈 diff 를
+# 점검 대상이 실제로 있나 — `/build` 사이클 시작(Step 2-1)의 같은 가드. 베이스 오감지면 checker 가 빈 diff 를
 # 보고 깨끗하다고 답하고 그게 통과가 된다. 리뷰는 회차가 없어 이 한 번이 전부라 더 치명적이다.
 CHANGED=$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD 2>/dev/null | wc -l | tr -d ' ')
 DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
@@ -71,7 +71,7 @@ echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}
 
 ### Step 2. loop-checker 1회 호출 (독립 시선)
 
-`Agent` 툴로 `loop-checker` 를 **한 번** 호출한다. **환경변수는 서브에이전트에 전달되지 않는다** — 아래 값 전부를 프롬프트 텍스트로 넘긴다. 프롬프트에 넘기는 것은 이것만:
+`Agent` 툴로 `loop-checker` 를 **한 번** 호출한다. **렌즈 이름은 넘기지 않는다** — 지정이 없으면 checker 가 여섯 차원(compatibility·security·runtime·intent·convention·simplicity)을 다 본다. 축을 갈라 병렬로 띄우는 것은 `/build` 쪽이고, 1회 점검은 한 명이 전부 훑는 편이 사람이 읽을 보고서 하나로 떨어진다. **환경변수는 서브에이전트에 전달되지 않는다** — 아래 값 전부를 프롬프트 텍스트로 넘긴다. 프롬프트에 넘기는 것은 이것만:
 
 - 원래 작업 정의(Step 1 요약, 1~3문장).
 - 작업 정의 문서 경로(있으면 design/티켓 경로, 없으면 "missing").
@@ -82,7 +82,7 @@ echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}
 
 > 모델·effort: checker 는 모델을 frontmatter 에 고정하지 않아 호출한 세션을 상속하고(v0.8.4, 이 `Agent` 호출의 `model` 파라미터로 재정의 가능), effort 는 `xhigh` 로 **고정한다**(v0.9.6, 호출로 재정의 불가 — 도구에 파라미터가 없다). 1회 점검이라 아낄 자리가 아니고, 세션 등급을 내려도 판정 기준은 무인 루프와 같아야 한다. 계약은 `core/effort-ladder.md`.
 
-**그 코드를 이 세션이 썼다면 그 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** loop-review 에는 maker 가 없다 — `/loop-run` 과 달리 코드를 쓴 쪽이 이 세션이거나 사람이고, 그래서 자기 변호가 checker 에 새어들 자리가 오히려 여기다. checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
+**그 코드를 이 세션이 썼다면 그 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** review 에는 maker 가 없다 — `/build` 와 달리 코드를 쓴 쪽이 이 세션이거나 사람이고, 그래서 자기 변호가 checker 에 새어들 자리가 오히려 여기다. checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
 
 **checker 결과는 파일로 회수한다.** 스핀 전에 findings 출력 경로를 결정적 위치로 잡고 `: > "$F"` 로 비운 뒤, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 넘긴다:
 
@@ -91,7 +91,7 @@ echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}
 # 슬러그 대신 체크섬인 이유: 한글 브랜치는 ASCII 슬러그에서 전부 지워져 서로 충돌하고, 체크섬은 어떤
 # 브랜치명에도 결정적이다. 레포 이름을 붙여 다른 레포의 같은 브랜치명과도 갈라둔다(TMPDIR 는 사용자 공유).
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
-F="${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse --abbrev-ref HEAD | cksum | tr ' ' '-').json"
+F="${TMPDIR:-/tmp}/review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse --abbrev-ref HEAD | cksum | tr ' ' '-').json"
 : > "$F"
 ```
 
@@ -113,7 +113,7 @@ PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 [ -f "$PROJECT_ROOT/.loop/rubric.md" ] && export LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"
 # F 는 Step 2 에서 잡아 checker 에 넘긴 findings 출력 파일(= checker 가 쓴 정본). 레포+브랜치 체크섬 경로라
 # 여기서 같은 값으로 재유도된다 — 단 Step 2 와 Step 3 사이에 브랜치를 바꾸면 경로가 어긋나 거짓 "checker 실패"가 난다.
-F="${TMPDIR:-/tmp}/loop-review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse --abbrev-ref HEAD | cksum | tr ' ' '-').json"
+F="${TMPDIR:-/tmp}/review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse --abbrev-ref HEAD | cksum | tr ' ' '-').json"
 # checker 가 파일에 못 썼으면(빈/미생성) exit 65 로 fail-loud — 조용히 PASS 금지(정상 빈 배열은 -s 통과라 오탐 없음).
 [ -s "$F" ] || { echo "loop: checker 가 findings 를 $F 에 안 씀(빈 파일/미생성) — checker 실패. 멈춰 보고" >&2; exit 65; }
 # 종료코드를 본다. 삼키면 $SCORED 가 빈 문자열이 된 채 흘러가고, 아래 rm 이 원인을 볼 유일한
@@ -137,7 +137,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 `$SCORED` 의 findings 를 severity 내림차순(BLOCKER>CRITICAL>MAJOR>MINOR)으로 정렬해 보고서를 만든다. 기본은 markdown.
 
 ```
-## loop-review 결과
+## review 결과
 
 ### Verdict: {verdict}   (BLOCKER {n} / CRITICAL {n} / MAJOR {n} / MINOR {n})
 
@@ -161,21 +161,21 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 
 ### Step 4-Alt. HTML 출력 (`--html` 일 때만)
 
-`/code-review` 의 HTML 모드 규약을 그대로 따른다: 외부 의존성 없는 자체완결 단일 HTML 1개(CDN✗, inline `<style>`+`<script>`만), 경로 `/tmp/loop-review-{branch-slug}-{HHMMSS}.html`, 상단 verdict·counts 요약 카드, finding 카드(severity 색상 바 BLOCKER=red·CRITICAL=red·MAJOR=orange·MINOR=yellow, 파일경로 monospace, 복사 버튼), 인용 라인 외 코드 본문 복사 금지(라인+경로만). 산출 후 절대경로 + `file://` 안내.
+`/code-review` 의 HTML 모드 규약을 그대로 따른다: 외부 의존성 없는 자체완결 단일 HTML 1개(CDN✗, inline `<style>`+`<script>`만), 경로 `/tmp/review-{branch-slug}-{HHMMSS}.html`, 상단 verdict·counts 요약 카드, finding 카드(severity 색상 바 BLOCKER=red·CRITICAL=red·MAJOR=orange·MINOR=yellow, 파일경로 monospace, 복사 버튼), 인용 라인 외 코드 본문 복사 금지(라인+경로만). 산출 후 절대경로 + `file://` 안내.
 
 ## 트러블슈팅
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
-| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일(`${TMPDIR:-/tmp}/loop-review-findings-{repo}-{branch-cksum}.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
+| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일(`${TMPDIR:-/tmp}/review-findings-{repo}-{branch-cksum}.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | `loop: findings 도 reviewed 도 비었다 — exit 65` | checker 가 `{"findings":[]}` 만 내고 `reviewed` 를 안 채움. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** — 그러면 점검 없이 통과가 된다 | 베이스 브랜치와 diff 범위를 먼저 확인한다. 정말 깨끗하면 checker 가 검토한 파일을 `reviewed` 에 담아야 한다. PASS 로 넘기지 말 것 |
 | `[ -s "$F" ]` 가 거짓 "checker 실패" | Step 2 와 Step 3 사이에 브랜치를 바꿔 F 재유도가 어긋남 | 리뷰가 도는 동안 그 체크아웃의 브랜치를 바꾸지 않는다 |
 | `loop: 'jq' 필요` | jq 미설치 | `brew install jq` |
-| 모든 finding 이 CRITICAL 로 뜸 | checker 가 dimension 을 5값 밖으로 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker 출력의 dimension 값 점검 |
+| 모든 finding 이 CRITICAL 로 뜸 | checker 가 dimension 을 6값 밖으로 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker 출력의 dimension 값 점검 |
 
 ## Non-Goals
 
-- 루프·재시도·코드 수정 — 이 입구는 1회 점검+보고. 무인 자동 반복은 agent 프로젝트의 드라이버(human-on-the-loop).
-- lesson → ANTIPATTERNS 반영 — 별 스킬(`/loop-lessons`)이 사람 승인 게이트로 처리.
+- 루프·재시도·코드 수정 — 이 입구는 1회 점검+보고. 코드를 고치며 도는 무인 반복은 `/build` 가 한다.
+- lesson → ANTIPATTERNS 반영 — 별 스킬(`/lessons`)이 사람 승인 게이트로 처리.
 - severity 를 LLM 이 매기는 것 — 결정론 셸이 매긴다(같은 코드 = 같은 등급).

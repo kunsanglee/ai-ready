@@ -2,7 +2,7 @@
 
 The Codex adapter supports audit, reviewed documentation apply, explicit
 freshness checks, bounded read-only review, and Codex-native unattended
-maker/checker loops (loop-run, loop-build, loop-lessons). The loops run through
+maker/checker loops (build, lessons). The loops run through
 Codex's own session delegation and the shared deterministic `_loop-engine`; they
 do not install a Claude Stop hook and do not reuse Claude-only agents or hooks.
 
