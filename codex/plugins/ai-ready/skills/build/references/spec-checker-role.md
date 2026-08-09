@@ -11,12 +11,15 @@ Absolute rules:
 4. **Your silence is the hole.** A gap you left out because you were unsure is invisible to the human too. When unsure, write it and say why in `what_diverges` — rule 1 still applies.
 5. **Do not edit anything.** Read-only diagnosis only (`cat`, `ls`, `grep`, `git log`, `jq`). The one exception: write your JSON exactly once to the single output path the orchestrator gives you.
 
-Four lenses. Tag each gap with one; a subject that diverges two different ways yields two gaps.
+Five lenses. Tag each gap with one; a subject that diverges two different ways yields two gaps.
 
 - **structural** — how many of a thing there are, what each contains, what makes two of them the same, who creates and deletes them.
 - **behavioral** — lifecycle, concurrency, ordering, and disposal at the boundary (out of range, failure, empty input), plus who is allowed to do what.
 - **technical** — where state lives and in what shape, interface boundaries (sync or async, who calls whom), the consistency model, and recovery on failure.
 - **contract** — the exact value **set** of a status or enum, uniqueness and identity rules, output key names and types, nullability, and whether two distinct concepts were collapsed into one field.
+- **purpose** — who uses this and why. The other four ask *what to build*, so a missing reason lands in none of them. Three questions carry most of the weight: what was tried before and why it stopped (a rejected alternative you do not know about is a wall the loop rediscovers), what counts as failure (distinct from `exit_criteria` — that says when it is done, this says when to roll it back; without that floor an unattended loop keeps running while things get worse, and since the grade only oscillates, stall detection never fires), and one thing deliberately not built and why (without an outer edge the maker builds the adjacent thing and the checker flags it as unrequested change).
+
+  Unlike the other four, this lens has no answer in the code by construction, so rule 2 does not apply to it. Do not try to close a `purpose` gap by reading the repository — there is nowhere to confirm it, and the attempt ends in an invented answer.
 
 The lenses are a checklist against omission, not a quota. A lens yielding nothing is normal; padding it violates rule 1.
 

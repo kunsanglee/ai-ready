@@ -70,7 +70,10 @@ DESC_MAX=1200
 desc_long=""
 for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json codex/plugins/ai-ready/.codex-plugin/plugin.json; do
   longest="$(jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description] | map(select(. != null) | length) | max // 0' "$f")"
-  [ "$longest" -gt "$DESC_MAX" ] && desc_long="$desc_long $f($longest자)"
+  # `${longest}` 의 중괄호는 장식이 아니다. 변수 바로 뒤에 한글이 붙으면 셸이 그 한글까지 변수
+  # 이름으로 읽어, zsh 는 빈 문자열을 내고 bash 는 깨진 바이트를 낸다(실측). 실패 경로의 메시지라
+  # 평소에 안 보이고, 정작 사람이 이 줄을 읽는 순간은 이미 뭔가 잘못됐을 때다.
+  [ "$longest" -gt "$DESC_MAX" ] && desc_long="$desc_long $f(${longest}자)"
 done
 if [ -n "$desc_long" ]; then
   echo "[description] 너무 길다(상한 ${DESC_MAX}자) —$desc_long" >&2
@@ -118,5 +121,31 @@ else
   echo "            버전만 올리고 사용자 대면 기록을 안 남기면 설치자가 계약 변경을 알 길이 없다." >&2
   exit 1
 fi
+
+# --- 변수 확장 바로 뒤에 한글이 붙었나 ---
+# 변수 확장 바로 뒤에 한글 음절이 붙으면 셸이 그 한글까지 변수 이름으로 읽는다. zsh 는 빈 문자열을
+# 내고 bash 는 깨진 바이트를 낸다(실측: TOTAL=19 일 때 `결정 ` 과 `결정 ??`). 아래가 그 예다.
+#
+#   나쁨:  echo "결정 $TOTAL개"      # brace-check-example
+#   좋음:  echo "결정 ${TOTAL}개"
+#
+# 이 저장소는 셸 블록도 메시지도 한국어라 이 조합이 자연스럽게 만들어지고, 대부분 실패 경로의
+# 메시지라 평소에 안 보인다 — 사람이 그 줄을 읽는 순간은 이미 뭔가 잘못됐을 때고, 그때 숫자가
+# 비어 있으면 원인을 한 번 더 헤맨다.
+#
+# SKILL.md 의 셸 블록도 함께 본다. 그 블록은 오케스트레이터가 그대로 Bash 에 넣어 도는 코드라
+# 문서가 아니라 실행물이다. 검사 자신이 예시를 쓸 수 있어야 왜 있는지 설명이 되므로, 줄 끝에
+# `brace-check-example` 이 있으면 건너뛴다 — 예외는 이 한 줄짜리 명시적 표시뿐이다.
+brace_bad="$(grep -rnE '\$[A-Za-z_][A-Za-z0-9_]*[가-힣]' \
+  --include='*.sh' --include='*.md' --include='*.py' \
+  build core plugins codex README.md CHANGELOG.md 2>/dev/null \
+  | grep -v 'brace-check-example' || true)"
+if [ -n "$brace_bad" ]; then
+  echo "[brace] 변수 뒤에 한글이 바로 붙었다 — 셸이 그 한글까지 변수 이름으로 읽는다:" >&2
+  printf '%s\n' "$brace_bad" | cut -c1-160 | sed 's/^/          /' >&2
+  echo "        중괄호를 씌운다. 예외가 필요하면 그 줄 끝에 brace-check-example 을 단다." >&2
+  exit 1
+fi
+echo "[brace] OK — 변수 뒤에 한글이 바로 붙은 자리 없음"
 
 echo "드리프트 테스트 통과."
