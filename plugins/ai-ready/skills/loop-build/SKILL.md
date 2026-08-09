@@ -59,7 +59,7 @@ loop-run 의 핵심 불변 5개를 상속한다: (1) maker/checker 분리 + 둘 
 
 ### Step 0. 셋업 (loop-run Step 0 과 동일)
 
-loop-run SKILL.md 의 **Step 0 셋업 블록을 그대로 실행** 한다(`PROJECT_ROOT`·`ENG`·`detect_build.py` 감지·`LOOP_*` 변수·`LOOP_DIR`·`.gitignore` 에 `.loop/run/` 추가·brake 값 읽기·베이스 ref 검증). 두 가지를 더한다: (1) 호출 인자 중 **정수**가 있으면 loop-run Step 0 을 실행하기 **전에** `MAX_ITER=<정수>` 로 export 한다 — loop-run Step 0 이 `MAX_ITER="${MAX_ITER:-$DEFAULT_ITER}"` 로 받으므로 그 값이 그대로 phase 당 상한이 되고(천장 10 클램프도 그대로 상속), 없으면 rubric 기본(5)이 채운다. (2) phase 진행 상태 파일을 준비한다.
+loop-run SKILL.md 의 **Step 0 셋업 블록을 그대로 실행** 한다(`PROJECT_ROOT`·`ENG`·`detect_build.py` 감지·`LOOP_*` 변수·`LOOP_DIR`·`.gitignore` 에 `.loop/run/` 추가·brake 값 읽기·베이스 ref 검증). 그 블록의 `SKILL_DIR` 에는 loop-run 이 아니라 **지금 돌리는 스킬의** base directory, 즉 이 본문 첫머리의 "Base directory for this skill" 값을 넣는다(둘 다 `skills/<이름>/` 이라 조부모가 같아 `ENG` 는 같은 곳을 가리킨다). 두 가지를 더한다: (1) 호출 인자 중 **정수**가 있으면 loop-run Step 0 을 실행하기 **전에** `MAX_ITER=<정수>` 로 export 한다 — loop-run Step 0 이 `MAX_ITER="${MAX_ITER:-$DEFAULT_ITER}"` 로 받으므로 그 값이 그대로 phase 당 상한이 되고(천장 10 클램프도 그대로 상속), 없으면 rubric 기본(5)이 채운다. (2) phase 진행 상태 파일을 준비한다.
 
 ```bash
 # 호출 인자 중 정수가 있으면 loop-run Step 0 실행 전에 MAX_ITER=<정수> 로 잡아 phase 당 회차로 넘긴다.
