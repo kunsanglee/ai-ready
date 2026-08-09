@@ -603,6 +603,34 @@ cp "$mgtmp/contract.json" "$mgtmp/a=b/f.json"
 assert_eq "merge: 경로에 공백이 있어도 돈다" "$(merge_rc --expect 1 "lens=$mgtmp/sp ace/f.json")" "0"
 assert_eq "merge: 경로에 = 가 있어도 돈다" "$(merge_rc --expect 1 "lens=$mgtmp/a=b/f.json")" "0"
 
+# **눈먼 렌즈** — 병렬화가 만든 가장 조용한 구멍이다. `score.sh` 의 "findings 도 reviewed 도
+# 비면 거부" 가드는 병합된 payload **하나**를 보는데, 병합이 reviewed 를 합집합으로 접으므로
+# 한 렌즈만 채우면 그 가드가 만족된다. 그러면 나머지 축은 한 번도 안 봤는데 PASS 가 난다.
+# 실측 대조: 같은 blind payload 를 단일 checker 계약으로 score.sh 에 직결하면 exit 65 인데,
+# 병렬 경로만 통과했다. 그래서 축마다 따로 묻는다.
+echo '{"base":"origin/main","reviewed":["src/Main.kt"],"findings":[]}' > "$mgtmp/seen.json"
+echo '{"base":"origin/main","reviewed":[],"findings":[]}'              > "$mgtmp/blind.json"
+cp "$mgtmp/seen.json" "$mgtmp/seen2.json"
+assert_eq "merge: 눈먼 렌즈가 섞이면 exit 65" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/seen.json" "safety=$mgtmp/contract.json" "quality=$mgtmp/blind.json")" "65"
+# 대조군 — 셋 다 깨끗하되 무엇을 봤는지 적었으면 통과해야 한다. 이 줄이 없으면 위 가드가
+# 정상 "발견 없음" 까지 막는 쪽으로 조여져도 아무도 모른다.
+assert_eq "merge: 셋 다 깨끗+reviewed 는 통과" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/seen.json" "safety=$mgtmp/seen2.json" "quality=$mgtmp/quality.json")" "0"
+
+# `base` 키를 빼면 그 렌즈가 베이스 불일치 비교에서 조용히 빠진다(`.base // empty`) —
+# 다른 ref 를 본 렌즈가 base 를 안 적기만 하면 그 검사가 정확히 그 경우에만 무력해진다.
+echo '{"reviewed":["src/Main.kt"],"findings":[]}' > "$mgtmp/nobase.json"
+assert_eq "merge: base 키 누락이면 exit 65" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/contract.json" "safety=$mgtmp/safety.json" "quality=$mgtmp/nobase.json")" "65"
+
+# 개수 게이트는 **명령줄 인자 수**만 센다. 두 렌즈 프롬프트에 같은 출력 경로가 들어가면
+# 나중 렌즈가 앞 파일을 덮어써 한 축이 통째로 사라져도 3개로 세어 통과한다.
+assert_eq "merge: 같은 파일을 두 렌즈가 가리키면 exit 65" "$(merge_rc --expect 3 \
+  "contract=$mgtmp/contract.json" "safety=$mgtmp/contract.json" "quality=$mgtmp/quality.json")" "65"
+assert_eq "merge: 렌즈 이름이 겹치면 exit 65" "$(merge_rc --expect 2 \
+  "x=$mgtmp/contract.json" "x=$mgtmp/safety.json")" "65"
+
 # 같은 (차원·종류·위치)를 두 렌즈가 냈으면 하나로 접되, 가중은 합집합·사람 대기는 OR 로 보수적으로.
 cat > "$mgtmp/dup.json" <<'J'
 {"base":"origin/main","reviewed":["src/B.kt"],"findings":[{"id":"x9","kind":"n-plus-1","dimension":"runtime","location":"src/B.kt:88","evidence":"나도 봤다","weights":["money"],"force_await":true}]}

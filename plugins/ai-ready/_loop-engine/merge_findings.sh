@@ -69,6 +69,21 @@ if [ "$given" -ne "$expect" ]; then
   exit 65
 fi
 
+# 렌즈 이름과 경로는 각각 서로 달라야 한다. 개수 게이트는 **명령줄 인자 수**만 세므로, 두 렌즈
+# 프롬프트에 같은 출력 경로가 들어가 나중 렌즈가 앞 파일을 덮어써도 3개로 세어 통과한다(실측).
+# 그때 병합은 group_by 로 접어 멀쩡한 payload 를 내고, 흔적은 evidence 뒤 중복 문구뿐이다.
+dupe_path="$(printf '%s\n' "${paths[@]}" | sort | uniq -d | head -1)"
+if [ -n "$dupe_path" ]; then
+  echo "merge_findings: 둘 이상의 렌즈가 같은 결과 파일을 가리킨다 ($dupe_path)." >&2
+  echo "                나중 렌즈가 앞의 것을 덮어써 한 축이 통째로 사라져도 개수는 맞는다. 경로를 렌즈마다 따로 준다." >&2
+  exit 65
+fi
+dupe_lens="$(printf '%s\n' "${lenses[@]}" | sort | uniq -d | head -1)"
+if [ -n "$dupe_lens" ]; then
+  echo "merge_findings: 렌즈 이름이 겹친다 ($dupe_lens) — id 접두가 겹쳐 전역 고유성이 깨진다." >&2
+  exit 65
+fi
+
 # 파일마다 존재·비어있지 않음·형식을 따로 본다. 어느 렌즈가 문제인지 이름으로 말해야
 # 사람이 그 축만 다시 돌릴 수 있다 — "입력 오류" 한 줄이면 셋을 다 뒤지게 된다.
 i=0
@@ -79,9 +94,21 @@ while [ "$i" -lt "$given" ]; do
     echo "merge_findings: 렌즈 '$lens' 의 결과 파일이 비었거나 없다 ($p) — 그 축 checker 실패. 멈추고 사람 호출." >&2
     exit 65
   fi
-  loop_validate_json "$(cat "$p")" \
-    'type=="object" and has("findings") and (.findings|type=="array")' \
-    "merge_findings: 렌즈 '$lens' 의 결과가 {\"findings\":[...]} 객체가 아니다 ($p) — 그 축 checker 출력 계약 위반"
+  payload="$(cat "$p")"
+  # `base` 를 함께 요구한다. 아래 병합의 베이스 불일치 검사는 `.base // empty` 로 값을 모으므로,
+  # 키를 아예 빼면 그 렌즈가 비교에서 조용히 빠진다 — 다른 ref 를 본 렌즈가 base 를 안 적기만
+  # 하면 그 검사가 정확히 그 경우에만 무력해진다(실측).
+  loop_validate_json "$payload" \
+    'type=="object" and has("base") and has("findings") and (.findings|type=="array")' \
+    "merge_findings: 렌즈 '$lens' 의 결과가 {\"base\":..., \"findings\":[...]} 객체가 아니다 ($p) — 그 축 checker 출력 계약 위반"
+  # **눈먼 렌즈를 여기서 잡는다.** `score.sh` 의 "findings 도 reviewed 도 비면 거부" 가드는
+  # 병합된 payload 하나를 보는데, 병합이 reviewed 를 합집합으로 접으므로 **한 렌즈만 채우면**
+  # 그 가드가 만족된다. 그러면 나머지 축은 한 번도 안 봤는데 PASS 가 난다(실측: 단일 checker
+  # 계약으로 같은 payload 를 직결하면 exit 65 인데 병렬 경로만 통과했다). 축마다 따로 물어야
+  # 그 구멍이 닫힌다 — 병렬화가 만든 구멍이라 병렬 쪽에서 막는다.
+  loop_validate_json "$payload" \
+    '((.findings|length) > 0) or ((.reviewed|type=="array") and ((.reviewed|length) > 0))' \
+    "merge_findings: 렌즈 '$lens' 가 아무것도 못 찾았는데 무엇을 봤는지도 안 적었다 ($p) — 깨끗함과 안 봄이 구분되지 않는다. 그 축 checker 가 reviewed 에 검토한 파일을 담아야 한다"
 done
 
 jq -s --argjson lenses "$(printf '%s\n' "${lenses[@]}" | jq -R . | jq -s .)" '
