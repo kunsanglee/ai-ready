@@ -42,7 +42,12 @@ The audit auto-detects the layout from build manifests and switches scoring + sc
 The skill ships a baseline four-step run plus several optional action scripts (see "Additional Action Scripts" below). All scripts are stdlib-only — **no third-party dependencies**. Run the four baseline scripts in this order:
 
 ```bash
-SKILL_DIR="$CLAUDE_PLUGIN_ROOT/skills/audit"
+# **`$CLAUDE_PLUGIN_ROOT` does not exist in the Bash tool's shell** — it is substituted when the
+# skill body is rendered, so it never reaches the child shell (measured). Using it here would make
+# SKILL_DIR="/skills/audit", a path that silently does not exist. Paste the "Base directory for
+# this skill" value printed at the top of this skill body instead — that directory *is* skills/audit.
+SKILL_DIR="<paste the Base directory from the top of this skill body>"
+[ -f "$SKILL_DIR/scripts/audit.py" ] || { echo "audit: scripts not found under $SKILL_DIR — check the base directory" >&2; exit 65; }
 TARGET="<absolute path to target codebase>"
 OUT="$TARGET/.ai-ready"
 mkdir -p "$OUT"
