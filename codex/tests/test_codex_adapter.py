@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "ai-ready"
 MANIFEST = PLUGIN / ".codex-plugin" / "plugin.json"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
-EXPECTED_SKILLS = {"audit", "apply", "freshness", "review", "build", "lessons"}
+EXPECTED_SKILLS = {"audit", "apply", "freshness", "spec", "review", "build", "lessons"}
 
 
 class CodexAdapterTests(unittest.TestCase):

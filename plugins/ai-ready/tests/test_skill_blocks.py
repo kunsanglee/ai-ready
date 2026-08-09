@@ -51,7 +51,7 @@ _FENCE = re.compile(r"^(?P<indent>[ \t]*)```bash\n(?P<body>.*?)^(?P=indent)```",
 
 # 문서에 있어야 하는 bash 블록 수. 늘거나 줄면 fail-loud — 새 블록은 이 하네스에 항목을 더할
 # 신호이고, 준 블록은 앵커가 죽었다는 신호다. "16개 통과" 가 "16개를 봤다" 를 뜻하게 하는 장치.
-EXPECTED_BLOCK_COUNTS = {"build": 12, "review": 3}
+EXPECTED_BLOCK_COUNTS = {"build": 12, "review": 3, "spec": 2}
 
 # 블록 식별은 순번이 아니라 내용 앵커로 한다 — 블록이 하나 끼어들어도 나머지 항목이 밀리지 않는다.
 # 앵커는 그 블록의 기능 핵심 한 줄이라, 그 줄이 사라지면 시험이 먼저 멈춘다.
@@ -73,6 +73,10 @@ ANCHORS = {
     "v-detect":     ("review", "review 값:"),
     "v-findings":   ("review", ': > "$F"'),
     "v-score":      ("review", 'rm -f "$F"'),
+    # spec — 도출층. 블록 둘뿐인 것은 이 층의 일이 대부분 사람과의 왕복이기 때문이고,
+    # 기계가 맡는 자리는 시작 조건 확인과 종료 조건 판정 둘이다.
+    "s-setup":      ("spec", 'SPEC_DIR="$PROJECT_ROOT/.loop/spec/$SLUG"'),
+    "s-exit":       ("spec", "미결 0 — 산출 단계로 간다"),
 }
 
 # 스킬 폴더 자리표시자. 호스트가 스킬 본문 첫머리에 텍스트로 주입하는 "Base directory for this
@@ -1293,6 +1297,115 @@ class TestLoopReview(BlockCase):
 # ── 11. 엔진 경로 유도 대조군 ───────────────────────────────────────────────
 
 # 0.9.8 까지의 엔진 유도. 시험 하네스가 `CLAUDE_PLUGIN_ROOT` 를 직접 주입해서 초록이었고,
+class TestSpecLedger(BlockCase):
+    """도출층의 두 블록 — 시작 조건 확인과 종료 조건 판정.
+
+    이 스킬은 일의 대부분이 사람과의 왕복이라 기계가 맡는 자리가 둘뿐이다. 그래서 그 둘이
+    무엇을 통과시키고 무엇을 막는지가 이 층의 계약 전부다. 특히 종료 판정은 "이만하면 됐다" 를
+    모델이 말하지 못하게 하려고 존재하므로, 근거 없이 닫힌 항목을 실제로 거부하는지가 핵심이다.
+    """
+
+    def ledger(self, decisions: list[dict], *, spec_dir: Path | None = None) -> Path:
+        d = spec_dir or (self.work / ".loop" / "spec" / "t")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "decisions.json").write_text(
+            json.dumps({"round": 1, "decisions": decisions}, ensure_ascii=False))
+        return d
+
+    def exit_run(self, decisions: list[dict]) -> Run:
+        d = self.ledger(decisions)
+        return self.run_block("s-exit", env=self.env(SPEC_DIR=str(d)))
+
+    # -- 시작 조건 -----------------------------------------------------------
+    def test_setup_creates_empty_ledger(self) -> None:
+        r = self.run_block("s-setup")
+        self.assertEqual(0, r.rc, r.err)
+        self.assertIn("spec 값:", r.out)
+        led = list((self.work / ".loop" / "spec").glob("*/decisions.json"))
+        self.assertEqual(1, len(led), f"원장이 하나 생겨야 한다: {r.out}")
+        self.assertEqual([], json.loads(led[0].read_text())["decisions"])
+
+    def test_setup_does_not_clobber_an_existing_ledger(self) -> None:
+        """재시작해도 답한 것을 다시 묻지 않는다는 약속이 여기 걸려 있다.
+
+        점검기를 못 불러 멈췄을 때 문서는 "세션을 다시 시작하고 다시 부르라" 고 말한다. 그
+        재시작이 원장을 비우면 사람은 같은 질문에 두 번 답하게 되고, 그러면 우회로를 요구한다.
+        """
+        first = self.run_block("s-setup")
+        self.assertEqual(0, first.rc, first.err)
+        led = next((self.work / ".loop" / "spec").glob("*/decisions.json"))
+        led.write_text(json.dumps({"round": 2, "decisions": [{"id": "g1"}]}, ensure_ascii=False))
+        again = self.run_block("s-setup")
+        self.assertEqual(0, again.rc, again.err)
+        self.assertEqual([{"id": "g1"}], json.loads(led.read_text())["decisions"])
+
+    def test_setup_stops_when_the_checker_definition_is_missing(self) -> None:
+        """설치가 깨진 것과 세션 목록이 낡은 것은 고치는 방법이 다르다.
+
+        이 스킬에는 대체 실행 경로가 없으므로, 점검기 정의가 없으면 도출 자체가 성립하지 않는다.
+        여기서 미리 갈라 두지 않으면 사람이 Step 2 에서 죽은 뒤에야 원인을 찾기 시작한다.
+        """
+        body = BLOCKS["s-setup"].replace("/agents/loop-spec-checker.md",
+                                         "/agents/does-not-exist.md")
+        r = self.run_block("s-setup", body=body)
+        self.assertEqual(65, r.rc, r.out)
+        self.assertIn("점검기 정의가 없다", r.err)
+
+    # -- 종료 조건 -----------------------------------------------------------
+    def test_exit_passes_when_nothing_is_unresolved(self) -> None:
+        r = self.exit_run([
+            {"id": "g1", "disposition": "resolved-from-code", "evidence": "src/X.kt:3"},
+            {"id": "g2", "disposition": "asked", "answer": "두 번째는 거부한다"},
+            {"id": "g3", "disposition": "default", "answer": "20"},
+            {"id": "g4", "disposition": "deferred", "note": "답이 오지 않았다"},
+        ])
+        self.assertEqual(0, r.rc, r.err)
+        self.assertIn("미결 0 — 산출 단계로 간다", r.out)
+
+    def test_exit_reports_counts_with_digits(self) -> None:
+        """변수 뒤에 한글이 붙으면 셸이 그 한글까지 변수 이름으로 읽어 개수가 사라진다.
+
+        실제로 그렇게 나갔던 자리다(zsh 는 빈 문자열, bash 는 깨진 바이트). 하필 개수가 필요한
+        순간은 뭔가 잘못됐을 때라, 조용히 비어도 아무도 눈치채지 못한다.
+        """
+        r = self.exit_run([{"id": "g1", "disposition": "default", "answer": "20"}])
+        self.assertEqual(0, r.rc, r.err)
+        self.assertRegex(r.out, r"결정 1개")
+
+    def test_exit_sends_you_back_when_something_is_open(self) -> None:
+        r = self.exit_run([{"id": "g1", "disposition": "open"}])
+        self.assertEqual(3, r.rc, r.out)
+        self.assertIn("Step 2 로 돌아간다", r.err)
+
+    def test_exit_treats_an_unanswered_question_as_unresolved(self) -> None:
+        """`asked` 는 물었다는 뜻이지 답을 받았다는 뜻이 아니다."""
+        r = self.exit_run([{"id": "g1", "disposition": "asked", "answer": "   "}])
+        self.assertEqual(3, r.rc, r.out)
+
+    def test_exit_rejects_a_decision_closed_without_evidence(self) -> None:
+        """이 스킬이 막으려는 것 자체 — 지어낸 답이 근거 없이 원장에 앉는 자리다.
+
+        종료코드가 3 이 아니라 65 인 것이 요점이다. 한 바퀴 더 돌아서 해결될 일이 아니라
+        사람이 그 항목을 고쳐야 한다.
+        """
+        r = self.exit_run([{"id": "g1", "disposition": "resolved-from-code", "evidence": ""}])
+        self.assertEqual(65, r.rc, r.out)
+        self.assertIn("근거 없이 닫은 결정이 1개", r.err)
+
+    def test_exit_rejects_a_disposition_outside_the_vocabulary(self) -> None:
+        """오타로 만든 새 값은 다른 두 검사를 모두 지나간다 — select 가 아무것도 안 고르기 때문."""
+        r = self.exit_run([{"id": "g1", "disposition": "resolved"}])
+        self.assertEqual(65, r.rc, r.out)
+        self.assertIn("어휘 밖", r.err)
+
+    def test_exit_stops_when_the_ledger_is_missing(self) -> None:
+        d = self.work / ".loop" / "spec" / "nope"
+        d.mkdir(parents=True, exist_ok=True)
+        r = self.run_block("s-exit", env=self.env(SPEC_DIR=str(d)))
+        self.assertEqual(65, r.rc, r.out)
+        self.assertIn("원장이 없다", r.err)
+
+
 # 실제 Bash 도구 셸에는 그 변수가 없어 `ENG=/_loop-engine` 으로 돌았다 — 대조군으로만 쓴다.
 OLD_ENGINE_DERIVATION = '''\
 ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
@@ -1320,7 +1433,10 @@ class TestControlGroups(BlockCase):
             with self.subTest(block=bid):
                 r = self.run_block(bid, keep_placeholder=True)
                 self.assertNotEqual(r.rc, 0, f"{bid} 가 치환 없이도 통과했다\n{r}")
-                self.assertIn("채점 엔진을 못 찾았다", r.err, repr(r))
+                # 문구는 "엔진을 못 찾았다" 까지만 요구한다. 실행층은 그 엔진으로 채점하지만
+                # 도출층은 경로 감지에만 쓰므로 "채점 엔진" 이라 부르면 그 자리에서 거짓이 된다.
+                # 이 시험이 잠그는 것은 메시지 문구가 아니라 **가드가 살아 있는지**다.
+                self.assertIn("엔진을 못 찾았다", r.err, repr(r))
 
     def test_substituted_placeholder_finds_the_engine(self):
         """대조군의 대조군 — 붙여 넣으면 실제로 엔진을 찾는다(위 실패가 늘 죽는 블록 탓이 아니다)."""
