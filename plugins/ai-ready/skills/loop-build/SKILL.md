@@ -1,11 +1,13 @@
 ---
 name: loop-build
-description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/step 으로 분해해 사람 승인받은 뒤, 각 phase 를 maker 서브에이전트로 개발하고 loop-run 과 같은 판정부(checker→결정론 채점 rubric)로 PASS 까지 수렴시키며 phase 를 순차 전진한다. loop-run 이 "하나의 변경을 수렴"이라면 이 스킬은 "여러 phase 를 무인으로 빌드아웃"이다. maker 는 phase 마다 새 서브에이전트(이전 phase 노이즈 차단), 그 phase 안에서는 SendMessage 로 같은 maker 를 이어가(수렴 맥락 유지). 호출 /loop-build [phase당회차] [설계문서경로]. Use this skill when the user says "/loop-build", "여러 페이즈 무인 개발", "설계대로 쭉 빌드해", "phase 순회 루프", or wants to autonomously build out a multi-phase spec end to end. 단일 변경 수렴은 /loop-run, 1회 점검은 /loop-review.
+description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/step 으로 분해해 사람 승인받은 뒤, 각 phase 를 maker 서브에이전트로 개발하고 loop-run 과 같은 판정부(checker→결정론 채점 rubric)로 PASS 까지 수렴시키며 phase 를 순차 전진한다. loop-run 이 "하나의 변경을 수렴"이라면 이 스킬은 "여러 phase 를 무인으로 빌드아웃"이다. maker 는 phase 마다 새 서브에이전트(이전 phase 노이즈 차단), 그 phase 안에서는 SendMessage 로 같은 maker 를 이어가(수렴 맥락 유지). 순회를 이 세션이 직접 도는 직접 모드와, 순회째 서브에이전트에 내려 사이클 잡음을 위로 안 올리는 위임 모드 중에 매번 고른다(위임은 착수 전 스펙 검사 셋을 통과해야 한다). 호출 /loop-build [phase당회차] [설계문서경로]. Use this skill when the user says "/loop-build", "여러 페이즈 무인 개발", "설계대로 쭉 빌드해", "phase 순회 루프", or wants to autonomously build out a multi-phase spec end to end. 단일 변경 수렴은 /loop-run, 1회 점검은 /loop-review.
 ---
 
 # loop-build — 무인 멀티-phase 빌드아웃 루프
 
-> human-on-the-loop 의 멀티-phase 확장. 호출: `/loop-build [phase당회차] [설계문서경로]`. 사람이 설계를 확정해 넘기고 빠지면, 이 세션이 **오케스트레이터** 가 되어 설계를 phase/step 으로 쪼개고 각 phase 를 서브에이전트 maker 로 개발하며 loop-run 판정부로 수렴시켜 여러 phase 를 순차 전진한다.
+> human-on-the-loop 의 멀티-phase 확장. 호출: `/loop-build [phase당회차] [설계문서경로]`. 사람이 설계를 확정해 넘기고 빠지면, **오케스트레이터** 가 설계를 phase/step 으로 쪼개고 각 phase 를 서브에이전트 maker 로 개발하며 loop-run 판정부로 수렴시켜 여러 phase 를 순차 전진한다.
+>
+> 그 오케스트레이터를 **누가 맡느냐가 두 모드로 갈린다**. 이 세션이 직접 맡으면 **직접 모드**(종전 방식), 순회를 통째로 서브에이전트에 내리면 **위임 모드**다. 분해와 사람 승인(Step 1)까지는 같고, 그 뒤에 고른다 — 고르는 기준과 위임의 관문은 Step 1-1.
 
 ## loop-run 과의 관계 (무엇을 공유하고 무엇이 다른가)
 
@@ -14,7 +16,7 @@ description: 무인 멀티-phase 빌드아웃 루프. 설계 문서를 phase/ste
 | | loop-run | loop-build (이 스킬) |
 |---|---|---|
 | 목적 | 하나의 변경을 PASS 까지 수렴 | 설계를 여러 phase 로 나눠 무인 빌드아웃 |
-| 오케스트레이터 | 메인 세션(= 순수 오케스트레이터, 코딩 안 함) | **동일** |
+| 오케스트레이터 | 메인 세션(= 순수 오케스트레이터, 코딩 안 함) | 직접 모드는 **동일**, 위임 모드는 **서브에이전트 하나**(Step 1-1) |
 | maker | **매 회차 새 `loop-maker` 서브에이전트** | **phase 마다 새 `loop-maker` 서브에이전트**(그 phase 안의 RETRY 는 SendMessage 로 이어감) |
 | checker | 매 사이클 새 `loop-checker` 서브에이전트 | **동일** (재사용) |
 | 채점 | `_loop-engine` 셸(score/decide/stall) + BASE/LOCAL rubric | **동일** (재사용) |
@@ -103,11 +105,92 @@ printf 'PHASES=%q\n' "$PHASES" >> "$LOOP_DIR/params.env"   # 재유도용 — �
 - 분해가 애매하면(자기완결 step 으로 안 쪼개지거나 AC 커맨드를 못 붙이면) **여기서 멈추고 사람에게 되돌린다**. 무인 시작 금지(불변 7).
 - 승인되면 사람이 빠진다. 이후 Step 2 는 자율 진행한다.
 
+### Step 1-1. 위임 모드 판정 — 착수 전 스펙 검사 셋 (선택)
+
+여기서 두 갈래로 갈린다. 지금까지의 방식은 이 세션이 순회를 직접 도는 **직접 모드** 고, 다른 하나는 순회를 통째로 서브에이전트에 내리는 **위임 모드** 다. 매번 고른다 — 사람이 자주 끼어들 일이면 직접 모드가 맞고, 길게 무인으로 돌릴 일이면 위임 모드가 맞다. 위임 모드는 종전 방식을 대체하지 않는다.
+
+**왜 내리나.** 직접 모드는 사이클마다 오가는 것(채점 결과, maker 지시, 게이트 출력)이 전부 사람이 보고 있는 그 대화에 쌓인다. 한 phase 를 여섯 사이클 돌리면 그만큼 무거워진다. 순환 제어를 한 층 아래로 내리면 그 잡음이 위로 안 올라온다 — **아래층 출력은 띄운 쪽에게 가기 때문이다**(실측: 3,900자 출력을 내는 하위 에이전트를 그 깊이에서 돌렸더니 중간 에이전트만 전문을 받았고 최상위에는 네 줄 요약만 왔다).
+
+**무엇이 위임을 가르나 — 사람 게이트가 아니라 스펙의 질이다.** 같은 날 같은 저장소에서 돌린 두 phase 가 근거다. 한 phase 는 목표를 "세웠다고 적은 장치가 실제로 잠기게 한다" 로 줬고 **여섯 사이클, 사람이 한 번 끼어들어야 닫혔다** — 목표를 항목으로 나열할 수 없어 하나를 닫으면 checker 가 다음을 찾았다. 다른 phase 는 목표를 **변이 여섯으로 미리 적어** 줬고("관성 분기를 지우면 빨개진다" 같은 것) **네 사이클, 사람이 한 번도 필요 없었다.** 차이는 스펙 하나뿐이었다. 그래서 이 스킬은 사람이 필요한지를 **실행 중에 판정하지 않고 착수 전에 검사한다.**
+
+아래 셋을 **다 통과해야 위임한다.** 하나라도 못 통과하면 위임하지 말고 직접 모드로 돈다. Step 1 의 사람 승인과 **별개의 기계적 관문** 이다 — 승인은 무엇을 지을지에 대한 것이고, 이 셋은 사람 없이 굴러갈 수 있는 모양인지에 대한 것이다.
+
+1. **완료 조건을 항목으로 나열할 수 있나.** phase 마다 `exit_criteria` 를 배열로 적는다. 각 항목은 **되돌렸을 때 무엇이 빨개지는지** 를 말해야 한다("관성 분기를 지우면 그 검사가 실패한다" 처럼). "~하게 만든다" 같은 서술은 항목이 아니다. 비어 있으면 위임 불가 — 위 "좋은 step 의 원칙" 의 phase 목표 열거 가능성을 위임의 전제로 못박은 것이다.
+2. **되돌릴 수 없는 영역에 닿나.** phase 마다 `irreversible` 에 그 답을 적는다. 닿으면 어느 영역인지 문자열로(그 자리만 사람에게 올린다는 뜻), 안 닿으면 `false`(그 이유로 멈출 일이 없다는 뜻). 무엇이 그 목록인지는 BASE rubric 의 `force_await=always` 종류다(운영 DB DML/DDL·돈·인가·대량발송·삭제).
+3. **부딪힐 판단에 우선순위를 적었나.** 최상위 `tiebreaks` 에 측정으로 안 갈리는 트레이드오프를 미리 순서 지어 둔다("잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다" 처럼). 안 적으면 오케스트레이터가 그 자리에서 멈춰 결국 사람을 부른다.
+
+각 항목이 **정말** 되돌림과 빨개짐을 말하는지는 사람이 읽어야 판정된다. 기계가 보는 것은 있는지 없는지뿐이고, 그 검사가 아래 블록이다. 셋을 만족하는 `phases.json` 은 직접 모드 형식에 세 자리를 더한 모양이다:
+
+```jsonc
+// 위임 모드의 phases.json. 세 자리(tiebreaks·exit_criteria·irreversible)는 위임 모드에서만 필수고,
+// 직접 모드로 돌리는 기존 phases.json 에는 없어도 Step 2 검증을 그대로 통과한다.
+{
+  "tiebreaks": ["잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다"],
+  "phases": [
+    { "name": "foundation", "status": "pending", "design_ref": "domain_x.md §현재 동작 C5 데이터 모델",
+      "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다", "빈 입력으로 부르면 exit 65 로 죽는다"],
+      "irreversible": false,          // 닿으면 "운영 DB 마이그레이션" 처럼 영역을 문자열로
+      "steps": [ /* 직접 모드와 동일 */ ] }
+  ]
+}
+```
+
+```bash
+# 위임 착수 전 스펙 검사 — 위임 모드에서만 돈다. 직접 모드는 Step 2 의 스키마 검증만 거친다.
+# 셋을 따로 세는 이유는 사람에게 무엇을 더 적어야 하는지 이름으로 알려주기 위해서다(jq -e 한 방이면
+# "뭔가 빠졌다" 까지만 나온다). 판정은 세 jq 모두 결정론이고, 하나라도 없으면 exit 65 로 멈춘다 —
+# 무인으로 길게 돌 때 사람이 없어서, 이 셋이 없으면 오케스트레이터가 결국 그 자리에서 멈춘다.
+# 착수 전에 거르는 편이 싸다.
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+BR="$(git rev-parse --abbrev-ref HEAD | tr '/ ' '--' | tr -cd 'A-Za-z0-9._-')"
+LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LOOP_DIR/params.env" ] \
+  || { echo "loop-build: params.env 없음 — Step 0 미실행/폐기됨" >&2; exit 65; }
+set -a; . "$LOOP_DIR/params.env"; set +a
+
+MISSING=""
+# (1) 완료 조건이 항목인가 — phase 마다 비지 않은 문자열 배열.
+jq -e '(.phases | type=="array" and length>0) and all(.phases[];
+        .exit_criteria | type=="array" and length>0 and all(.[]; type=="string" and length>0))' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING exit_criteria"
+# (2) 비가역 영역에 닿나 — 불리언(안 닿음)이거나 어느 영역인지 적은 문자열. 무응답(키 없음)은 답이 아니다.
+jq -e 'all(.phases[]; (.irreversible | type) as $t
+        | $t=="boolean" or ($t=="string" and (.irreversible | length) > 0))' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING irreversible"
+# (3) 부딪힐 판단의 우선순위 — 최상위 tiebreaks, 비지 않은 문자열 배열.
+jq -e '.tiebreaks | type=="array" and length>0 and all(.[]; type=="string" and length>0)' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING tiebreaks"
+
+[ -z "$MISSING" ] || { echo "loop-build: 위임 스펙 검사 실패 —$MISSING 없음/빈값. 위임하지 말고 직접 모드로 돈다." >&2; exit 65; }
+echo "loop-build: 위임 스펙 검사 통과 — 위임 모드로 착수 가능"
+```
+
+**위임 오케스트레이터의 계약.** 통과하면 `Agent` 로 **이름 붙인 백그라운드** 오케스트레이터를 하나 띄우고, Step 2 의 phase 순회를 통째로 그 안에서 돌린다. 프롬프트에 담는 것은 그 층이 스스로 재유도할 수 없는 것뿐이다: 이 스킬 문서의 경로와 "Step 2 를 네가 돈다" 는 지시, 프로젝트 루트, 설계 문서 경로, 그리고 `phases.json` 의 `tiebreaks` 값(그 층이 판단에 쓸 순서). **담지 않는 것**: checker findings 전문, maker 보고, 게이트 출력, 설계 문서 본문 — 전부 그 층이 파일로 직접 읽는 것들이고, 프롬프트에 실으면 메인 창에 먼저 쌓여 위임의 목적이 사라진다.
+
+**그 오케스트레이터가 정하는 것**: 어느 지적을 먼저 고칠지, 근거가 맞는지, maker 에게 다시 보낼지, 회차 안에서의 진행. 직접 모드에서 메인이 하던 판단 그대로다.
+
+**멈추고 위로 올리는 것 셋**:
+
+- **되돌릴 수 없는 영역**(`force_await`·`irreversible`) — 협상 대상이 아니다.
+- **범위가 바뀌는 것** — phase 목표를 좁히거나 넓히거나, `exit_criteria` 에 없는 것을 하려 할 때. 위 두 phase 실측에서 사람에게 올라간 것이 이 종류 하나였다.
+- **설계가 미완이 아니라 틀렸을 때**(아래 "설계 drift 는 무인이 판단하지 않는다" 와 같은 자리). 단 **근거가 측정이면 올리지 않는다** — 재서 갈리는 것은 오케스트레이터가 재고 정한다. 올리는 것은 재도 안 갈리는 것뿐이고, 그중에서도 `tiebreaks` 에 답이 있으면 그것도 안 올린다.
+
+**올리는 방법**: 자기 턴을 끝내고 메인에 짧게 보고한다 — 무엇이 왜 멈췄나, 사람에게 물을 것 한 줄. 메인이 그것을 사람에게 전달하고 답을 받아 `SendMessage` 로 재개시킨다. **위임 오케스트레이터는 사람에게 직접 말할 수 없다.** 그 층의 출력은 띄운 쪽(메인)에게만 가므로, 사람을 부르는 유일한 길이 메인을 거치는 것이다. 이 사실을 그 프롬프트에 못박는다 — 모르면 창에 대고 질문한 뒤 오지 않을 답을 기다린다.
+
+**컨텍스트 위생은 그 층에도 그대로 걸린다.** 아래 "오케스트레이터는 내용을 보유하지 않는다" 의 규칙 다섯이 위임 오케스트레이터에도 적용된다(findings·scored 전문 안 읽기, maker 보고는 요약 1~2줄, SendMessage 는 짧게, phases.json·설계 문서 재Read 금지, git 은 `--stat` 까지). 그리고 **메인에 올리는 보고는 phase 단위 요약** 이지 사이클 잡음이 아니다 — 사이클마다 보고하면 잡음이 한 층만 늦게 같은 창에 쌓인다.
+
+**아래층 스폰의 제약(위임 모드에서만).** 위임 오케스트레이터가 maker·checker 를 띄울 때는 `run_in_background` 와 `name` 을 쓸 수 없다 — 그 깊이에서는 동기 서브에이전트만 뜬다. 그래서 셋을 지킨다.
+
+1. **동기로 띄우고 `agentId` 로 이어 간다.** 스폰 결과의 `agentId` 로 `SendMessage` 를 보낼 수 있어, 한 phase 안의 RETRY 를 같은 maker 로 잇는 불변 6은 그대로 지켜진다. 이름이 없으니 `to` 에 그 `agentId` 를 그대로 쓴다.
+2. **그 층은 팀 명부에도 화면에도 안 보인다.** 진행 상황을 사람이 보려면 `.loop/run/{ticket}/` 의 이력 파일(`history-{phase}.jsonl`·`scored-{phase}.json`·`phases.json`)을 읽는다. 화면에 안 뜬다는 것이 안 돈다는 뜻이 아니다.
+3. **PASS 분기의 maker 종료 통지는 필요 없다.** 직접 모드에서 그 통지를 보내는 이유는 백그라운드 팀메이트가 통지 없이는 대기 상태로 남기 때문인데, 동기 스폰은 호출이 반환된 시점에 그 턴이 이미 끝나 있다. 다음 phase 는 새 maker 를 띄우는 것으로 족하다.
+
 ### Step 2. phase 순회 (바깥 루프)
+
+> **누가 이 Step 을 도는가.** 직접 모드면 이 세션이, 위임 모드면 Step 1-1 이 띄운 오케스트레이터가 아래를 그대로 돈다. 블록·분기·불변은 두 모드가 같다 — 다른 것은 순회를 도는 주체와, 사람을 부르는 경로가 한 단계 길어진다는 것뿐이다.
 
 `phases.json` 의 phase 를 순서대로 돈다. 각 phase 를 아래 안쪽 루프로 PASS 시키고 다음으로 넘어간다.
 
-순회 시작 전 두 가지를 한다. 먼저 `phases.json` 이 소비 가능한 형식인지 **fail-loud 로 검증**한다. 무인 시작 후엔 사람이 빠져 조용한 순회 오작동(status 오타로 phase 를 영영 pending 으로 봐 무한 순회하거나 건너뜀)을 잡을 사람이 없으므로, `score.sh` 가 변질된 checker JSON 을 exit 65 로 거부하는 것과 같은 결로 소비 직전에 거른다. 그다음 Step 1 에서 확정된 phase 수 `N` 으로 전체 시간 상한을 phase 수 비례로 재계산한다 — Step 0 이 loop-run 방식으로 잡은 phase 당 `BUDGET_MIN`(rubric `budget_minutes`, 기본 120)에 `N` 을 곱한다:
+순회 시작 전 두 가지를 한다. 먼저 `phases.json` 이 소비 가능한 형식인지 **fail-loud 로 검증**한다. 이 검증이 요구하는 것은 순회가 소비하는 자리뿐이라 **Step 1-1 의 세 자리(`exit_criteria`·`irreversible`·`tiebreaks`)는 여기서 요구하지 않는다** — 그 셋 없이 쓰던 `phases.json` 은 그대로 통과한다. 위임의 관문과 순회의 입력 검증은 다른 물음이다. 무인 시작 후엔 사람이 빠져 조용한 순회 오작동(status 오타로 phase 를 영영 pending 으로 봐 무한 순회하거나 건너뜀)을 잡을 사람이 없으므로, `score.sh` 가 변질된 checker JSON 을 exit 65 로 거부하는 것과 같은 결로 소비 직전에 거른다. 그다음 Step 1 에서 확정된 phase 수 `N` 으로 전체 시간 상한을 phase 수 비례로 재계산한다 — Step 0 이 loop-run 방식으로 잡은 phase 당 `BUDGET_MIN`(rubric `budget_minutes`, 기본 120)에 `N` 을 곱한다:
 
 ```bash
 # 재유도 프리앰블(loop-run Step 1 과 동일) — 이 블록도 별도 Bash 호출이라 carry-over 를 가정하지 않는다.
@@ -255,6 +338,8 @@ echo "loop-build: 런타임 상태 폐기 — $LOOP_DIR"
 ## 백그라운드 세션 실행
 
 사람이 빠져도 계속 돌게 하려면 이 세션을 백그라운드 잡으로 띄운다. 분해 승인(Step 1)을 받은 그 세션에서 `/loop-build` 를 걸고 자리를 비운다. 페이즈 경계마다 `PushNotification` 으로 "phase X done, 다음 진행" 을 알리게 배선하면 자리를 비운 동안에도 진행이 굴러가고, AWAIT_USER/brake 에서만 사람이 불려온다.
+
+이것과 위임 모드는 서로 다른 축이고 함께 쓸 수 있다 — 백그라운드 잡은 **세션이 사람 없이 도는** 것이고, 위임 모드는 **사이클 잡음이 어느 창에 쌓이는가** 다. 롱런에서 둘을 겹치면 백그라운드 세션이 phase 요약만 받고, 사이클 잡음은 그 아래층에 남는다.
 
 ## Non-Goals
 

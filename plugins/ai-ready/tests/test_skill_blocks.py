@@ -51,7 +51,7 @@ _FENCE = re.compile(r"^(?P<indent>[ \t]*)```bash\n(?P<body>.*?)^(?P=indent)```",
 
 # 문서에 있어야 하는 bash 블록 수. 늘거나 줄면 fail-loud — 새 블록은 이 하네스에 항목을 더할
 # 신호이고, 준 블록은 앵커가 죽었다는 신호다. "16개 통과" 가 "16개를 봤다" 를 뜻하게 하는 장치.
-EXPECTED_BLOCK_COUNTS = {"loop-run": 8, "loop-build": 5, "loop-review": 3}
+EXPECTED_BLOCK_COUNTS = {"loop-run": 8, "loop-build": 6, "loop-review": 3}
 
 # 블록 식별은 순번이 아니라 내용 앵커로 한다 — 블록이 하나 끼어들어도 나머지 항목이 밀리지 않는다.
 # 앵커는 그 블록의 기능 핵심 한 줄이라, 그 줄이 사라지면 시험이 먼저 멈춘다.
@@ -65,6 +65,7 @@ ANCHORS = {
     "lr-makerinput": ("loop-run", "MAKER_INPUT="),
     "lr-tree":       ("loop-run", "tree.snapshot"),
     "lb-setup":      ("loop-build", "printf 'PHASES=%q"),
+    "lb-delegate":   ("loop-build", "위임 스펙 검사 실패"),
     "lb-budget":     ("loop-build", "BUDGET_MIN_PHASE"),
     "lb-phase":      ("loop-build", 'PHASE="<이 phase 의 name>"'),
     "lb-done":       ("loop-build", '.status = "done"'),
@@ -172,6 +173,20 @@ PHASES_2 = {
                     "signature": "class Y()", "ac_cmd": "./gradlew assemble -x test",
                     "status": "pending"}]},
     ]
+}
+
+# 위임 모드가 요구하는 세 자리를 채운 판. 직접 모드 형식(PHASES_2)에 tiebreaks·exit_criteria·
+# irreversible 만 더한 것이라, 위임 검사가 통과/거부하는 이유를 그 셋으로만 가를 수 있다.
+PHASES_2_DELEGATED = {
+    "tiebreaks": ["잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다"],
+    "phases": [
+        {**PHASES_2["phases"][0],
+         "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다"],
+         "irreversible": False},
+        {**PHASES_2["phases"][1],
+         "exit_criteria": ["결선을 끊으면 통합 시험이 빨개진다"],
+         "irreversible": "운영 DB 마이그레이션"},
+    ],
 }
 
 _MODULE_TMP: Path | None = None
@@ -515,6 +530,121 @@ class TestLoopBuildSetup(BlockCase):
         self.setup_loop()
         self.setup_phases()
         self.assertEqual(self.run_block("lb-budget").rc, 0)
+
+
+# ── 3-1. 위임 착수 전 스펙 검사 (Step 1-1) ──────────────────────────────────
+
+class TestDelegationGate(BlockCase):
+    """위임은 사람 게이트가 아니라 스펙의 질로 갈린다 — 그 판정이 실제로 거부하는지 본다.
+
+    이 검사가 무력해지는 방향은 둘이다. 없는 것을 통과시키거나(무인으로 돌다 결국 사람을 부른다),
+    있는 것을 거부하거나(위임 자체가 못 쓰게 된다). 그래서 위반 목록과 대조군을 함께 둔다.
+
+    **호환성 대조군이 하나 더 있다** — 이 세 자리가 없는 기존 `phases.json` 은 직접 모드에서
+    여전히 돌아야 한다. 위임의 관문을 순회의 입력 검증으로 오해해 Step 2 에 얹으면 기존 사용자가
+    그날로 멈춘다.
+    """
+
+    # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)
+    VIOLATIONS = {
+        "exit_criteria 키 없음": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"exit_criteria"}),
+        "exit_criteria 빈 배열": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": [],
+                         "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"exit_criteria"}),
+        "exit_criteria 빈 문자열 항목": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": [""],
+                         "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"exit_criteria"}),
+        "phase 하나만 exit_criteria 누락": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["x 를 지우면 빨개진다"],
+                         "irreversible": False, "steps": [{"ac_cmd": "x", "status": "pending"}]},
+                        {"name": "b", "status": "pending", "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"exit_criteria"}),
+        "irreversible 키 없음": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"irreversible"}),
+        "irreversible 빈 문자열": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": "",
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"irreversible"}),
+        "tiebreaks 키 없음": (
+            {"phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"tiebreaks"}),
+        "tiebreaks 빈 배열": (
+            {"tiebreaks": [],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"tiebreaks"}),
+        "셋 다 없음(= 기존 형식)": (
+            PHASES_2,
+            {"exit_criteria", "irreversible", "tiebreaks"}),
+    }
+
+    FIELDS = ("exit_criteria", "irreversible", "tiebreaks")
+
+    def prepare(self, data: dict) -> None:
+        self.setup_loop()
+        self.setup_phases(data)
+
+    def test_incomplete_spec_stops_before_delegating(self):
+        for label, (data, expected) in self.VIOLATIONS.items():
+            with self.subTest(violation=label):
+                self.setUp()          # 사례마다 새 레포 사본 — 앞 사례의 params.env 가 안 섞이게
+                self.prepare(data)
+                r = self.run_block("lb-delegate")
+                self.assertEqual(r.rc, 65, f"[{label}] 를 위임 가능으로 통과시켰다\n{r}")
+                self.assertIn("위임 스펙 검사 실패", r.err, repr(r))
+                named = {f for f in self.FIELDS if f in r.err}
+                self.assertEqual(named, expected,
+                                 f"[{label}] 지목한 자리가 다르다 — 사람이 무엇을 더 적을지 못 읽는다\n{r}")
+
+    def test_complete_spec_passes(self):
+        """대조군 — 위 아홉 건이 셋의 부재로 죽은 것이지, 블록이 늘 죽는 게 아니다."""
+        self.prepare(PHASES_2_DELEGATED)
+        r = self.run_block("lb-delegate")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("위임 스펙 검사 통과", r.out, repr(r))
+
+    def test_legacy_phases_still_run_in_direct_mode(self):
+        """호환성 대조군 — 세 자리가 없어도 순회 자체는 그대로 돈다(위임만 못 한다).
+
+        같은 `phases.json` 으로 두 블록을 돌린다. Step 2 검증은 통과하고 위임 검사만 거부해야
+        한다. 둘 다 거부하면 기존 사용자가 멈춘 것이고, 둘 다 통과하면 관문이 없는 것이다.
+        """
+        self.prepare(PHASES_2)
+        self.assertEqual(self.run_block("lb-budget").rc, 0,
+                         "세 자리가 없다고 순회 입력 검증이 죽었다 — 기존 사용자가 멈춘다")
+        self.assertEqual(self.run_block("lb-delegate").rc, 65,
+                         "세 자리가 없는데 위임을 허락했다")
+
+    def test_delegated_phases_also_pass_the_run_schema(self):
+        """반대 방향 — 세 자리를 더한 phases.json 도 Step 2 검증을 그대로 통과한다."""
+        self.prepare(PHASES_2_DELEGATED)
+        self.assertEqual(self.run_block("lb-budget").rc, 0)
+
+    def test_gate_without_pointer_fails_loud(self):
+        """Step 0 없이 이 블록만 돌면 빈 PHASES 로 jq 가 돌아 '통과' 로 보일 자리다."""
+        r = self.run_block("lb-delegate")
+        self.assertEqual(r.rc, 65, repr(r))
+        self.assertIn("params.env 없음", r.err, repr(r))
 
 
 # ── 4. phase 스코프 (진입·격리·done 갱신·재개) ──────────────────────────────
