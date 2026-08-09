@@ -49,6 +49,10 @@ loop-run 의 핵심 불변 5개를 상속한다: (1) maker/checker 분리 + 둘 
 - **시그니처 수준** — 무엇을 만들지 인터페이스/시그니처로 특정된다.
 - **실행 가능한 AC** — 완료를 **실행 가능한 커맨드**(테스트·빌드·린트)로 검증할 수 있다. 검증 커맨드를 못 붙이는 step 은 쪼개기가 덜 된 것이다.
 
+**step 이 넷을 다 만족해도 phase 목표가 열거 불가능하면 그 phase 는 수렴하지 않는다.** 목표는 유한한 목록이어야 한다 — "이 다섯 파일의 이 결함들" 처럼 무엇을 다 하면 끝인지 셀 수 있어야 한다. "~하게 만든다"(예: "세웠다고 적은 장치가 실제로 잠기게 한다")는 끝나는 지점이 없는 목표다. 하나를 잠그면 checker 가 다음 안 잠긴 것을 찾고, 그것을 잠그면 또 다음을 찾는다. 사이클이 도는 동안 등급은 오르내리므로 정체 감지도 안 뜬다. 분해 단계에서 각 phase 에 "무엇을 다 하면 이 phase 가 끝인가"를 한 줄로 적을 수 있는지 확인하고, 못 적으면 목록이 될 때까지 좁힌 뒤 사람 승인을 받는다.
+
+그 실수를 **사후에** 잡는 것이 `kindstreak.sh` 다(Step 2 분기의 `REPEATED_KIND`). 같은 종류의 finding 이 임계 사이클 연속으로 그 사이클을 지배하면 멈추고 사람을 부른다 — 고칠 대상이 끝없이 나오는 목표에서 실제로 관측된 모양이 그것이기 때문이다. 사전 규율(위 문단)이 먼저고, 감지기는 그것이 새어 나갔을 때의 그물이다.
+
 ## 입력
 
 1. **설계 문서/spec 경로**: phase/step 분해의 원본. 도메인 설계 문서(예: `docs/design/domain_{name}.md`)나 grill 합의 spec. 형식 무관 — 오케스트레이터가 읽어 phase/step 으로 분해한다. **경로가 없으면**: 직전 대화·세션에 design/spec 이 있으면 그걸 확인해 쓰고, 없으면 "어느 설계 문서를 빌드할지" 요청하고 대기한다 — 분해할 원본 없이 무인 시작하지 않는다(불변 7).
@@ -183,11 +187,12 @@ loop-run Step 1~3 의 재유도 프리앰블이 `params.env` 를 source 하므�
 > 모델: checker 는 frontmatter 에 모델을 고정하지 않는다(v0.8.4) — 기본은 호출한 세션(오케스트레이터=maker)의 모델을 상속한다. 특정 모델로 돌리려면 이 `Agent` 호출에 `model` 파라미터를 지정한다.
 >
 > effort: checker 는 frontmatter 에 `effort: xhigh` 를 **고정한다**(v0.9.6) — 모델과 달리 세션을 상속하지 않는다. 세션 등급을 내려도 판정부는 따라 내려가면 안 되기 때문이다. `Agent` 호출로는 재정의할 수 없다. 계약은 `core/effort-ladder.md`.
-3. **채점(loop-run Step 3)**: **`score.sh` 의 종료코드를 본다 — exit 65 는 verdict 가 아니라 입력 거부다**(흔한 원인은 깨끗한 결과에 `reviewed` 를 안 채운 것). 그때는 분기하지 말고 멈춰 사람을 부른다. checker 가 쓴 findings 파일(`$F` = `$LOOP_DIR/checker-findings-{phase}.json`)을 `score.sh → decide.sh → stall.sh` 파이프에 흘려 verdict·정체를 낸다. 파일이 비었거나 없으면 checker 실패다 — `[ -s "$F" ] || { echo "checker 미기입" >&2; exit 65; }` 로 멈추고 사람 호출(조용히 PASS 금지). severity 는 셸이 매긴다. 이 phase 의 history 는 `$HIST`(= `$LOOP_DIR/history-{phase}.jsonl`)에, 정체 상태는 `$STATE`(= `$LOOP_DIR/stall-{phase}.json`)에 — 둘 다 phase 진입 때 재정의된 값이다. 채점 결과는 maker 인계용으로 파일에도 남긴다: `printf '%s' "$SCORED" > "$LOOP_DIR/scored-$PHASE.json"`. 오케스트레이터 창에는 counts 와 `등급·종류·위치` 한 줄 목록까지만 남기고 evidence 전문은 읽지 않는다.
+3. **채점(loop-run Step 3)**: **`score.sh` 의 종료코드를 본다 — exit 65 는 verdict 가 아니라 입력 거부다**(흔한 원인은 깨끗한 결과에 `reviewed` 를 안 채운 것). 그때는 분기하지 말고 멈춰 사람을 부른다. checker 가 쓴 findings 파일(`$F` = `$LOOP_DIR/checker-findings-{phase}.json`)을 `score.sh → decide.sh → stall.sh` 파이프에 흘려 verdict·정체를 낸다. 파일이 비었거나 없으면 checker 실패다 — `[ -s "$F" ] || { echo "checker 미기입" >&2; exit 65; }` 로 멈추고 사람 호출(조용히 PASS 금지). severity 는 셸이 매긴다. 이 phase 의 history 는 `$HIST`(= `$LOOP_DIR/history-{phase}.jsonl`)에, 정체 상태는 `$STATE`(= `$LOOP_DIR/stall-{phase}.json`)에 — 둘 다 phase 진입 때 재정의된 값이다. 채점 결과는 maker 인계용으로 파일에도 남긴다: `printf '%s' "$SCORED" > "$LOOP_DIR/scored-$PHASE.json"`. 오케스트레이터 창에는 counts 와 `등급·종류·위치` 한 줄 목록까지만 남기고 evidence 전문은 읽지 않는다. **이번 사이클을 `$HIST` 에 append 한 뒤 `kindstreak.sh --history "$HIST"` 를 함께 돌린다**(loop-run Step 3 과 같은 배선 — `$HIST` 가 phase 별 파일이라 연속도 phase 안에서만 센다). 창에는 그 상태 한 줄만 낸다.
 4. **분기(loop-run Step 4, 우선순위 순)**:
    - `AWAIT_USER`(비가역/force_await) → **멈춤, 사람 호출.**
    - brake 도달(phase iter + 게이트 실패 ≥ MAX_ITER 또는 전체 경과 ≥ BUDGET_MIN — loop-run Step 1 과 동일 합산) → **멈춤, 사람 호출.**
    - `STALLED`/`REGRESS_ESCALATE` → **멈춤, 사람 호출.**
+   - `REPEATED_KIND`(kindstreak) → **멈춤, 사람 호출.** 전할 말이 위와 다르다 — "코드가 안 고쳐진다" 가 아니라 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다. 코드가 아니라 이 phase 의 목표를 의심하라"** 다. step 마다 실행 가능한 AC 가 있어도 phase 목표가 열거 불가능하면 수렴하지 않는다(위 "좋은 step 의 원칙" 의 phase 목표 절). 사람에게 물을 것은 둘이다: 이 phase 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 목표를 유한한 목록으로 좁혀 받은 뒤 재개한다.
    - `PASS` → 이 phase `status=done`, **maker 종료 통지**, **다음 phase 로**. maker 는 백그라운드 팀메이트라 통지 없이는 대기 상태로 남는다 — `SendMessage({to: <agentId>})` 로 "phase 완료 — 종료. 새 작업을 시작하지 말고 한 줄 확인으로 턴을 끝내라" 를 보내고 응답을 기다리지 않는다. 이후 이 maker 에는 재진입하지 않으며, 다음 phase 는 새 maker 를 띄운다.
    - `RETRY`/`RETRY_SOFT` → 5번(maker 재진입).
 5. **maker 재진입 — `SendMessage` 로 같은 maker 를 이어감(불변 6):** `SendMessage({to: <agentId>})` 에는 **counts 요약 한 줄 + scored 파일 경로(`$LOOP_DIR/scored-{phase}.json`)만** 담아 "이 파일을 읽고 CRITICAL→MAJOR 순으로 고쳐라. 고친 코드에 대응 테스트도" 라고 이어 지시한다. finding 전문(evidence 산문)을 메시지에 붙여넣지 않는다 — SendMessage 도구 결과가 보낸 텍스트를 그대로 에코해 오케스트레이터 창에 같은 내용이 두 벌씩 쌓이고, maker 는 어차피 파일을 직접 읽는 쪽이 정확하다. **새 Task 를 띄우지 않는다** — 그래야 그 phase 의 수정 맥락이 유지된다. 고쳐지면 1번(게이트)부터 이 사이클을 다시 연다.

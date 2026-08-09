@@ -392,6 +392,134 @@ assert_eq "깨진 상태 파일 → 죽지 않고 INIT 로 회복" \
   "$(printf '{"counts":{"CRITICAL":1,"MAJOR":0,"MINOR":0}}' | bash "$DIR/stall.sh" --state "$stf2" 2>/dev/null | jq -r .status)" "ONGOING"
 rm -rf "$sttmp2"
 
+# ── 7-9. kindstreak.sh 반복 종류 감지 ────────────────────────────
+# stall.sh 는 등급 개수 벡터만 봐서 finding 의 **종류** 가 안 보인다. 한 phase 가 여섯 사이클을
+# 돌았고 그중 넷이 같은 kind(test-vacuous)였는데 판정부는 그걸 신호로 내지 않았다 — 등급이
+# 오르내리는 동안 PROGRESS 까지 떴다. 그 자리를 이 감지기가 메운다.
+kstmp="$(mktemp -d)"
+# 사이클 이력 픽스처 생성기. 인자 하나 = 한 사이클, "kind:등급,kind:등급" 형식(빈 문자열 = finding 0건).
+ks_hist() {
+  local f="$1"; shift
+  local it=0 spec item kind sev
+  : > "$f"
+  for spec in "$@"; do
+    it=$((it + 1))
+    printf '{"iteration":%d,"verdict":"RETRY","findings":[' "$it" >> "$f"
+    local first=1
+    local IFS=,
+    for item in $spec; do
+      [ -n "$item" ] || continue
+      kind="${item%%:*}"; sev="${item##*:}"
+      [ "$first" -eq 1 ] || printf ',' >> "$f"
+      first=0
+      printf '{"kind":"%s","dimension":"convention","location":"A.kt:1","severity":"%s"}' "$kind" "$sev" >> "$f"
+    done
+    printf ']}\n' >> "$f"
+  done
+}
+ks() { bash "$DIR/kindstreak.sh" --history "$1"; }               # JSON 전문
+ks_f() { ks "$1" | jq -r "$2"; }                                  # 필드 하나
+ks_rc() { bash "$DIR/kindstreak.sh" --history "$1" >/dev/null 2>&1; echo $?; }
+
+# 임계만큼 연속 → 감지. 종류와 연속 횟수가 맞는지까지 본다("떴다" 만 보면 아무 종류나 통과한다).
+ks_thr="$(. "$DIR/lib.sh" >/dev/null 2>&1; loop_param repeated_kind_cycles)"
+ks_hist "$kstmp/streak.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL"
+assert_eq "같은 종류 3연속 → REPEATED_KIND" "$(ks_f "$kstmp/streak.jsonl" .status)" "REPEATED_KIND"
+assert_eq "그 종류를 지목한다"               "$(ks_f "$kstmp/streak.jsonl" .kind)"   "test-vacuous"
+assert_eq "연속 횟수 3"                      "$(ks_f "$kstmp/streak.jsonl" .streak)" "3"
+assert_eq "threshold 는 rubric 값 그대로"    "$(ks_f "$kstmp/streak.jsonl" .threshold)" "$ks_thr"
+assert_eq "cycles 는 이력 줄 수"             "$(ks_f "$kstmp/streak.jsonl" .cycles)" "3"
+
+# 대조군 넷 — 임계에 못 미치거나 연속이 아닌 것은 울리지 않는다. 이게 없으면 "늘 울리는 감지기" 와
+# 구분이 안 된다.
+ks_hist "$kstmp/short.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL"
+assert_eq "임계보다 하나 적으면 → OK" "$(ks_f "$kstmp/short.jsonl" .status)" "OK"
+assert_eq "그래도 연속 수는 센다"      "$(ks_f "$kstmp/short.jsonl" .streak)" "2"
+
+ks_hist "$kstmp/vary.jsonl" "n-plus-1:CRITICAL" "test-missing:CRITICAL" "idor:CRITICAL"
+assert_eq "종류가 매번 다르면 → OK"   "$(ks_f "$kstmp/vary.jsonl" .status)" "OK"
+assert_eq "그때 연속은 1"             "$(ks_f "$kstmp/vary.jsonl" .streak)" "1"
+
+ks_hist "$kstmp/interrupt.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" \
+                                 "n-plus-1:CRITICAL" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL"
+assert_eq "다른 종류가 끼면 연속이 끊긴다 → OK" "$(ks_f "$kstmp/interrupt.jsonl" .status)" "OK"
+assert_eq "끊긴 뒤부터 다시 센다(2)"            "$(ks_f "$kstmp/interrupt.jsonl" .streak)" "2"
+
+ks_hist "$kstmp/empty-cycle.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" "" "test-vacuous:CRITICAL"
+assert_eq "finding 0건 사이클도 연속을 끊는다" "$(ks_f "$kstmp/empty-cycle.jsonl" .streak)" "1"
+
+# MINOR 만 있는 사이클은 게이트를 통과시키는 등급이라 세지 않는다 — 연속을 끊지도 잇지도 않는다.
+# 이걸 안 건너뛰면 MINOR 하나가 낀 것만으로 감지기가 영영 안 울린다.
+ks_hist "$kstmp/minor-gap.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" \
+                                 "convention-violation:MINOR" "test-vacuous:CRITICAL"
+assert_eq "MINOR 만 있는 사이클은 건너뛴다 → 연속 유지" "$(ks_f "$kstmp/minor-gap.jsonl" .status)" "REPEATED_KIND"
+assert_eq "그 연속은 3(MINOR 사이클은 안 셈)"           "$(ks_f "$kstmp/minor-gap.jsonl" .streak)" "3"
+assert_eq "cycles 는 MINOR 사이클도 포함한 4"           "$(ks_f "$kstmp/minor-gap.jsonl" .cycles)" "4"
+
+# 동점이면 그 사이클엔 지배 종류가 없다 — "같은 종류가 계속" 이라는 근거가 아니므로 연속이 끊긴다.
+ks_hist "$kstmp/tie.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL,n-plus-1:CRITICAL"
+assert_eq "최빈 동점 → 연속 끊김(OK)" "$(ks_f "$kstmp/tie.jsonl" .status)" "OK"
+assert_eq "동점 사이클은 지배 종류 없음(kind null)" "$(ks_f "$kstmp/tie.jsonl" .kind)" "null"
+assert_eq "동점 사이클은 streak 0"                  "$(ks_f "$kstmp/tie.jsonl" .streak)" "0"
+# 같은 동점을 **연속 종류가 사전순으로 앞서는** 배치로 한 번 더 본다. 동점 처리를 지우고 아무거나
+# 고르게 하면 여기서는 status 까지 뒤집힌다(위 배치만으로는 고른 쪽이 우연히 달라 status 가 안 뒤집혔다).
+ks_hist "$kstmp/tie2.jsonl" "aaa-kind:CRITICAL" "aaa-kind:CRITICAL" "aaa-kind:CRITICAL,zzz-kind:CRITICAL"
+assert_eq "동점이면 앞선 종류를 집어 잇지 않는다" "$(ks_f "$kstmp/tie2.jsonl" .status)" "OK"
+assert_eq "그 배치도 streak 0"                    "$(ks_f "$kstmp/tie2.jsonl" .streak)" "0"
+# 대조군 — 같은 사이클에서 한쪽이 하나 더 많으면 동점이 아니라 그쪽이 지배한다.
+ks_hist "$kstmp/notie.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" \
+                             "test-vacuous:CRITICAL,test-vacuous:CRITICAL,n-plus-1:CRITICAL"
+assert_eq "동점이 아니면 최빈이 지배한다" "$(ks_f "$kstmp/notie.jsonl" .status)" "REPEATED_KIND"
+assert_eq "그 종류는 최빈 쪽"             "$(ks_f "$kstmp/notie.jsonl" .kind)"   "test-vacuous"
+
+# 등급이 섞이면 **가장 높은 등급** 쪽만 본다. 개수로만 세면 아래 이력의 지배 종류가 n-plus-1 이 된다.
+ks_hist "$kstmp/mixed.jsonl" "ddl-safety:BLOCKER,n-plus-1:CRITICAL,n-plus-1:CRITICAL" \
+                             "ddl-safety:BLOCKER,n-plus-1:CRITICAL,n-plus-1:CRITICAL" \
+                             "ddl-safety:BLOCKER,n-plus-1:CRITICAL,n-plus-1:CRITICAL"
+assert_eq "BLOCKER 와 CRITICAL 이 섞이면 BLOCKER 쪽" "$(ks_f "$kstmp/mixed.jsonl" .kind)"   "ddl-safety"
+assert_eq "그 연속이 감지된다"                        "$(ks_f "$kstmp/mixed.jsonl" .status)" "REPEATED_KIND"
+
+# 빈 이력(0줄)은 오류가 아니다 — 첫 사이클 전에 부를 수 있어야 한다.
+: > "$kstmp/empty.jsonl"
+assert_eq "빈 이력 → OK"        "$(ks_f "$kstmp/empty.jsonl" .status)" "OK"
+assert_eq "빈 이력 → cycles 0"  "$(ks_f "$kstmp/empty.jsonl" .cycles)" "0"
+assert_eq "빈 이력 → streak 0"  "$(ks_f "$kstmp/empty.jsonl" .streak)" "0"
+
+# 못 읽는 입력에 조용히 OK 를 내면 감지기가 영영 안 울리는데 그 침묵이 통과로 보인다 — fail-loud.
+assert_eq "이력 파일 없음 → exit65" "$(ks_rc "$kstmp/nosuch.jsonl")" "65"
+printf '{"iteration":1,"findings":[]}\n너 이건 JSON 이 아니다\n' > "$kstmp/broken.jsonl"
+assert_eq "깨진 줄 → exit65"        "$(ks_rc "$kstmp/broken.jsonl")" "65"
+assert_eq "인자 없음 → exit64"      "$(bash "$DIR/kindstreak.sh" >/dev/null 2>&1; echo $?)" "64"
+
+# severity 가 사다리 밖이면 그 finding 을 건너뛰던 자리(실측). 같은 종류가 네 사이클 연속인데
+# 등급 오타 하나로 streak 0 / status OK 가 나왔다 — **감지기가 눈이 먼 채 통과를 낸다.**
+# 이건 이 감지기를 만들게 한 병과 같은 종류라(확인 못 한 것이 통과 방향으로 떨어진다) 65 로 거부한다.
+ks_hist "$kstmp/sev-typo.jsonl" "test-vacuous:CRITCAL" "test-vacuous:CRITCAL" \
+                                "test-vacuous:CRITCAL" "test-vacuous:CRITCAL"
+ks_err() { bash "$DIR/kindstreak.sh" --history "$1" 2>&1 >/dev/null; }
+assert_eq "미지 등급(오타) → exit65" "$(ks_rc "$kstmp/sev-typo.jsonl")" "65"
+assert_eq "메시지가 어느 사이클·어떤 값인지 짚는다" \
+  "$(ks_err "$kstmp/sev-typo.jsonl" | grep -c 'CRITCAL')" "1"
+# 등급 누락도 같다 — 필드가 없는 것과 오타는 같은 실패다(둘 다 score.sh 가 붙였어야 할 값이 없다).
+printf '{"iteration":1,"verdict":"RETRY","findings":[{"kind":"test-vacuous","dimension":"convention"}]}\n' \
+  > "$kstmp/sev-missing.jsonl"
+assert_eq "등급 누락 → exit65" "$(ks_rc "$kstmp/sev-missing.jsonl")" "65"
+# **종료코드만으로는 이 둘이 안 잠긴다.** 등급 누락은 거부를 지워도 65 가 나온다 — 판정 jq 의
+# `rank(null)` 이 죽어서다. 65 는 같고 사람에게 가는 말은 "이력을 못 읽는다" 라 어디를 볼지 못 짚는다.
+# 그래서 **원인을 짚는 메시지**를 함께 단언한다. 종료코드가 맞다고 진단이 맞은 것은 아니다.
+for ksf in sev-typo sev-missing; do
+  assert_eq "$ksf: 원인을 severity 로 짚는다(파싱 실패로 뭉뚱그리지 않는다)" \
+    "$(ks_err "$kstmp/$ksf.jsonl" | grep -c '사다리')" "1"
+done
+# 대조군 — 그 이력의 등급만 제대로 적으면 감지가 산다. 죽는 이유가 "늘 죽어서" 가 아니라 등급 때문이다.
+ks_hist "$kstmp/sev-fixed.jsonl" "test-vacuous:CRITICAL" "test-vacuous:CRITICAL" \
+                                 "test-vacuous:CRITICAL" "test-vacuous:CRITICAL"
+assert_eq "등급만 고치면 감지된다"   "$(ks_f "$kstmp/sev-fixed.jsonl" .status)" "REPEATED_KIND"
+assert_eq "그 연속은 4"              "$(ks_f "$kstmp/sev-fixed.jsonl" .streak)" "4"
+# 그리고 **MINOR 는 여전히 오류가 아니다.** 규칙(건너뛰기)과 입력 오류(거부)를 가른 증거가 이 대조다.
+assert_eq "MINOR 만 있는 사이클은 거부가 아니라 정상 rc0" "$(ks_rc "$kstmp/minor-gap.jsonl")" "0"
+rm -rf "$kstmp"
+
 # ── 8. detect_build.py 감지기 (런타임 어댑터 대체 — 빌드/스택/문서/티켓 감지) ──
 # 셸 채점과 별개의 Python unittest. 통과면 1 assert 가산, 실패면 출력 그대로 노출.
 if command -v python3 >/dev/null 2>&1; then
