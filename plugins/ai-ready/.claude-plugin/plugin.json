@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
   "description": "Two axes in one plugin. (1) Audit a codebase for AI-readiness on a 7-category 100-point rubric, then apply ROI-prioritized improvements — per-module CLAUDE.md, ANTIPATTERNS.md seeded from git history, INDEX.md, ARCHITECTURE.md Mermaid diagrams, a freshness Stop hook. Multi-module and single-module layouts score on parallel rubrics. (2) Run the unattended verification loop — /loop-run converges one change, /loop-build walks a multi-phase spec, /loop-review checks once, /loop-lessons harvests what the loop caught into the knowledge layer. A maker fixes, an independent checker reviews, and severity comes from a deterministic shell reading a BASE + project-LOCAL rubric, so the same finding always scores the same. Release history lives in README.md.",
-  "version": "0.9.11",
+  "version": "0.9.12",
   "author": {
     "name": "kunsanglee"
   },
@@ -40,6 +40,7 @@
   "agents": [
     "./agents/loop-checker.md",
     "./agents/loop-lesson-synthesizer.md",
-    "./agents/loop-maker.md"
+    "./agents/loop-maker.md",
+    "./agents/loop-spec-checker.md"
   ]
 }
