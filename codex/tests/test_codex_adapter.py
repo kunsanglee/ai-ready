@@ -61,6 +61,38 @@ class CodexAdapterTests(unittest.TestCase):
             self.assertNotIn('{"base", "findings"', text,
                              f"{name} 에 reviewed 없는 옛 출력 스키마가 남아 있다")
 
+    def test_spec_checker_contract_is_stated_in_both_places(self):
+        """spec-checker 계약도 checker 와 같은 모양이라 같은 방식으로 갈라진다.
+
+        0.9.12 에서 생긴 계약이고, 역시 `loop-run/SKILL.md`(위임 지시)와
+        `references/spec-checker-role.md`(역할 계약) 두 곳에만 있다. 위 checker 시험이
+        막는 사고와 같은 자리라 함께 잠근다.
+        """
+        skill = (PLUGIN / "skills" / "loop-run" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "loop-run" / "references"
+                / "spec-checker-role.md").read_text(encoding="utf-8")
+        self.assertIn("spec-checker-role.md", skill,
+                      "SKILL.md 가 역할 계약 파일을 안 가리킨다 — 위임할 때 넘길 텍스트가 없다")
+        # 두 곳이 갈라지면 안 되는 것은 출력 키다. 한쪽만 바뀌면 결과를 읽는 쪽이 조용히 빈 목록을 본다.
+        for name, text in (("SKILL.md", skill), ("spec-checker-role.md", role)):
+            self.assertIn("gaps", text, f"{name} 가 출력 키 gaps 를 안 적는다")
+        # 경고 층이라는 성질은 **호출부** 계약이다 — 결과를 받아 무엇을 할지는 오케스트레이터가 정한다.
+        # 역할 파일은 같은 성질을 "총평을 쓰지 마라"(그 판단은 읽는 사람의 몫)로 담고 있어 문구가 다르다.
+        self.assertRegex(skill, r"never blocks|not a gate|warning layer",
+                         "SKILL.md 가 '시작을 막지 않는다' 를 안 적는다 — 무인 실행이 거기서 멈춘다")
+        self.assertRegex(role, r"Do not put severity|overall judgement",
+                         "역할 계약이 총평 금지를 안 적는다 — 등급을 매기면 경고 층이 게이트로 읽힌다")
+
+    def test_loop_build_start_gate_requires_the_three_fields(self):
+        """codex 트리에는 결정론 게이트가 없어 이 산문이 계약의 전부다.
+
+        Claude 트리는 jq 두 자리가 강제하지만 codex 스킬 본문에는 셸 블록이 없다. 세 자리
+        이름이 문서에서 빠지면 그 호스트에서는 아무것도 요구하지 않는 상태가 된다.
+        """
+        skill = (PLUGIN / "skills" / "loop-build" / "SKILL.md").read_text(encoding="utf-8")
+        for field in ("exit_criteria", "irreversible", "tiebreaks"):
+            self.assertIn(field, skill, f"start gate 가 {field} 를 안 요구한다")
+
     def test_audit_bundle_has_no_hook_installer(self):
         scripts = PLUGIN / "skills" / "audit" / "scripts"
         for filename in ("audit.py", "scaffold.py", "extract_antipatterns.py", "dashboard.py"):

@@ -65,7 +65,7 @@ ANCHORS = {
     "lr-makerinput": ("loop-run", "MAKER_INPUT="),
     "lr-tree":       ("loop-run", "tree.snapshot"),
     "lb-setup":      ("loop-build", "printf 'PHASES=%q"),
-    "lb-delegate":   ("loop-build", "위임 스펙 검사 실패"),
+    "lb-specgate":   ("loop-build", "착수 전 스펙 검사 실패"),
     "lb-budget":     ("loop-build", "BUDGET_MIN_PHASE"),
     "lb-phase":      ("loop-build", 'PHASE="<이 phase 의 name>"'),
     "lb-done":       ("loop-build", '.status = "done"'),
@@ -162,7 +162,10 @@ dependencies {
 
 MAIN_KT = "fun main() { println(\"scratch\") }\n"
 
-PHASES_2 = {
+# 세 자리가 없는 옛 형식. 0.9.11 까지는 이것으로 순회가 돌았다(위임만 못 했다). 0.9.12 부터
+# tiebreaks·exit_criteria·irreversible 이 필수라 **이 판은 어느 자리에서도 통과하면 안 된다** —
+# 그 전환을 잠그는 것이 아래 TestSpecGate 의 회귀 대상이다.
+PHASES_2_LEGACY = {
     "phases": [
         {"name": "foundation", "status": "pending", "design_ref": "docs/design.md §C5",
          "steps": [{"id": "types", "goal": "타입 정의", "layer": "domain",
@@ -175,15 +178,15 @@ PHASES_2 = {
     ]
 }
 
-# 위임 모드가 요구하는 세 자리를 채운 판. 직접 모드 형식(PHASES_2)에 tiebreaks·exit_criteria·
-# irreversible 만 더한 것이라, 위임 검사가 통과/거부하는 이유를 그 셋으로만 가를 수 있다.
-PHASES_2_DELEGATED = {
+# 기본 픽스처 — 세 자리를 갖춘 현행 형식. 착수 전 검사와 순회 입력 검증이 **둘 다** 이 셋을
+# 요구하므로, 다른 시험(예산·phase 스코프·done 갱신)이 쓰는 기본판도 이것이어야 한다.
+PHASES_2 = {
     "tiebreaks": ["잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다"],
     "phases": [
-        {**PHASES_2["phases"][0],
+        {**PHASES_2_LEGACY["phases"][0],
          "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다"],
          "irreversible": False},
-        {**PHASES_2["phases"][1],
+        {**PHASES_2_LEGACY["phases"][1],
          "exit_criteria": ["결선을 끊으면 통합 시험이 빨개진다"],
          "irreversible": "운영 DB 마이그레이션"},
     ],
@@ -516,33 +519,104 @@ class TestLoopBuildSetup(BlockCase):
                                       "steps": [{"ac_cmd": "x", "status": "done!"}]}]},
     }
 
+    @staticmethod
+    def with_spec_fields(data: dict) -> dict:
+        """위반 사례에 착수 전 검사 셋을 채워 넣는다.
+
+        순회 검증이 0.9.12 부터 세 자리도 요구하므로, 채우지 않으면 모든 사례가 "세 자리가
+        없어서" 죽는다 — 그러면 name 누락·status 오타를 실제로 잡는지 이 시험이 못 가린다.
+        """
+        out = json.loads(json.dumps(data))
+        out.setdefault("tiebreaks", ["잠그는 것이 먼저다"])
+        if isinstance(out.get("phases"), list):
+            for p in out["phases"]:
+                if isinstance(p, dict):
+                    p.setdefault("exit_criteria", ["되돌리면 그 검사가 실패한다"])
+                    p.setdefault("irreversible", False)
+        return out
+
     def test_schema_violations_stop_the_run(self):
         self.setup_loop()
         for label, data in self.SCHEMA_VIOLATIONS.items():
             with self.subTest(violation=label):
-                self.setup_phases(data)
+                self.setup_phases(self.with_spec_fields(data))
                 r = self.run_block("lb-budget")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 통과시켰다\n{r}")
                 self.assertIn("phases.json 스키마 위반", r.err)
 
+    # 착수 전 검사 셋이 빠지거나 정보가 없는 판 — 0.9.11 까지는 순회가 이걸 그대로 받았다.
+    # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)
+    SPEC_FIELD_VIOLATIONS = {
+        "셋 다 없음(0.9.11 형식)": (
+            PHASES_2_LEGACY, {"exit_criteria", "irreversible", "tiebreaks"}),
+        "tiebreaks 만 없음": (
+            {k: v for k, v in PHASES_2.items() if k != "tiebreaks"}, {"tiebreaks"}),
+        "exit_criteria 만 없음": (
+            {"tiebreaks": PHASES_2["tiebreaks"],
+             "phases": [{k: v for k, v in p.items() if k != "exit_criteria"}
+                        for p in PHASES_2["phases"]]}, {"exit_criteria"}),
+        "irreversible 만 없음": (
+            {"tiebreaks": PHASES_2["tiebreaks"],
+             "phases": [{k: v for k, v in p.items() if k != "irreversible"}
+                        for p in PHASES_2["phases"]]}, {"irreversible"}),
+        # `true` 는 "닿는데 어딘지 안 적음" 이다. 통과시키면 위임 오케스트레이터가 사람에게 올려야 할
+        # 영역 이름 없이 그 자리에 선다 — 규칙이 문자열을 요구하는 이유가 그것이다.
+        "irreversible 이 true": (
+            {"tiebreaks": PHASES_2["tiebreaks"],
+             "phases": [{**p, "irreversible": True} for p in PHASES_2["phases"]]},
+            {"irreversible"}),
+        # 공백만 든 문자열. length 는 문자 수라 이것을 통과시킨다 — 판정은 test("\\S") 여야 한다.
+        "세 자리가 공백문자뿐": (
+            {"tiebreaks": ["   "],
+             "phases": [{**p, "exit_criteria": ["  "], "irreversible": " "}
+                        for p in PHASES_2["phases"]]},
+            {"exit_criteria", "irreversible", "tiebreaks"}),
+    }
+
+    def test_missing_spec_fields_also_stop_the_run(self):
+        """순회 입구에도 세 자리가 걸린다 — 재개로 들어오는 경로에 우회로를 남기지 않는다.
+
+        Step 1 의 검사는 사람 승인 앞에서 한 번 돌지만 재개는 Step 2 로 바로 들어온다. 여기가
+        비어 있으면 세 자리 없는 phases.json 이 재개 한 번으로 무인 순회에 올라탄다.
+
+        **이름을 지목하는지도 함께 본다.** 이 자리에 오는 파일은 정의상 Step 1 을 안 거친 것이라
+        (0.9.11 때 만들어져 진행 중이던 것, 또는 손편집), "스키마 위반" 한 줄만 받으면 사람이
+        status 오타부터 찾게 된다.
+        """
+        self.setup_loop()
+        for label, (data, expected) in self.SPEC_FIELD_VIOLATIONS.items():
+            with self.subTest(violation=label):
+                self.setup_phases(data)
+                r = self.run_block("lb-budget")
+                self.assertEqual(r.rc, 65, f"[{label}] 를 순회에 태웠다\n{r}")
+                self.assertIn("착수 전 스펙 검사 셋이 없다", r.err, repr(r))
+                named = {f for f in TestSpecGate.FIELDS if f in r.err}
+                self.assertEqual(named, expected,
+                                 f"[{label}] 지목한 자리가 다르다 — 사람이 무엇을 채울지 못 읽는다\n{r}")
+
     def test_valid_schema_passes(self):
-        """대조군 — 위 위반 열 건이 스키마 검사 때문에 죽은 것이지, 블록이 늘 죽는 게 아니다."""
+        """대조군 — 위 위반들이 검사 때문에 죽은 것이지, 블록이 늘 죽는 게 아니다."""
         self.setup_loop()
         self.setup_phases()
         self.assertEqual(self.run_block("lb-budget").rc, 0)
 
 
-# ── 3-1. 위임 착수 전 스펙 검사 (Step 1-1) ──────────────────────────────────
+# ── 3-1. 착수 전 스펙 검사 (Step 1) ────────────────────────────────────────
 
-class TestDelegationGate(BlockCase):
-    """위임은 사람 게이트가 아니라 스펙의 질로 갈린다 — 그 판정이 실제로 거부하는지 본다.
+class TestSpecGate(BlockCase):
+    """무인 완주는 사람 게이트가 아니라 스펙의 질로 갈린다 — 그 판정이 실제로 거부하는지 본다.
 
     이 검사가 무력해지는 방향은 둘이다. 없는 것을 통과시키거나(무인으로 돌다 결국 사람을 부른다),
-    있는 것을 거부하거나(위임 자체가 못 쓰게 된다). 그래서 위반 목록과 대조군을 함께 둔다.
+    있는 것을 거부하거나(스킬 자체가 못 쓰게 된다). 그래서 위반 목록과 대조군을 함께 둔다.
 
-    **호환성 대조군이 하나 더 있다** — 이 세 자리가 없는 기존 `phases.json` 은 직접 모드에서
-    여전히 돌아야 한다. 위임의 관문을 순회의 입력 검증으로 오해해 Step 2 에 얹으면 기존 사용자가
-    그날로 멈춘다.
+    **0.9.12 에서 우회로를 없앴다.** 종전에는 이 검사가 위임 모드 전용이라 실패하면 직접 모드로
+    돌면 그만이었다 — 검사 옆에 우회로가 있으면 그 검사는 권고다. 이제 실패는 시작 자체를 막고,
+    같은 셋을 순회 입구(`lb-budget`)도 요구한다.
+
+    **여기가 잠그는 것은 착수 검사(`lb-specgate`) 쪽 두 방향뿐이다.** 순회 입구 쪽 두 방향은
+    `TestLoopBuildSetup` 의 `test_missing_spec_fields_also_stop_the_run`(거부)과
+    `test_valid_schema_passes`(통과)가 잠근다. 네 방향이 그 넷으로 이미 덮여, 두 블록을 한
+    시험에서 연달아 돌리는 판을 따로 두면 같은 단언을 다시 재는 것이 된다.
     """
 
     # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)
@@ -593,8 +667,22 @@ class TestDelegationGate(BlockCase):
                          "irreversible": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"tiebreaks"}),
-        "셋 다 없음(= 기존 형식)": (
-            PHASES_2,
+        "셋 다 없음(0.9.11 형식)": (
+            PHASES_2_LEGACY,
+            {"exit_criteria", "irreversible", "tiebreaks"}),
+        # 값은 있는데 정보가 없는 판. 두 게이트가 같은 판정을 해야 한다(순회 입구 쪽은
+        # TestLoopBuildSetup.SPEC_FIELD_VIOLATIONS 의 같은 이름 두 건).
+        "irreversible 이 true": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": True,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"irreversible"}),
+        "공백문자만": (
+            {"tiebreaks": ["  "],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": [" "],
+                         "irreversible": "   ",
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"exit_criteria", "irreversible", "tiebreaks"}),
     }
 
@@ -604,45 +692,28 @@ class TestDelegationGate(BlockCase):
         self.setup_loop()
         self.setup_phases(data)
 
-    def test_incomplete_spec_stops_before_delegating(self):
+    def test_incomplete_spec_stops_the_start(self):
         for label, (data, expected) in self.VIOLATIONS.items():
             with self.subTest(violation=label):
                 self.setUp()          # 사례마다 새 레포 사본 — 앞 사례의 params.env 가 안 섞이게
                 self.prepare(data)
-                r = self.run_block("lb-delegate")
-                self.assertEqual(r.rc, 65, f"[{label}] 를 위임 가능으로 통과시켰다\n{r}")
-                self.assertIn("위임 스펙 검사 실패", r.err, repr(r))
+                r = self.run_block("lb-specgate")
+                self.assertEqual(r.rc, 65, f"[{label}] 를 시작 가능으로 통과시켰다\n{r}")
+                self.assertIn("착수 전 스펙 검사 실패", r.err, repr(r))
                 named = {f for f in self.FIELDS if f in r.err}
                 self.assertEqual(named, expected,
                                  f"[{label}] 지목한 자리가 다르다 — 사람이 무엇을 더 적을지 못 읽는다\n{r}")
 
     def test_complete_spec_passes(self):
         """대조군 — 위 아홉 건이 셋의 부재로 죽은 것이지, 블록이 늘 죽는 게 아니다."""
-        self.prepare(PHASES_2_DELEGATED)
-        r = self.run_block("lb-delegate")
-        self.assertEqual(r.rc, 0, repr(r))
-        self.assertIn("위임 스펙 검사 통과", r.out, repr(r))
-
-    def test_legacy_phases_still_run_in_direct_mode(self):
-        """호환성 대조군 — 세 자리가 없어도 순회 자체는 그대로 돈다(위임만 못 한다).
-
-        같은 `phases.json` 으로 두 블록을 돌린다. Step 2 검증은 통과하고 위임 검사만 거부해야
-        한다. 둘 다 거부하면 기존 사용자가 멈춘 것이고, 둘 다 통과하면 관문이 없는 것이다.
-        """
         self.prepare(PHASES_2)
-        self.assertEqual(self.run_block("lb-budget").rc, 0,
-                         "세 자리가 없다고 순회 입력 검증이 죽었다 — 기존 사용자가 멈춘다")
-        self.assertEqual(self.run_block("lb-delegate").rc, 65,
-                         "세 자리가 없는데 위임을 허락했다")
-
-    def test_delegated_phases_also_pass_the_run_schema(self):
-        """반대 방향 — 세 자리를 더한 phases.json 도 Step 2 검증을 그대로 통과한다."""
-        self.prepare(PHASES_2_DELEGATED)
-        self.assertEqual(self.run_block("lb-budget").rc, 0)
+        r = self.run_block("lb-specgate")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("착수 전 스펙 검사 통과", r.out, repr(r))
 
     def test_gate_without_pointer_fails_loud(self):
         """Step 0 없이 이 블록만 돌면 빈 PHASES 로 jq 가 돌아 '통과' 로 보일 자리다."""
-        r = self.run_block("lb-delegate")
+        r = self.run_block("lb-specgate")
         self.assertEqual(r.rc, 65, repr(r))
         self.assertIn("params.env 없음", r.err, repr(r))
 
