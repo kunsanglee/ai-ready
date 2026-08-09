@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "ai-ready"
 MANIFEST = PLUGIN / ".codex-plugin" / "plugin.json"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
-EXPECTED_SKILLS = {"audit", "apply", "freshness", "loop-review", "loop-run", "loop-build", "loop-lessons"}
+EXPECTED_SKILLS = {"audit", "apply", "freshness", "review", "build", "lessons"}
 
 
 class CodexAdapterTests(unittest.TestCase):
@@ -47,12 +47,12 @@ class CodexAdapterTests(unittest.TestCase):
     def test_checker_contract_is_stated_in_both_places(self):
         """codex 의 checker 계약은 산문 두 곳에만 있어 한쪽만 고쳐지는 사고가 실제로 났다.
 
-        에이전트 정의 파일이 없는 트리라 `loop-run/SKILL.md`(위임 지시)와
+        에이전트 정의 파일이 없는 트리라 `build/SKILL.md`(위임 지시)와
         `references/checker-role.md`(역할 계약)가 계약의 전부다. 0.9.7 첫 커밋에서
         후자만 갱신돼 같은 스킬 안에서 스키마가 어긋났다.
         """
-        skill = (PLUGIN / "skills" / "loop-run" / "SKILL.md").read_text(encoding="utf-8")
-        role = (PLUGIN / "skills" / "loop-run" / "references" / "checker-role.md").read_text(encoding="utf-8")
+        skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "build" / "references" / "checker-role.md").read_text(encoding="utf-8")
         for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
             self.assertIn("reviewed", text,
                           f"{name} 가 checker 출력의 reviewed 를 안 적는다 — 계약이 갈라진다")
@@ -64,12 +64,12 @@ class CodexAdapterTests(unittest.TestCase):
     def test_spec_checker_contract_is_stated_in_both_places(self):
         """spec-checker 계약도 checker 와 같은 모양이라 같은 방식으로 갈라진다.
 
-        0.9.12 에서 생긴 계약이고, 역시 `loop-run/SKILL.md`(위임 지시)와
+        0.9.12 에서 생긴 계약이고, 역시 `build/SKILL.md`(위임 지시)와
         `references/spec-checker-role.md`(역할 계약) 두 곳에만 있다. 위 checker 시험이
         막는 사고와 같은 자리라 함께 잠근다.
         """
-        skill = (PLUGIN / "skills" / "loop-run" / "SKILL.md").read_text(encoding="utf-8")
-        role = (PLUGIN / "skills" / "loop-run" / "references"
+        skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "build" / "references"
                 / "spec-checker-role.md").read_text(encoding="utf-8")
         self.assertIn("spec-checker-role.md", skill,
                       "SKILL.md 가 역할 계약 파일을 안 가리킨다 — 위임할 때 넘길 텍스트가 없다")
@@ -83,15 +83,34 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertRegex(role, r"Do not put severity|overall judgement",
                          "역할 계약이 총평 금지를 안 적는다 — 등급을 매기면 경고 층이 게이트로 읽힌다")
 
-    def test_loop_build_start_gate_requires_the_three_fields(self):
+    def test_build_start_gate_requires_the_three_fields(self):
         """codex 트리에는 결정론 게이트가 없어 이 산문이 계약의 전부다.
 
         Claude 트리는 jq 두 자리가 강제하지만 codex 스킬 본문에는 셸 블록이 없다. 세 자리
         이름이 문서에서 빠지면 그 호스트에서는 아무것도 요구하지 않는 상태가 된다.
+        1.0.0 에서 이 게이트를 안 지나던 단일 변경 경로가 `build` 로 흡수돼, 이제 이 스킬
+        하나가 유일한 착수 경로다 — 여기서 빠지면 우회로가 아니라 게이트 자체가 없어진다.
         """
-        skill = (PLUGIN / "skills" / "loop-build" / "SKILL.md").read_text(encoding="utf-8")
+        skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
         for field in ("exit_criteria", "irreversible", "tiebreaks"):
             self.assertIn(field, skill, f"start gate 가 {field} 를 안 요구한다")
+
+    def test_checker_lens_split_is_stated_in_both_places(self):
+        """렌즈 분할도 checker 계약과 같은 두 곳에 있어 같은 방식으로 갈라진다.
+
+        1.0.0 에서 checker 는 축이 갈린 렌즈 셋으로 병렬 기동하고 결과는 개수를 세어 합친다.
+        렌즈 이름이 한쪽에만 있으면 오케스트레이터가 부르는 이름과 checker 가 자기 축이라
+        믿는 이름이 어긋나고, 안 돈 축이 점검된 적 없는 채로 통과한다.
+        """
+        skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "build" / "references" / "checker-role.md").read_text(encoding="utf-8")
+        for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
+            for lens in ("contract", "safety", "quality"):
+                self.assertIn(f"`{lens}`", text, f"{name} 가 렌즈 {lens} 를 안 적는다")
+            self.assertIn("simplicity", text, f"{name} 가 여섯째 차원 simplicity 를 안 적는다")
+        # 개수 검사가 이 병렬화의 안전장치다 — 빠지면 렌즈 하나가 죽어도 남은 둘로 채점된다.
+        self.assertIn("--expect 3", skill,
+                      "SKILL.md 가 렌즈 개수 검사(--expect)를 안 적는다 — 죽은 축이 통과로 읽힌다")
 
     def test_audit_bundle_has_no_hook_installer(self):
         scripts = PLUGIN / "skills" / "audit" / "scripts"

@@ -9,8 +9,8 @@
 # 이 런처는 봇·자동화가 loop 를 헤드리스로 돌릴 때의 진입점이다.
 #
 # Usage:
-#   loop-launch.sh "use the ai-ready loop-build skill to build @<spec>"  [extra codex exec args...]
-#   loop-launch.sh "use the ai-ready loop-run skill to converge this change to PASS"  -C /path/to/repo
+#   loop-launch.sh "use the ai-ready build skill to build @<spec>"  [extra codex exec args...]
+#   loop-launch.sh "use the ai-ready build skill to converge this change to PASS"  -C /path/to/repo
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -19,7 +19,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${LOOP_MODEL:?loop-profile.env 에 LOOP_MODEL 이 없다}"
 : "${LOOP_EFFORT:?loop-profile.env 에 LOOP_EFFORT 이 없다}"
 
-[ $# -ge 1 ] || { echo "loop-launch: 프롬프트 인자가 필요하다 (예: 'use loop-build to build @spec')" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "loop-launch: 프롬프트 인자가 필요하다 (예: 'use build to build @spec')" >&2; exit 2; }
 
 # codex 는 중립 사다리 등급을 그대로 받는다(core/effort-ladder.md). 첫 인자는 프롬프트, 나머지는 codex exec 로 전달.
 prompt="$1"; shift

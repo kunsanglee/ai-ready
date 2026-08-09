@@ -1,9 +1,9 @@
 ---
-name: loop-review
-description: "Run a bounded, evidence-based read-only review pass over a local change and repeat only when the user requests another pass. Use for AI-ready loop review, rubric-based local review, or a second independent review of the current diff; do not use for unattended build loops."
+name: review
+description: "Run a bounded, evidence-based read-only review pass over a local change and repeat only when the user requests another pass. Use for AI-ready review, rubric-based local review, or a second independent review of the current diff; do not use for unattended build loops (use build)."
 ---
 
-# AI-Ready Loop Review
+# AI-Ready Review
 
 Perform a bounded review cycle without changing the repository. Use a project
 rubric when present, but keep the result evidence-based and scope-limited.

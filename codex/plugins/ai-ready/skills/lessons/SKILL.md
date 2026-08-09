@@ -1,9 +1,9 @@
 ---
-name: loop-lessons
-description: "After an unattended loop ends, turn the mistakes it caught into candidate entries for the project's permanent knowledge layer, for human review. Use for AI-ready loop lessons, promoting loop findings into anti-pattern candidates, or closing the loop's learning cycle; the human decides what is adopted, this skill only drafts."
+name: lessons
+description: "After an unattended loop ends, turn the mistakes it caught into candidate entries for the project's permanent knowledge layer, for human review. Use for AI-ready lessons, promoting loop findings into anti-pattern candidates, or closing the loop's learning cycle; the human decides what is adopted, this skill only drafts."
 ---
 
-# AI-Ready Loop Lessons
+# AI-Ready Lessons
 
 Close the loop's learning cycle: take the mistakes an unattended loop caught and draft candidate entries for the project's permanent knowledge layer (for example `docs/ANTIPATTERNS.md`), for a human to review. This skill writes drafts only — a human decides what is added, changed, or dropped. It never edits the knowledge layer directly.
 

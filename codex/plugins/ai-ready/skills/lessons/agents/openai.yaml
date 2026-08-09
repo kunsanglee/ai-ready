@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI-Ready Lessons"
+  short_description: "루프가 잡은 실수를 지식층 후보로 초안화합니다(사람 검토)"
+  default_prompt: "Use $lessons to turn the mistakes the loop caught into knowledge-layer candidates for review."
