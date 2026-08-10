@@ -25,6 +25,10 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+# 논리 모듈 기준점은 스택마다 다르다. 그 답을 여기 두지 않고 어댑터에 묻는다 — 종전에는
+# 이 파일과 audit.py 가 각자 JVM 으로만 하드코딩해 두 벌로 갈라져 있었다.
+import stacks
+
 BUILD_MANIFESTS = {
     "build.gradle.kts", "build.gradle", "pom.xml",
     "package.json", "Cargo.toml", "go.mod", "pyproject.toml", "setup.py",
@@ -44,14 +48,13 @@ CODE_EXTS = {
     ".py", ".rs", ".go", ".rb", ".php", ".cs", ".swift",
 }
 
-# 단일 모듈 프로젝트의 패키지(=논리 모듈) 탐색을 시작할 후보 디렉토리.
-JVM_SOURCE_ROOTS = (
-    Path("src/main/kotlin"),
-    Path("src/main/java"),
-)
-APPLICATION_MARKERS = (
-    "Application.kt", "Application.java",
-)
+# 단일 모듈 프로젝트의 패키지(=논리 모듈) 탐색 기준점은 stacks.py 의 어댑터가 답한다.
+
+# 종료코드. 0 이 아닌 값을 쓰는 이유는 "안 만들어졌다" 를 호출한 쪽이 셀 수 있게 하기
+# 위해서다. 안내문은 사람만 읽고 스크립트는 못 읽는다.
+EXIT_OK = 0
+EXIT_NO_ADAPTER = 3    # 등록된 스택 어댑터 중 맞는 것이 없다
+EXIT_NO_PACKAGES = 4   # 기준점은 찾았는데 그 아래에 코드가 없다
 
 
 def walk(target: Path):
@@ -429,24 +432,13 @@ def render_hot_files_block(hot_files: list[tuple[str, int]]) -> str:
 # --- Single-module package detection -------------------------------------
 
 def find_base_package(target: Path) -> Path | None:
-    """JVM 소스 루트에서 base package(Application 클래스가 있는 디렉토리) 를 찾는다.
+    """논리 모듈의 부모 디렉토리를 찾는다. 스택별 판정은 stacks.py 가 한다.
 
-    예: src/main/kotlin/com/kisas/Application.kt → src/main/kotlin/com/kisas
-    여러 source root 가 있으면 첫 번째 매칭 사용.
+    JVM 이면 base package(Application 클래스가 있는 디렉토리), Node 면 `src/`,
+    Python 이면 배포 패키지 디렉토리가 나온다.
     """
-    for source_root in JVM_SOURCE_ROOTS:
-        root = target / source_root
-        if not root.is_dir():
-            continue
-        # rglob 로 Application 마커 찾기
-        for marker in APPLICATION_MARKERS:
-            try:
-                hit = next(root.rglob(marker), None)
-            except OSError:
-                continue
-            if hit is not None:
-                return hit.parent
-    return None
+    layout = stacks.detect_layout(target)
+    return layout.source_root if layout is not None else None
 
 
 def find_packages(base_package: Path) -> list[Path]:
@@ -574,22 +566,25 @@ def run(target: Path, out_dir: Path, top_n: int):
     # 단일 모듈 분기 — 빌드 매니페스트가 루트에만 있는 경우 패키지 카탈로그 스캐폴드 생성
     non_root = [m for m in modules if m != Path(".")]
     if not non_root:
-        base_package = find_base_package(target)
-        if base_package is None:
-            print("단일 모듈 — 그러나 JVM source root (src/main/kotlin|java) 의 Application 클래스를 찾지 못함. "
-                  "다른 언어 / 비표준 레이아웃은 수동으로 docs/PACKAGES.md 를 작성하세요.", file=sys.stderr)
-            return
+        layout = stacks.detect_layout(target)
+        if layout is None:
+            # 안내문만 찍고 0으로 끝내지 않는다. 그러면 산출물 0개인 실행과 성공한 실행이
+            # 호출한 쪽에서 똑같아 보인다.
+            print(stacks.unsupported_message(target), file=sys.stderr)
+            return EXIT_NO_ADAPTER
+        base_package = layout.source_root
         packages = find_packages(base_package)
         if not packages:
-            print(f"단일 모듈 — base package({base_package.relative_to(target)}) 아래 패키지가 없음", file=sys.stderr)
-            return
+            print(f"단일 모듈({layout.stack}) — 기준점 {base_package.relative_to(target)} 아래 "
+                  f"코드가 든 디렉토리가 없다. 근거: {layout.evidence}", file=sys.stderr)
+            return EXIT_NO_PACKAGES
         catalog_path = out_dir / "PACKAGES.md"
         catalog_path.write_text(render_package_catalog(target, base_package, packages), encoding="utf-8")
-        print(f"단일 모듈 — 패키지 카탈로그 스캐폴드 생성: {catalog_path}")
-        print(f"  base package: {base_package.relative_to(target)}")
+        print(f"단일 모듈({layout.stack}) — 패키지 카탈로그 스캐폴드 생성: {catalog_path}")
+        print(f"  기준점: {base_package.relative_to(target)} (근거: {layout.evidence})")
         print(f"  감지된 패키지 {len(packages)}개: {', '.join(p.name for p in packages)}")
         print(f"  → 검토 후 docs/PACKAGES.md 로 복사하세요.")
-        return
+        return EXIT_OK
     selected = select_top_modules(target, modules, top_n)
     # datetime.now() 는 비멱등 — 같은 입력을 재생성할 때마다 '최종 검토일' 이 바뀌어 무의미한
     # diff 가 난다. 스캐폴드는 '초안' 이라 검토일은 사람이 검토 후 채우는 placeholder 로 둔다.
@@ -630,6 +625,7 @@ def run(target: Path, out_dir: Path, top_n: int):
     print(f"모듈 CLAUDE.md 초안 {len(written)}개 생성: {out_dir}")
     for p in written:
         print(f"  - {p}")
+    return EXIT_OK
 
 
 def main():
@@ -643,7 +639,7 @@ def main():
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
-    run(target, out_dir, args.top)
+    sys.exit(run(target, out_dir, args.top))
 
 
 if __name__ == "__main__":
