@@ -458,8 +458,14 @@ def find_packages(base_package: Path) -> list[Path]:
     return out
 
 
-def detect_package_role(pkg_dir: Path) -> str:
-    """패키지 역할 추정 — controller/service/repository 존재로 도메인 / 횡단 구분."""
+def detect_package_role(pkg_dir: Path, stack: str = "jvm") -> str:
+    """패키지 역할 추정 — Controller/Service/Repository 이름으로 도메인 / 횡단 구분.
+
+    이름 규칙이 잡히면 어느 스택이든 그대로 쓴다. 문제는 **아무것도 안 잡혔을 때**다.
+    JVM 웹 스택에서 그 셋이 없으면 실제로 횡단·설정·유틸일 확률이 높지만, 그 이름
+    규칙을 애초에 안 쓰는 스택에서는 아무 정보도 없는 것이지 횡단이라는 뜻이 아니다.
+    단정하면 사람이 그 라벨을 믿고 넘어가, 채워야 할 자리가 채워진 것처럼 보인다.
+    """
     has_controller = next(pkg_dir.rglob("*Controller.*"), None) is not None
     has_service = next(pkg_dir.rglob("*Service.*"), None) is not None
     has_repository = next(pkg_dir.rglob("*Repository.*"), None) is not None
@@ -469,7 +475,9 @@ def detect_package_role(pkg_dir: Path) -> str:
         return "도메인 (Controller 만)"
     if has_service or has_repository:
         return "도메인 (Service/Repository — Controller 없음)"
-    return "횡단 / 설정 / 유틸"
+    if stack == "jvm":
+        return "횡단 / 설정 / 유틸"
+    return "TODO — 이 패키지의 역할을 적으세요"
 
 
 def collect_endpoints(pkg_dir: Path) -> list[str]:
@@ -513,18 +521,19 @@ PACKAGE_SECTION_TEMPLATE = """### `{name}/` — {role}
 
 - **목적**: TODO — 이 패키지의 책임을 1~2줄로 적으세요.
 - **엔드포인트**: {endpoints}
-- **흐름**: TODO — Controller → Service → Repository 의 트랜잭션 / 이벤트 경계를 적으세요.
-- **외부 IO**: TODO — Sheets / Slack / S3 등 부작용 빈과 `@Profile` 분기를 적으세요.
-- **테스트 진입점**: TODO — ServiceTestSupport / IntegrationTestSupport 권장 패턴.
+- **흐름**: TODO — 이 패키지를 지나는 호출·이벤트의 경계를 적으세요 (어디서 들어와 어디로 나가나).
+- **외부 IO**: TODO — 이 패키지가 건드리는 바깥 자원을 적으세요 (데이터베이스 / 큐 / 외부 API / 파일).
+- **테스트 진입점**: TODO — 이 패키지를 검증할 때 무엇부터 보나.
 - **함정**: TODO — 이 패키지 특유의 주의사항 3개 이내.
-- **관련 ADR / 문서**: TODO.
+- **관련 설계 문서 / 결정 기록**: TODO.
 """
 
 
-def render_package_catalog(target: Path, base_package: Path, packages: list[Path]) -> str:
+def render_package_catalog(target: Path, base_package: Path, packages: list[Path],
+                           stack: str = "jvm") -> str:
     sections = []
     for pkg in packages:
-        role = detect_package_role(pkg)
+        role = detect_package_role(pkg, stack)
         endpoints = collect_endpoints(pkg)
         endpoints_str = ", ".join(f"`{e}`" for e in endpoints) if endpoints else "TODO — 패키지의 외부 노출 endpoint 를 적으세요."
         sections.append(PACKAGE_SECTION_TEMPLATE.format(
@@ -579,7 +588,8 @@ def run(target: Path, out_dir: Path, top_n: int):
                   f"코드가 든 디렉토리가 없다. 근거: {layout.evidence}", file=sys.stderr)
             return EXIT_NO_PACKAGES
         catalog_path = out_dir / "PACKAGES.md"
-        catalog_path.write_text(render_package_catalog(target, base_package, packages), encoding="utf-8")
+        catalog_path.write_text(
+            render_package_catalog(target, base_package, packages, layout.stack), encoding="utf-8")
         print(f"단일 모듈({layout.stack}) — 패키지 카탈로그 스캐폴드 생성: {catalog_path}")
         print(f"  기준점: {base_package.relative_to(target)} (근거: {layout.evidence})")
         print(f"  감지된 패키지 {len(packages)}개: {', '.join(p.name for p in packages)}")

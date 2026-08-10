@@ -206,5 +206,40 @@ class TestScaffoldExitCodes(unittest.TestCase):
             self.assertTrue((out / "PACKAGES.md").is_file())
 
 
+class TestCatalogTemplateIsStackNeutral(unittest.TestCase):
+    """초안 문구가 한 스택의 어휘를 쓰면, 그 스택이 아닌 사람은 채울 수 없는 자리를 받는다."""
+
+    SPRING_ONLY = ("Controller → Service", "@Profile", "ServiceTestSupport",
+                   "IntegrationTestSupport", "부작용 빈")
+
+    def test_placeholders_name_no_framework(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "package.json", "{}")
+            _mk(root, "src/domain/turn.ts")
+            out = root / "out"
+            self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_OK)
+            text = (out / "PACKAGES.md").read_text(encoding="utf-8")
+            for term in self.SPRING_ONLY:
+                self.assertNotIn(term, text, f"스택 중립이어야 할 자리에 {term!r}")
+
+    def test_role_is_not_asserted_when_stack_has_no_such_convention(self):
+        """이름 규칙을 안 쓰는 스택에서 아무것도 안 잡힌 것은 '횡단' 이 아니라 '모른다' 다."""
+        with tempfile.TemporaryDirectory() as d:
+            pkg = Path(d) / "domain"
+            pkg.mkdir()
+            (pkg / "turn.ts").write_text("x", encoding="utf-8")
+            self.assertIn("TODO", scaffold.detect_package_role(pkg, "node"))
+            self.assertEqual(scaffold.detect_package_role(pkg, "jvm"), "횡단 / 설정 / 유틸")
+
+    def test_role_still_reads_name_conventions_on_any_stack(self):
+        """이름 규칙이 실제로 잡히면 스택과 무관하게 그대로 쓴다."""
+        with tempfile.TemporaryDirectory() as d:
+            pkg = Path(d) / "billing"
+            pkg.mkdir()
+            (pkg / "BillingService.ts").write_text("x", encoding="utf-8")
+            self.assertIn("도메인", scaffold.detect_package_role(pkg, "node"))
+
+
 if __name__ == "__main__":
     unittest.main()
