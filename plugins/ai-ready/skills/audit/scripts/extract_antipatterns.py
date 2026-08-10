@@ -19,6 +19,13 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
+# 동일 디렉토리의 모듈 import — ai-ready 의 standard layout
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from managed_doc import guard_overwrite, add_force_arg  # noqa: E402
+
 EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
@@ -214,6 +221,11 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
     lines = []
     lines.append(f"# ANTIPATTERNS.md (초안 — {today} 생성)")
     lines.append("")
+    # 자동 생성 서명. 덮어쓰기 가드가 이 줄을 보고 "ai-ready 산출물이라 다시 써도 된다" 를
+    # 판정한다. 없으면 두 번째 감사가 자기가 만든 씨앗에 막혀 exit 3 으로 죽는다.
+    lines.append(f"_자동 생성: {today} · `ai-ready:apply` (extract_antipatterns.py) — "
+                 f"이 줄을 지우면 이후 실행이 이 파일을 덮지 않습니다._")
+    lines.append("")
     lines.append(f"> 최근 {days}일 git 히스토리에서 추출한 시드입니다. **아래 각 항목은 후보**이며 확정된 안티패턴이 아닙니다. 검토·편집·정제한 뒤 채택하세요.")
     lines.append("")
 
@@ -346,12 +358,19 @@ def main():
     ap.add_argument("--target", required=True)
     ap.add_argument("--out", required=True, help="ANTIPATTERNS.md 출력 경로")
     ap.add_argument("--days", type=int, default=180)
+    add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
+    # 사람이 인수한 문서는 덮지 않는다. 이 스크립트가 유독 이 가드가 필요한 이유는,
+    # 산출물이 **초안이고 사람이 골라 옮기는 것**이 설계이기 때문이다. 관례상 `--out` 은
+    # `.ai-ready/scaffolds/` 를 가리키지만 그것은 관례일 뿐이라, 누가 `docs/ANTIPATTERNS.md`
+    # 를 넘기면 손으로 추린 항목이 git 히스토리 덤프로 조용히 덮인다.
+    if not guard_overwrite(out_path, args.force):
+        sys.exit(3)
     run(target, out_path, args.days)
 
 
