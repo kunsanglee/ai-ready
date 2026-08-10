@@ -105,13 +105,33 @@ DONOT_PATTERNS = [
     # (regex_any 는 IGNORECASE 만 쓰고 MULTILINE 은 안 써서 ^ 가 텍스트 시작만 잡으므로 \n 을 함께 둔다.)
     r"(?:^|\n)\s*(?:[#*\->]+\s*)?(?:NEVER|DON'?T)\b",
     r"절대\s*(?:하지|금지|하면)", r"(?:^|\s|[#*\-])금지(?:\b|[\s.…!,;:])",
-    r"하지\s*마(?:라|세요|십시오|요)", r"하면\s*안\s*(?:됩|돼)",
+    # 어간을 '하다' 로 못박지 않는다. 종전 판은 `하지 마세요`·`하면 안 된다` 만 봐서
+    # "커밋하지 마세요" 는 세고 "`out/` 을 커밋하지 마세요" 와 같은 뜻인 "지우지 마세요"·
+    # "걸면 안 된다" 는 못 셌다. 어미는 같고 어간만 다른데 한쪽만 세는 자리였다.
+    r"지\s*마(?:라|세요|십시오|요)", r"면\s*안\s*(?:됩|돼|된)",
+    # 선언형 부정 종결("~하지 않는다"·"~짓지 않습니다"). 한국어 프로젝트 규칙은 명령형("하지 마라")
+    # 보다 이 어조로 적히는 일이 흔한데 0.x~1.2 는 그것을 한 줄도 못 셌다. 실측(2026-08-10):
+    # agent-ts CLAUDE.md 1→10줄(구체 1→9), agent CLAUDE.md 1→5, agent ANTIPATTERNS.md **40→40**.
+    # 마지막이 핵심이다 — "금지" 를 이미 쓰는 문서는 점수가 안 부푼다. 점수를 올리는 패턴이 아니라
+    # 놓치던 것을 세는 패턴이다. 새로 걸린 줄은 전부 눈으로 확인했고 진짜 규칙이었다.
+    #
+    # 산문에서는 서술("값이 바뀌지 않는다")과 규칙이 이 어미로 구분되지 않는다. 그래도 넓게 두는 이유는
+    # **이 패턴을 쓰는 두 규칙이 CLAUDE.md·AGENTS.md 만 훑기 때문이다** — 규범 문서라 서술형 부정이
+    # 드물고, 만점 문턱은 여전히 식별자를 담은 줄 3개라 막연한 줄만으로는 못 넘는다.
+    # 줄 앞머리로 좁히는 판도 재 봤는데, 긴 불릿의 규칙 둘을 놓쳐(실측) 채택하지 않았다.
+    r"지\s*않는다", r"지\s*않습니다", r"지\s*말\s*것",
     r"❌", r"⛔",
 ]
 
 USAGE_PATTERNS = [
     r"\bWhen to use\b", r"\bUse this\b",
     r"사용\s*시점", r"언제\s*사용", r"적용\s*시점",
+    # lazy-load 표의 "트리거" 열. 이 표가 곧 "이 문서를 언제 읽나" 라 사용 시점 가이드 그 자체인데,
+    # 리터럴 "사용 시점" 만 찾던 1.2 는 그 표를 가진 문서를 0점으로 매겼다.
+    # **표 헤더 꼴과 접두 붙은 꼴로만 인정한다.** 맨 "트리거" 는 이벤트 트리거를 말하는 산문에서
+    # 흔해 공짜 5점이 된다. 실측(2026-08-10): 두 레포의 lazy-load 표 각 1건에만 걸리고
+    # 산문 문서(SYSTEM.md·FLOWS.md)에서는 0건이다.
+    r"\|\s*(?:읽기\s*)?트리거[^|]*\|", r"(?:읽기|사용|적용|호출)\s*트리거",
 ]
 
 # M-2: 규칙 "CLAUDE.md / 문서 갱신 훅 또는 스케줄 존재" — 좁은 키워드만 인정
@@ -322,6 +342,16 @@ def _walk_onerror(_err: OSError) -> None:
 def regex_any(text: str, patterns: list[str]) -> bool:
     """T-8: case-insensitive — Don't / DO NOT / dont / don't 모두 매칭."""
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+
+
+# 의존 그래프로 인정하는 Mermaid 블록. `graph`/`flowchart` 로 시작하는 것만이다 —
+# `sequenceDiagram`·`stateDiagram` 은 흐름·상태를 그린 것이라 모듈 의존 맵이 아니다.
+DEPENDENCY_DIAGRAM_RE = re.compile(r"```\s*mermaid\s*\n\s*(?:graph|flowchart)\b", re.IGNORECASE)
+
+
+def has_dependency_diagram(text: str) -> bool:
+    """문서 본문에 모듈 의존 그래프로 읽을 수 있는 Mermaid 블록이 있나."""
+    return DEPENDENCY_DIAGRAM_RE.search(text) is not None
 
 
 # --- Single-module helpers ------------------------------------------------
@@ -920,6 +950,17 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
             r.award(5, ev)
         else:
             r.award(2, ev, note="존재하나 비어/스텁 — 의존 그래프/다이어그램을 채우면 만점")
+    else:
+        # 파일명(ARCHITECTURE.md·DEPENDENCIES.md)으로만 찾으면, 그래프 하나 때문에 문서를 하나 더
+        # 만드는 것이 최적 전략이 된다. 단일 모듈 저장소는 패키지가 몇 개뿐이라 그 그래프의 자리는
+        # 보통 패키지 카탈로그 안이고, 거기 있는 편이 읽는 쪽에도 낫다(패키지 설명 바로 옆).
+        # 그래서 카탈로그 안의 Mermaid 의존 그래프를 같은 자산으로 인정한다.
+        # 아무 Mermaid 나 세지 않는다 — `graph`·`flowchart` 로 시작하는 블록만이다. 순서도·상태도는
+        # 의존 맵이 아니라서다.
+        catalog = find_package_catalog(target)
+        if catalog is not None and _has_min_content(catalog) and has_dependency_diagram(read_text(catalog)):
+            r.award(5, [str(catalog.relative_to(target))],
+                    note="패키지 카탈로그 안의 Mermaid 의존 그래프로 인정 — 별도 ARCHITECTURE.md 를 만들 필요 없습니다")
     rules.append(r)
 
     if is_single_module(modules, target):

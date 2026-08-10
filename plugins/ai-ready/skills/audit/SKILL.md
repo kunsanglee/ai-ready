@@ -203,7 +203,11 @@ The audit script looks at:
 - CI configs: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`
 - Build manifest signals to identify modules: `build.gradle.kts`, `build.gradle`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Package.swift` (Swift Package Manager), `Podfile` (CocoaPods)
 - Recent git activity to find "hot" modules
-- "DO NOT" / "절대" / "금지" / "MUST NOT" markers in CLAUDE.md content
+- "DO NOT" / "절대" / "금지" / "MUST NOT" markers in CLAUDE.md content, plus Korean declarative
+  negatives ("~하지 않는다") — that is how Korean project rules are usually phrased, and counting
+  only the imperative forms scored real rule sets at zero (v1.3.0)
+- A lazy-load trigger table (`| 트리거 |` header) counts as "when to use" guidance; a Mermaid
+  `graph`/`flowchart` block inside the package catalog counts as the dependency map (v1.3.0)
 
 ## Limitations
 

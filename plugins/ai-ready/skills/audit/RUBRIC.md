@@ -33,8 +33,8 @@ Rules below show both forms where they differ.
 |------|--------|
 | Root `CLAUDE.md` between 800 and 8,000 bytes (≤ 12,000 scores partial; < 800 scores partial as a stub) | 5 |
 | (Multi) Module docs average 10–50 lines<br>(Single) Package catalog 50–300 lines (not too short, not too bloated for lazy-load) | 5 |
-| At least 3 lines of explicit "DO NOT" / "절대" / "금지" / "MUST NOT" guidance across non-stub docs. Since v0.9.3 full marks count only *specific* lines — a line must also carry a backtick code reference, a path, or a CamelCase/snake_case identifier, because counting bare keyword lines made writing "금지" three times the optimal strategy (measured). Vague-only guidance still scores partial (3/5) so identifier-free but real rules aren't zeroed | 5 |
-| At least one non-stub doc has explicit usage / "when to use" guidance | 5 |
+| At least 3 lines of explicit "DO NOT" / "절대" / "금지" / "MUST NOT" guidance across non-stub docs. Since v0.9.3 full marks count only *specific* lines — a line must also carry a backtick code reference, a path, or a CamelCase/snake_case identifier, because counting bare keyword lines made writing "금지" three times the optimal strategy (measured). Vague-only guidance still scores partial (3/5) so identifier-free but real rules aren't zeroed. **v1.3.0 counts Korean declarative negatives** ("~하지 않는다" / "~하지 않습니다" / "~하지 말 것"), which is how Korean project rules are usually phrased, and stops pinning the imperative forms to the verb 하다 ("지우지 마세요" used to be invisible while "커밋하지 마세요" counted) | 5 |
+| At least one non-stub doc has explicit usage / "when to use" guidance. **v1.3.0 also accepts a lazy-load trigger table** — a `| 트리거 |` header cell or a prefixed form ("읽기 트리거"), since that table *is* the when-to-use guide. A bare "트리거" in prose does not count (it usually means an event trigger) | 5 |
 
 ## 3. Tribal Knowledge & Anti-patterns (15)
 
@@ -52,7 +52,7 @@ Rules below show both forms where they differ.
 
 | Rule | Points |
 |------|--------|
-| Module dependency map / diagram (`ARCHITECTURE.md`, `dependencies.md`) | 5 |
+| Module dependency map / diagram (`ARCHITECTURE.md`, `dependencies.md`). **v1.3.0 also accepts a Mermaid `graph`/`flowchart` block inside the package catalog** — a single-module repo has few packages, so requiring a separate file made "create one more doc for one graph" the optimal move. `sequenceDiagram` / `stateDiagram` do not count (flow and state are not dependency) | 5 |
 | (Multi) Build manifests parseable for static dep graph (gradle/maven/npm/cargo)<br>(Single) Package catalog with ≥3 sections **AND** ≥60% of domain packages follow standard layout (`controller/ service/ domain/ repository/` — at least 3 of 4) | 5 |
 | Cross-module API contracts documented (OpenAPI, proto, contracts/; config `rubric.api_contracts.build_deps` accepts code-gen deps, e.g. springdoc/springfox that emit OpenAPI at runtime — since v0.9.1 the declared string must be ≥4 chars and appear on a *dependency-declaration line*, not anywhere in the manifest) | 5 |
 
