@@ -27,9 +27,27 @@ The audit auto-detects the layout from build manifests and switches scoring + sc
 | Layout | Detection | Module concept | Scaffold output | Module-level doc |
 |---|---|---|---|---|
 | **Multi-module** | Build manifest in ≥1 non-root directory | Each manifest-bearing dir = a module | `scaffolds/<module>/CLAUDE.md` per hot module | Per-module `CLAUDE.md` |
-| **Single-module** | Build manifest only at repo root | Each direct child of the base package (the dir holding `Application.kt|java`) = a logical module | `scaffolds/PACKAGES.md` (one catalog for all packages) | Single `docs/PACKAGES.md` catalog |
+| **Single-module** | Build manifest only at repo root | Each direct child of the **source root** = a logical module. Where the source root sits is stack-specific — see "Stack adapters" below | `scaffolds/PACKAGES.md` (one catalog for all packages) | Single `docs/PACKAGES.md` catalog |
 
 > Single-module reasoning: spawning N package-level `CLAUDE.md` files for a single Gradle/Maven/npm module fragments context and adds maintenance burden. A single `docs/PACKAGES.md` catalog (lazy-loaded from root `CLAUDE.md`) covers the same ground while keeping the doc surface small. The audit rubric scores them on parallel rules — see `RUBRIC.md` "Layout-aware scoring".
+
+### Stack adapters (`scripts/stacks.py`)
+
+"Where do logical modules start?" has a different answer per language, so the answer lives in one adapter registry that both `audit.py` and `scaffold.py` consume. It used to be hardcoded to JVM in each of them separately — two copies, so adding a stack meant editing two files and fixing only one made scoring and scaffolding look at different directories.
+
+| Stack | Detected by | Source root |
+|---|---|---|
+| `jvm` | `src/main/kotlin` or `src/main/java` | dir holding `*Application.kt|java`; if the project has none (a library), the package chain is walked down to where it branches |
+| `node` | root `package.json` | first of `src/`, `lib/`, `app/` |
+| `python` | `pyproject.toml` / `setup.py` / `setup.cfg` | the distribution package under `src/`, or the single root package with `__init__.py` |
+| `go` | `go.mod` | `internal/` or `pkg/`, else the module root |
+| `rust` | `Cargo.toml` | `src/` |
+
+Adapters are tried in that order, so a Gradle project carrying a frontend `package.json` still resolves as `jvm`.
+
+**Adding a stack**: append one `(name, fn)` entry to `ADAPTERS` in `scripts/stacks.py`. The function answers one question — which directory's children are the logical modules — and returns `SourceLayout` or `None`. Call sites iterate the registry, so nothing else changes.
+
+**An unknown stack fails loudly, it does not pass quietly.** `scaffold.py` exits `3` when no adapter matches and `4` when the source root holds no code, naming what it saw and where to add the adapter. It used to print a note and exit `0`, which made a run that produced nothing indistinguishable from a run that succeeded.
 
 ## Inputs You Need
 
@@ -189,7 +207,8 @@ The audit script looks at:
 
 - Heuristics-based scoring; expect ±5 points of noise. Use the trend, not the absolute number.
 - Anti-pattern extraction depends on commit message hygiene. Repos with vague messages produce thin output.
-- The skill is language-agnostic but the module detection prefers conventional layouts (Gradle multi-module, npm monorepo, Python `src/` layout, Go modules, Cargo workspaces).
+- Module detection prefers conventional layouts (Gradle multi-module, npm monorepo, Python `src/` layout, Go modules, Cargo workspaces). Single-module source roots come from the stack adapters above; a stack with no adapter is reported and exits non-zero rather than being skipped silently.
+- The "standard layout" rule (`controller`/`service`/`domain`/`repository`) is a JVM web convention. On other stacks it is reported as *not measured* and the catalog alone earns the points — it is never advice to restructure a non-JVM repo into that shape.
 - HTML dashboard is intentionally dependency-free (vanilla CSS + inline SVG) — pretty enough but not interactive.
 - **Scores the cartography (map) layer only — not code health (sanitize)**: this audit measures whether the docs/map exist and self-maintain, not whether the code underneath is healthy (test coverage, dead code, code smells). A repo can score high on the map while the terrain is still a maze — a high score on unhealthy code is a *false signal*. Treat sanitize (tests / dead-code removal / consistent conventions) as a prerequisite you ensure separately; the map only helps once the terrain is sound.
 - **Does not measure token/cost**: the audit's "Outcome Metrics" category checks whether usage is *tracked*, not the cost itself. There is no session-log parser or cache-hit dashboard here — use `ccusage` / RTK `gain` for that.

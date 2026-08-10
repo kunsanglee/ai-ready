@@ -28,6 +28,9 @@ from config_loader import (  # noqa: E402
     load_config, decision_record_hints, api_contract_build_deps,
     antipattern_doc_hints, naming_doc_hints,
 )
+# 논리 모듈 기준점은 스택마다 다르다. 그 답을 이 파일에 두지 않고 어댑터에 묻는다 —
+# 종전에는 이 파일과 scaffold.py 가 각자 JVM 으로만 하드코딩해 두 벌로 갈라져 있었다.
+import stacks  # noqa: E402
 
 # --- Constants -------------------------------------------------------------
 
@@ -60,9 +63,7 @@ STANDARD_LAYOUT_DIRS = ("controller", "service", "domain", "repository")
 # 이들이 루트에 있으면 하위 빌드 매니페스트가 안 잡혀도 멀티 모듈로 본다.
 WORKSPACE_MARKERS = ("pnpm-workspace.yaml", "nx.json", "turbo.json", "go.work")
 
-# 단일 모듈 base package 자동 감지를 위한 JVM 소스 루트와 Application 마커.
-JVM_SOURCE_ROOTS = ("src/main/kotlin", "src/main/java")
-APPLICATION_MARKERS = ("Application.kt", "Application.java")
+# 단일 모듈의 논리 모듈 기준점은 stacks.py 의 어댑터가 답한다(JVM·Node·Python·Go·Rust).
 
 # M-1: ADR 디렉토리 — strict는 단독으로도 인정, loose는 .md 파일 ≥2개 필요
 ADR_DIR_HINTS_STRICT = ("docs/adr", "doc/adr", "wiki/decisions", "docs/decisions")
@@ -387,24 +388,14 @@ def _rglob_excluded(path: Path, root: Path) -> bool:
 
 
 def find_base_package(target: Path) -> Path | None:
-    """JVM 소스 루트에서 Application 클래스가 위치한 base package 를 찾는다.
+    """논리 모듈의 부모 디렉토리를 찾는다. 스택별 판정은 stacks.py 가 한다.
 
-    build/generated 등 산출물은 제외하고, 마커가 여럿이면 경로가 가장 짧은(소스 루트에
-    가장 가까운) 것을 택해 결정성을 보장한다 — rglob 은 순서 미보장이라 첫 매칭을 그냥
-    쓰면 실행·머신마다 base package 가 달라진다.
+    JVM 이면 Application 클래스가 있는 base package, Node 면 `src/`, Python 이면
+    배포 패키지 디렉토리가 나온다. 산출물 제외와 마커 결정성(rglob 순서 미보장 대비)도
+    어댑터가 함께 책임진다.
     """
-    for src in JVM_SOURCE_ROOTS:
-        root = target / src
-        if not root.is_dir():
-            continue
-        for marker in APPLICATION_MARKERS:
-            try:
-                hits = [h for h in root.rglob(marker) if not _rglob_excluded(h, root)]
-            except OSError:
-                continue
-            if hits:
-                return min(hits, key=lambda p: (len(p.parts), str(p))).parent
-    return None
+    layout = stacks.detect_layout(target)
+    return layout.source_root if layout is not None else None
 
 
 def find_domain_packages(base: Path) -> list[Path]:
@@ -937,7 +928,12 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
         r = Rule("논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈)", 5)
         catalog_doc = find_package_catalog(target)
         sections = count_package_sections(read_text(catalog_doc)) if catalog_doc else 0
-        base_package = find_base_package(target)
+        layout = stacks.detect_layout(target)
+        base_package = layout.source_root if layout is not None else None
+        # 표준 레이아웃(controller/service/repository)은 JVM 웹 스택의 개념이다. 다른 스택에서는
+        # 없는 것이 정상이라, 조언 문구가 그것을 요구하면 안 된다.
+        stack_name = layout.stack if layout is not None else "미상"
+        layout_applies = stack_name == "jvm"
         compliant, layout_total = 0, 0
         if base_package is not None:
             domains = find_domain_packages(base_package)
@@ -953,11 +949,12 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
                     note="카탈로그 + 표준 레이아웃 일관성 모두 만족")
         elif catalog_doc and sections >= 3:
             if layout_total == 0:
-                # C4: 비-JVM 또는 Application 마커 부재 — 레이아웃을 측정하지 못한 것이지
-                # "60% 미만"이 아니다. 0점 침묵 대신 미측정임을 명시.
+                # C4: 레이아웃을 측정하지 못한 것이지 "60% 미만"이 아니다. 0점 침묵 대신
+                # 미측정임을 명시하고, 왜 측정이 성립하지 않는지를 스택 이름으로 말한다.
+                why = ("JVM 이지만 Controller 를 가진 도메인 패키지가 없음"
+                       if layout_applies else f"{stack_name} 스택 — 컨트롤러 레이아웃 개념이 없음")
                 r.award(4, evidence,
-                        note=("카탈로그 OK / 표준 레이아웃 미측정 — JVM-Spring 웹 레이아웃"
-                              "(controller/service/domain/repository)이 아니면 카탈로그만으로 충분합니다"))
+                        note=f"카탈로그 OK / 표준 레이아웃 미측정 ({why}) — 카탈로그만으로 충분합니다")
             else:
                 r.award(4, evidence,
                         note=("카탈로그 OK / 표준 레이아웃 60% 미만 — 도메인 패키지에 "
@@ -968,8 +965,14 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
         elif ratio >= 0.6:
             r.award(2, evidence, note="레이아웃 일관성 OK — 카탈로그 도입 시 만점")
         else:
-            r.note = ("단일 모듈 — 카탈로그(docs/PACKAGES.md) 도입 + 도메인 패키지 표준 레이아웃 일관성 "
-                      "(controller/service/domain/repository 4개 중 3개 이상) 확보 시 만점")
+            if layout_applies:
+                r.note = ("단일 모듈(jvm) — 카탈로그(docs/PACKAGES.md) 도입 + 도메인 패키지 표준 레이아웃 "
+                          "일관성 (controller/service/domain/repository 4개 중 3개 이상) 확보 시 만점")
+            else:
+                # 스프링 레이아웃을 안 쓰는 스택에 그것을 권하지 않는다. 그쪽에서 만점의 조건은
+                # 카탈로그 하나다(레이아웃 항목은 위 C4 로 미측정 처리된다).
+                r.note = (f"단일 모듈({stack_name}) — 카탈로그(docs/PACKAGES.md)에 패키지 섹션 3개 이상을 "
+                          "채우면 만점입니다. 표준 레이아웃 항목은 이 스택에서 측정하지 않습니다")
         rules.append(r)
     else:
         r = Rule("빌드 매니페스트로 의존 그래프 추출 가능", 5)
@@ -1386,9 +1389,10 @@ ACTION_HINTS = {
     "빌드 매니페스트로 의존 그래프 추출 가능": (0, 0,
         "이미 빌드 시스템이 커버하고 있습니다."),
     "논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈)": (60, 4,
-        "단일 모듈 프로젝트는 패키지 = 논리 모듈. (1) docs/PACKAGES.md 카탈로그에 3개 이상 패키지 섹션을 채우고, "
-        "(2) 도메인 패키지들이 일관된 표준 레이아웃 (controller/service/domain/repository 4개 중 3개 이상) 을 따르도록 "
-        "정렬하세요. 둘 다 만족하면 만점."),
+        "단일 모듈 프로젝트는 패키지 = 논리 모듈. (1) docs/PACKAGES.md 카탈로그에 3개 이상 패키지 섹션을 채우세요. "
+        "(2) JVM 웹 스택이면 도메인 패키지가 표준 레이아웃 (controller/service/domain/repository 4개 중 3개 이상) 을 "
+        "따르도록 정렬하면 만점입니다. 다른 스택에서는 그 레이아웃 개념이 없어 측정하지 않으며 (1) 만으로 만점입니다 "
+        "— 스프링 구조로 바꾸라는 뜻이 아닙니다."),
     "모듈 간 API 계약 문서화 (OpenAPI/proto/contracts)": (90, 3,
         "OpenAPI 명세나 proto 스키마를 도입해 계약을 기계 판독 가능한 형태로 유지하세요."),
     "기계적 검증 훅 (pre-commit / AI 에이전트 hook)": (20, 4,
