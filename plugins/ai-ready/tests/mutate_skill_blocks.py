@@ -41,7 +41,7 @@ MUTATIONS = [
         "개수 출력에서 중괄호 제거",
         "skills/spec/SKILL.md",
         'echo "spec: 결정 ${TOTAL}개',
-        'echo "spec: 결정 $TOTAL개',
+        'echo "spec: 결정 $TOTAL개',  # brace-check-example — 일부러 만든 변이체다
         ["TestSpecLedger.test_exit_reports_counts_with_digits"],
         "변수 뒤에 한글이 붙으면 셸이 그 한글까지 이름으로 읽어 개수가 사라진다. "
         "실제로 그렇게 나갔던 자리이고, 하필 개수가 필요한 순간은 뭔가 잘못됐을 때다.",
