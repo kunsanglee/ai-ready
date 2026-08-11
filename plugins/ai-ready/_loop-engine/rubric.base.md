@@ -210,6 +210,7 @@ floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외�
 |---|---|---|---|---|---|
 | intent-nongoal-violation | intent | agent | BLOCKER | no | 문서가 금지한 동작 수행. intent floor(MAJOR) 위로 |
 | intent-overreach | intent | agent | MINOR | no | scope 초과 구현. intent floor(MAJOR) 아래로 |
+| doc-lags-code | intent | agent | MINOR | no | 문서가 코드를 못 따라간 것(새 결정·필드·DDL 이 문서에 아직 없음, 문서가 적은 개수·목록이 낡음). intent floor(MAJOR) 아래로 — 코드는 정상이고 문서만 고치면 되는 자리라 회차를 태우지 않는다. **코드가 문서를 어기는 반대 방향(`intent-requirement-missing`·`intent-nongoal-violation`)은 등급 그대로다** |
 | n-plus-1 | runtime | agent | MAJOR | no | runtime floor(CRITICAL) 아래. hotpath 가중 시 CRITICAL |
 | test-missing | convention | agent | CRITICAL | no | 작성·수정한 코드에 대응 테스트 누락. 프로젝트 테스트 규약 기준. convention floor(MINOR) 위로 — 코드 변경분 테스트 필수 |
 | test-vacuous | convention | agent | CRITICAL | no | 테스트가 있으나 변경을 되돌려도 통과한다(아무것도 잠그지 않음). 없는 것보다 나쁘다 — 덮인 것처럼 보인다 |
