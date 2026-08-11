@@ -369,14 +369,16 @@ def render_what_block(module_path: str, stack_hint: str, file_count: int, summar
 
 
 def render_design_pointer_block(target: Path, module_path: str) -> str:
-    """모듈이 속한 도메인의 living design 문서 (docs/design/domain_{name}.md) 가 있으면 포인터 한 줄.
+    """모듈이 속한 도메인의 living design 문서 (docs/design/{name}.md) 가 있으면 포인터 한 줄.
 
     도메인명은 모듈 경로의 최상위 세그먼트 (casting/casting-api → casting).
+    파일명은 접두어 없는 `{name}.md` 다. 존재 검사가 실패하면 에러가 아니라 누락으로
+    끝나 눈에 안 띄므로, 규약을 바꿀 때는 이 이름도 함께 본다.
     design 문서가 없으면 빈 문자열 — TODO 자리표시자를 만들지 않는다 (점진 확장 정책:
     design 문서가 생기는 도메인부터 포인터가 따라붙는다).
     """
     domain = Path(module_path).parts[0]
-    rel = Path("docs/design") / f"domain_{domain}.md"
+    rel = Path("docs/design") / f"{domain}.md"
     if not (target / rel).exists():
         return ""
     depth = len(Path(module_path).parts)

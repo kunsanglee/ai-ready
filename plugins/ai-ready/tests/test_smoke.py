@@ -978,5 +978,45 @@ class TestRuleNameReferences(unittest.TestCase):
                          "규칙을 번호로 가리키면 규칙이 늘거나 줄 때 조용히 밀린다")
 
 
+class TestScaffoldDesignPointer(unittest.TestCase):
+    """render_design_pointer_block 이 찾는 파일명은 접두어 없는 {name}.md 하나다.
+
+    존재 검사가 실패하면 에러가 아니라 누락으로 끝나 눈에 안 띈다. 그래서 규약을
+    바꿀 때 이 테스트가 먼저 깨져야 한다 — 실제로 접두어 붙은 이름만 보던 동안
+    포인터가 아예 안 붙는 것을 아무도 못 봤다.
+    """
+
+    def _repo(self, td: str, design_file: str | None) -> Path:
+        root = Path(td)
+        (root / "docs" / "design").mkdir(parents=True)
+        if design_file:
+            (root / "docs" / "design" / design_file).write_text("# x", encoding="utf-8")
+        return root
+
+    def test_bare_filename_found(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._repo(td, "member.md")
+            out = scaffold.render_design_pointer_block(root, "member/member-api")
+            self.assertIn("docs/design/member.md", out)
+
+    def test_domain_prefixed_filename_ignored(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._repo(td, "domain_member.md")
+            self.assertEqual("", scaffold.render_design_pointer_block(root, "member/member-api"),
+                             "접두어 붙은 이름은 규약이 아니다")
+
+    def test_absent_design_doc_emits_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._repo(td, None)
+            self.assertEqual("", scaffold.render_design_pointer_block(root, "member/member-api"),
+                             "design 문서가 없으면 TODO 자리표시자도 만들지 않는다")
+
+    def test_href_depth_matches_module_depth(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._repo(td, "member.md")
+            out = scaffold.render_design_pointer_block(root, "member/member-api")
+            self.assertIn("(../../docs/design/member.md)", out)
+
+
 if __name__ == "__main__":
     unittest.main()
