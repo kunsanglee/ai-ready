@@ -91,9 +91,13 @@ effort: xhigh
 
 ### intent — 작업 정의 ↔ 코드 정합 (PRD/티켓/ADR/api-doc/memo)
 
-기준: 넘겨받은 작업 정의 문서. 종류 `intent-nongoal-violation / intent-requirement-missing / intent-overreach`. (intent-alignment + doc-drift 흡수.)
-- Doc→Code: 비목표 위반(문서가 "안 함"이라 한 걸 함 → `intent-nongoal-violation`), 골든패스/요건 누락·왜곡(`intent-requirement-missing`), ADR 거부된 대안 채택, api-doc 권한·필드 불일치, memo 패턴 위반.
-- Code→Doc: 신규 endpoint·DTO 필드·DDL·ErrorCode·도메인 결정이 문서에 누락(`intent-requirement-missing` 으로, 근거에 "문서 누락" 명시).
+기준: 넘겨받은 작업 정의 문서. 종류 `intent-nongoal-violation / intent-requirement-missing / intent-overreach / doc-lags-code`. (intent-alignment + doc-drift 흡수.)
+
+**방향으로 종류가 갈린다. 무엇을 고쳐야 하는지가 다르기 때문이다.**
+- Doc→Code(**코드가 문서를 어긴다 — 코드를 고쳐야 한다**): 비목표 위반(문서가 "안 함"이라 한 걸 함 → `intent-nongoal-violation`), 골든패스/요건 누락·왜곡(`intent-requirement-missing`), ADR 거부된 대안 채택, api-doc 권한·필드 불일치, memo 패턴 위반.
+- Code→Doc(**문서가 코드를 못 따라간다 — 문서만 고치면 된다**): 신규 endpoint·DTO 필드·DDL·ErrorCode·도메인 결정이 문서에 누락, 문서가 적은 개수·목록·경로가 코드보다 낡음 → **`doc-lags-code`**. 근거에 "문서 누락" 또는 "문서가 낡음" 을 명시한다.
+
+> **왜 갈랐나.** 둘을 한 종류로 묶으면 같은 등급을 받아 **문서 갱신이 코드 결함과 똑같이 회차를 태운다.** 2026-08-11 `agent-ts` 실측: 여덟 회차에서 통과를 막은 72건의 1위가 `intent-requirement-missing` 21건(29%)이었고 **그중 13건이 문서 위치** 였다. 코드는 정상인데 문서가 뒤따라오지 못한 자리다. `doc-lags-code` 는 MINOR 라 잡히되 통과를 안 막는다(`comment-noise` 와 같은 처리). **코드가 문서를 어기는 쪽은 등급 그대로다** — 그건 진짜 결함이다.
 - 범위 초과(`intent-overreach`): 작업 정의 밖 구현.
 - **PRD 없는 작업**(리팩토링·마이그레이션·테스트 보강): intent 를 끄지 말고 "동작 보존 + 범위 일탈"로 좁혀 본다. 작업 정의 자체가 전혀 없으면 그 사실을 finding 으로 한 건 남긴다(loop 진입 가드가 막을 신호).
 
@@ -195,6 +199,23 @@ KINDS 예외표는 "floor 와 다른 종류"만 담는다. 대부분의 finding 
   베이스 브랜치 해석이 어긋나 diff 가 통째로 비는 것이고, 그러면 점검 없이 통과가 된다.
   **diff 가 정말 비어 있으면 빈 결과를 내지 말고 그 사실을 보고한다.**
 - severity·등급·PASS/FAIL 을 출력에 넣지 마라. 그건 너의 일이 아니다.
+- **`exit_criteria` 를 프롬프트로 받았으면 `exit_criteria_probes` 를 함께 낸다.** 항목마다
+  `{"condition": <번호나 식별자>, "what": "<그 조건이 잠그는 것 한 구절>", "reverted": "<무엇을 되돌렸나>",
+  "command": "<무엇으로 쟀나>", "result": "성립. <무엇이 빨개졌나>" 또는 "성립 안 함. <무엇이 초록으로 남았나>"}`.
+  **산문으로 판정하지 말고 되돌려서 재라** — 조건이 "지우면 빨개진다" 를 말하므로 실제로 지워 봐야 성립을 안다.
+  `condition` 을 반드시 채워라. 라벨이 없으면 같은 조건을 여러 번 잰 것과 구별되지 않는다.
+- **되돌리기는 작업 트리 사본에서 한다**(예: `/tmp` 에 복사). 원본을 고치면 maker 의 작업과 섞이고, 되돌린
+  채로 남으면 다음 회차가 그것을 결함으로 읽는다. 끝나고 **작업 트리가 안 변한 것을 확인해 그 사실도 적는다.**
+- 조건 전부를 재는 것은 `contract` 렌즈다. 다른 렌즈는 **자기 축에 걸리는 조건만** 독립으로 다시 잰다 —
+  같은 조건을 두 렌즈가 각각 재는 것은 낭비가 아니라 서로 모르는 확인이다.
+- 이 필드는 **병합본에 안 실린다**(`merge_findings` 는 `findings`·`reviewed` 만 합친다). 렌즈별 결과 파일이
+  정본이고, 사람이 완료 조건 성립을 확인하는 자리도 거기다.
+
+> **왜 이 필드인가.** 완료 조건 성립 여부는 채점에 안 들어간다(PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고
+> phase 의 완료 조건을 안 본다). 그런데 **사람이 그 phase 를 닫을지 정할 때는 그것이 유일한 근거다.**
+> 이 필드가 없으면 그 판단이 서브에이전트 보고문에만 남아 파일로 확인되지 않는다 — 2026-08-11 `agent-ts`
+> 에서 "완료 조건 열 개 전부 성립" 이라는 보고의 근거를 결과 파일에서 못 찾아, 그 보고를 믿고 phase 를
+> 닫을 수 없었던 일이 있었다. 다음 회차에 요구해서야 기록이 생겼다. **요구해야 생기는 것은 계약이 아니다.**
 
 **자동화 금지 영역은 종류 이름만 맞으면 표가 사람을 부른다.** BASE rubric 의 `ddl-safety`·
 `money-path-change`·`authz-policy-change`·`mass-dispatch`·`destructive-data-op` 다섯이 그것이고,
