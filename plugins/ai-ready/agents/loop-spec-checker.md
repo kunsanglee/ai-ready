@@ -61,7 +61,7 @@ effort: high
 
 ```json
 {
-  "reviewed": ["docs/design/domain_x.md", ".loop/run/T-1/phases.json"],
+  "reviewed": ["docs/design/x.md", ".loop/run/T-1/phases.json"],
   "gaps": [
     {
       "id": "g1",

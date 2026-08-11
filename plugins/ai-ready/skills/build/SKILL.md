@@ -186,7 +186,7 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
   "tiebreaks": ["잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다"],
   "phases": [
     { "name": "foundation", "status": "pending",
-      "design_ref": "domain_x.md §현재 동작 C5 데이터 모델",   // 이 phase 가 구현하는 설계 문서 구역(정합 점검 + 종료 후 문서 반영 기준)
+      "design_ref": "x.md §현재 동작 C5 데이터 모델",   // 이 phase 가 구현하는 설계 문서 구역(정합 점검 + 종료 후 문서 반영 기준)
       "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다", "빈 입력으로 부르면 exit 65 로 죽는다"],
       "irreversible": false,          // 닿으면 "운영 DB 마이그레이션" 처럼 영역을 문자열로
       "steps": [

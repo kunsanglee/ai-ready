@@ -33,7 +33,7 @@ description: 무인 실행에 넘길 스펙을 사람과 함께 도출하는 도
 
 ```
 /spec                                  # 대화에서 합의된 것을 출발점으로
-/spec docs/design/domain_x.md          # 초안 문서를 출발점으로
+/spec docs/design/x.md          # 초안 문서를 출발점으로
 /spec --slug T-42                      # 원장 디렉터리 이름 지정(기본은 브랜치명)
 ```
 
