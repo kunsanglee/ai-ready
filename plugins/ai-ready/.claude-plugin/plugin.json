@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
   "description": "Two axes in one plugin. (1) Audit a codebase for AI-readiness on a 7-category 100-point rubric, then apply ROI-prioritized improvements — per-module CLAUDE.md, ANTIPATTERNS.md seeded from git history, INDEX.md, ARCHITECTURE.md Mermaid diagrams, a freshness Stop hook. Multi-module and single-module layouts score on parallel rubrics. (2) Run the unattended verification loop — /spec derives the spec first by enumerating undecided calls and closing each one with evidence, asking the human only where a guess would be invented; /build breaks a spec into phases and converges each one until it passes, /review checks once, /lessons harvests what the loop caught into the knowledge layer. A maker fixes; checker lenses split by axis (contract, safety, quality) review in parallel without seeing each other; severity comes from a deterministic shell reading a BASE + project-LOCAL rubric, so the same finding always scores the same. Release history lives in CHANGELOG.md.",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "author": {
     "name": "kunsanglee"
   },
