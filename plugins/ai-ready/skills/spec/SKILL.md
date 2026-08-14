@@ -246,7 +246,7 @@ echo "spec: 미결 0 — 산출 단계로 간다"
 - {subject} — {왜 미뤘나}. `/build` 에서 이 자리에 닿으면 사람에게 올린다.
 ```
 
-**완료 조건 절이 `/build` 의 `exit_criteria` 가 되고, 미결 절이 그 phase 의 `irreversible`·`tiebreaks` 판단 재료가 된다.** 그래서 이 두 절을 대충 적으면 `/build` 의 착수 전 검사가 바로 그 자리에서 막는다.
+**완료 조건 절이 `/build` 의 `exit_criteria` 가 되고, 안 만드는 것 절이 그 phase 의 `non_goals` 가 되고, 미결 절이 `irreversible`·`tiebreaks` 판단 재료가 된다.** 그래서 이 절들을 대충 적으면 `/build` 의 착수 전 검사가 바로 그 자리에서 막는다. 안 만드는 것 절은 오래 `/build` 에 받을 칸이 없어 그 스킬까지 안 흘렀는데, 1.4.0 에서 `non_goals` 가 생기며 이어졌다.
 
 이어서 `/build {산출 문서 경로}` 를 부르면 된다.
 
