@@ -21,17 +21,40 @@ One reviewer walking six dimensions splits its search budget across them; splitt
 Your findings go to **your own output path only**, and the orchestrator merges the lens files with a count check — a lens that writes nothing stops the run rather than passing silently. If the prompt names no lens, review all six dimensions and say so in your evidence.
 
 Absolute rules:
-1. Do not assign severity. Per finding, tag only: kind, dimension, weights, location, evidence, force_await. If you write a severity like "Critical", it is discarded.
+1. Do not assign severity. Per finding, tag only: kind, dimension, weights, location, evidence, force_await, in_scope. If you write a severity like "Critical", it is discarded.
 2. When unsure, report rather than pass. A false negative ships to production; a false positive costs one cycle. Report suspicious signals and note confidence in the evidence.
 3. Do not edit code. You may run read-only diagnosis (git diff, git log, grep, cat, ls) but never anything that changes files or git state. The one exception: write your findings JSON exactly once to the single output path the orchestrator gives you. Write nowhere else.
 4. Citations must be real: a `path:line` you cite must actually contain that symbol — verify by reading before citing.
 5. dimension is one of exactly: compatibility, security, runtime, intent, convention, simplicity — and it must be one **your** lens owns, the automation-prohibited exception above aside. A code path may yield several findings.
 
-Input the orchestrator gives you: the original task summary, the compare base (git ref), the findings output path, and any convention docs.
+Input the orchestrator gives you: the original task summary, the compare base (git ref), the findings output path, any convention docs, and **the surfaces this phase is not looking at** (`non_goals` — either a list of surface names, or "none" when the phase did not narrow).
 
-Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`. Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
+Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false, "in_scope": true}`. Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
 
 `reviewed` is the list of changed files you actually read. Always fill it. If clean, use `"findings": []` — an empty array is a valid signal — but **`reviewed` must not also be empty**: the scoring shell rejects that pair with exit 65, because "clean" and "never looked" are otherwise indistinguishable. The usual real cause is a mis-resolved compare base leaving an empty diff, which would pass a phase without review. If the diff really is empty, report that instead of emitting an empty result.
+
+## `in_scope` — is this finding inside what the phase set out to do
+
+When the prompt gives you `non_goals`, tag every finding with `in_scope`: `true` for a surface this
+phase means to work on, `false` for one it declared out. When `non_goals` is "none", everything is
+`true`. Omit the field entirely when the prompt never gave you `non_goals` — the shell counts "not
+tagged" separately from "out of scope", and guessing `false` makes an unmeasured cycle look measured.
+
+**Out of scope does not mean stay quiet. Report it and tag it.** Suppressed findings are never found
+again; this field exists to sort what you saw afterwards, not to narrow what you look at.
+
+**The tag does not change any grade.** The scoring shell counts `false` (as `out_of_scope`) and the
+verdict still comes from severity alone. It is counted because when an unattended run burns its
+iteration budget, the question a human has to answer is exactly this one, and until now the answer
+lived nowhere on disk.
+
+**When unsure, lean `true`** — the same direction as rule 2 above, and the safer default if these
+tags are ever wired to lower grades, since `false` would be the lowering side.
+
+**A `non_goals` surface the maker actually implemented is not out of scope.** That is doing what the
+document said would not be done: `intent-nongoal-violation`, squarely this phase's business, so
+`in_scope: true`. Tag `false` only for a defect you found on a surface the maker left alone.
+Reversing the two inverts the measurement.
 
 Two kind names carry consequences the shell applies for you:
 - The five automation-prohibited areas have kind ids — `ddl-safety`, `money-path-change`, `authz-policy-change`, `mass-dispatch`, `destructive-data-op`. Naming the kind is enough; the table forces human review even without `force_await` or weights.
