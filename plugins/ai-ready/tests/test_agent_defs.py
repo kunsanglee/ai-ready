@@ -152,5 +152,57 @@ class TestCheckerOutputContractProse(unittest.TestCase):
                     "렌즈가 항상 필드를 달아 안 잰 축이 측정된 것으로 집계된다")
 
 
+class TestCommentKindsStayNonBlocking(unittest.TestCase):
+    """주석 부류 종류가 통과를 막지 않는 등급에 머무는지 본다."""
+
+    # KINDS 표에서 한 행을 꺼낸다. 표 밖의 산문이 같은 낱말을 써도 걸리지 않게 행 형태로 찾는다.
+    @staticmethod
+    def _kind_row(kind_id):
+        text = (ENGINE / "rubric.base.md").read_text(encoding="utf-8")
+        block = re.search(
+            r"LOOP_RUBRIC:KINDS:BEGIN(.*?)LOOP_RUBRIC:KINDS:END", text, re.S)
+        assert block, "KINDS 블록 자체가 없다"
+        for line in block.group(1).splitlines():
+            cells = [c.strip() for c in line.split("|")]
+            if len(cells) > 4 and cells[1] == kind_id:
+                return cells
+        return None
+
+    def test_comment_kinds_are_minor(self):
+        """주석 부류는 MINOR 여야 한다 — 아니면 문구 하나가 회차를 더 쓰게 만든다.
+
+        종료 판정이 "MINOR 만이면 Pass" 라, MAJOR 이상이면 주석 문구를 고치라고 되돌려
+        보낸다. 표에 없는 종류는 dimension floor 로 채점되는데 convention 만 MINOR 이고
+        simplicity·intent 는 MAJOR 라, 행이 빠지면 등급이 checker 의 태깅에 달린다.
+        그래서 존재와 등급을 함께 본다 — 행을 지우면 이 검사가 실패한다.
+        """
+        for kind_id in ("comment-noise", "comment-rot"):
+            with self.subTest(kind=kind_id):
+                row = self._kind_row(kind_id)
+                self.assertIsNotNone(
+                    row, f"KINDS 표에 {kind_id} 행이 없다 — 등급이 dimension floor 로 갈린다")
+                self.assertEqual(
+                    row[4], "MINOR",
+                    f"{kind_id} 가 MINOR 가 아니다 — 주석 문구가 통과를 막는다")
+                self.assertEqual(
+                    row[5], "no",
+                    f"{kind_id} 가 사람을 부른다(force_await) — 주석 문구로 멈출 자리가 아니다")
+
+    def test_comment_rot_states_its_carve_outs(self):
+        """`comment-rot` 은 대상이 아닌 경우를 함께 적어야 한다.
+
+        예외를 안 적으면 checker 가 안 썩는 주석까지 센다. 실측에서 오탐 셋이 났고
+        전부 이 셋에 해당했다: 그 문장 안에서 세어지는 개수, 날짜 붙은 실측 기록,
+        그리고 검사가 지키고 있는 사실.
+        """
+        row = self._kind_row("comment-rot")
+        self.assertIsNotNone(row, "comment-rot 행이 없다")
+        note = row[6]
+        for phrase in ("대상이 아니다", "실측 기록", "검사가 지키고"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, note,
+                              f"comment-rot 설명에 예외 '{phrase}' 가 없다 — 오탐이 그대로 남는다")
+
+
 if __name__ == "__main__":
     unittest.main()
