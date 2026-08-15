@@ -8,6 +8,10 @@
 판정 계열(checker·spec-checker·lesson-synthesizer)이 코드를 고치지 않는다는 것은 산문 약속이
 아니라 `tools` 줄에서 Edit/Write 가 빠져 있다는 사실이다. 그 사실을 여기서 센다.
 
+checker 가 런타임에 읽는 권위 문서(`_loop-engine/rubric.base.md`)의 출력 계약 문구도 같이 본다.
+그 계약은 정의 파일과 이 문서에 나뉘어 적혀 있어서, 어느 쪽이 어디까지 적는가가 곧 계약이
+갈라지는 자리다(TestCheckerOutputContractProse).
+
 stdlib 만(PyYAML 없음) — frontmatter 는 필요한 키만 정규식으로 읽는다.
 """
 from __future__ import annotations
@@ -20,9 +24,13 @@ from pathlib import Path
 
 TREE = Path(os.environ.get("AI_READY_TREE") or Path(__file__).resolve().parents[1])
 AGENTS = TREE / "agents"
+ENGINE = TREE / "_loop-engine"
 
 # 코드를 고치지 않는 것이 존재 이유인 에이전트들. 여기 이름이 있으면 Edit/Write 를 가질 수 없다.
 READ_ONLY = {"loop-checker", "loop-spec-checker", "loop-lesson-synthesizer"}
+
+# checker 가 finding 하나에 다는 출력 필드 이름들. 앞머리에 나오면 안 되는 이름이기도 하다.
+OUTPUT_FIELDS = ("in_scope", "force_await", "weights", "evidence", "dimension", "location")
 
 _FM = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.S)
 
@@ -60,6 +68,22 @@ class TestAgentDefinitions(unittest.TestCase):
                 desc = _frontmatter(f).get("description", "")
                 # 호스트가 이 문장으로 언제 부를지 고른다 — 한 줄짜리면 사실상 안 불린다.
                 self.assertGreater(len(desc), 120, "description 이 너무 짧다")
+
+    def test_checker_description_does_not_list_output_fields(self):
+        """앞머리는 "언제 부를까" 를 고르는 문장이고, 출력 계약은 본문 한 곳에만 둔다.
+
+        1.4.0 이 finding 필드 목록을 `loop-checker.md` 본문과 앞머리 `description` 두 곳에
+        적었다. 그 다음 릴리스가 `in_scope` 를 조건부로 바꾸면서 본문만 고쳤고, 앞머리에는
+        무조건 다는 필드로 남았다. 어떤 검사도 그 어긋남을 잡지 못했다. 앞머리는 호스트가
+        이 에이전트를 부를지 고르는 데 쓰는 문장이라 출력 계약과 애초에 독자가 다르고,
+        열거를 본문 한 곳에만 두면 두 벌이 갈릴 자리 자체가 없어진다.
+        """
+        desc = _frontmatter(AGENTS / "loop-checker.md").get("description", "")
+        for field in OUTPUT_FIELDS:
+            with self.subTest(field=field):
+                self.assertNotRegex(
+                    desc, rf"\b{field}\b",
+                    f"description 이 출력 필드 {field} 를 다시 열거한다 — 본문과 두 벌이 된다")
 
     def test_read_only_agents_have_no_write_tools(self):
         """읽기 전용 계약은 산문이 아니라 tools 줄이 강제한다."""
@@ -99,6 +123,33 @@ class TestAgentDefinitions(unittest.TestCase):
         on_disk = {f.name for f in self.files}
         self.assertEqual(listed, on_disk,
                          f"등록 안 된 정의 {on_disk - listed} / 파일 없는 등록 {listed - on_disk}")
+
+
+class TestCheckerOutputContractProse(unittest.TestCase):
+    """checker 가 런타임에 읽는 권위 문서가 출력 계약을 어떻게 적는지 본다."""
+
+    def test_rubric_states_the_condition_wherever_it_says_in_scope(self):
+        """`in_scope` 를 말하는 자리는 그것이 조건부라는 것을 함께 말해야 한다.
+
+        `rubric.base.md` 는 렌즈가 런타임에 읽는 권위 문서다. `in_scope` 는 조건부 필드로,
+        프롬프트가 `non_goals` 를 준 렌즈만 달고 못 받았으면 키를 아예 뺀다. 키를 빼는 것이
+        "이 축은 범위를 안 쟀다" 를 전하는 유일한 방법이고, 결정론 셸이 그 미표기를
+        "범위 밖" 과 따로 센다. 조건이 빠진 문장을 읽은 렌즈는 항상 필드를 달고, 그러면
+        안 잰 축이 "다 범위 안" 으로 집계돼 사람이 볼 때는 측정된 것과 구분되지 않는다.
+
+        두 방향을 다 본다. `in_scope` 문단이 하나도 없으면 조건부가 되기 전 판으로 되돌아간
+        것이고, 문단은 있는데 `non_goals` 가 없으면 조건만 빠진 것이다.
+        """
+        text = (ENGINE / "rubric.base.md").read_text(encoding="utf-8")
+        paragraphs = [p for p in re.split(r"\n\s*\n", text) if re.search(r"\bin_scope\b", p)]
+        self.assertTrue(paragraphs,
+                        "rubric 이 in_scope 를 아예 안 적는다 — 렌즈가 읽을 계약이 없다")
+        for p in paragraphs:
+            with self.subTest(paragraph=p.splitlines()[0][:60]):
+                self.assertRegex(
+                    p, r"\bnon_goals\b",
+                    "in_scope 를 적으면서 조건(non_goals)을 안 적는다 — "
+                    "렌즈가 항상 필드를 달아 안 잰 축이 측정된 것으로 집계된다")
 
 
 if __name__ == "__main__":

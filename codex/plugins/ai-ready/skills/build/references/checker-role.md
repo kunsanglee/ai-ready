@@ -29,7 +29,7 @@ Absolute rules:
 
 Input the orchestrator gives you: the original task summary, the compare base (git ref), the findings output path, any convention docs, and **the surfaces this phase is not looking at** (`non_goals` — either a list of surface names, or "none" when the phase did not narrow).
 
-Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`, plus `"in_scope": true|false` **only when the prompt gave you `non_goals`** — leaving the key out is how you say "not measured", and the shell counts that separately from "out of scope". Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
+Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`, plus `"in_scope": true|false` **only when the prompt gave you `non_goals`** (see the `in_scope` section below). Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
 
 `reviewed` is the list of changed files you actually read. Always fill it. If clean, use `"findings": []` — an empty array is a valid signal — but **`reviewed` must not also be empty**: the scoring shell rejects that pair with exit 65, because "clean" and "never looked" are otherwise indistinguishable. The usual real cause is a mis-resolved compare base leaving an empty diff, which would pass a phase without review. If the diff really is empty, report that instead of emitting an empty result.
 
