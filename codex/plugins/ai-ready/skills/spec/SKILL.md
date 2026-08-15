@@ -24,7 +24,9 @@ Two files under `.loop/spec/<slug>/`:
 - `decisions.json` — the ledger. Each entry is `{id, lens, subject, question, what_diverges, disposition, evidence?, answer?, note?}`. `disposition` is one of `open`, `resolved-from-code`, `default`, `asked`, `deferred`.
 - `spec.md` — the document `build` will consume. Sections: goal, non-goals, decisions (with evidence), exit criteria, failure floor, open questions.
 
-The exit criteria section becomes `exit_criteria` in the decomposition, the non-goals section becomes that phase's `non_goals`, and the open questions feed the `irreversible` and `tiebreaks` judgements. Writing those sections loosely means `build`'s pre-flight check stops you there instead. The non-goals section had nowhere to land in `build` for a long time; 1.4.0 added `non_goals` and connected it.
+The exit criteria section becomes `exit_criteria` in the decomposition, the non-goals section feeds `non_goals`, and the open questions feed the `irreversible` and `tiebreaks` judgements. Writing those sections loosely means `build`'s pre-flight check stops you there instead. The non-goals section had nowhere to land in `build` for a long time; 1.4.0 added `non_goals` and connected it.
+
+The grain differs, though: these sections are one per document, and `build`'s fields are one per phase. So they get split on the way over. This document's non-goals are what **the whole job** will not build, so they go into every phase's `non_goals`; on top of that each phase adds the surfaces **only it** is not looking at, which a later phase will. That last part is not in this document — it is settled when the work is decomposed. Copying the section verbatim into every phase produces no per-phase narrowing at all, which leaves `non_goals` decorative. `exit_criteria` splits the same way.
 
 ## Procedure
 
