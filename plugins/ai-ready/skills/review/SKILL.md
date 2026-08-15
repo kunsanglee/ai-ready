@@ -127,7 +127,7 @@ rm -f "$F"   # 채점이 성공한 뒤에만 지운다
 ```
 
 - `$SCORED` = `{base, reviewed, findings:[{..., severity, await, base, kind_known}]}`.
-- `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, await}`.
+- `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, out_of_scope, await}`. `out_of_scope` 는 `/build` 의 phase 범위 계측이라 여기서는 안 쓴다 — `/review` 는 phase 가 없어 `non_goals` 를 안 넘기고, 그러면 렌즈가 `in_scope` 를 생략해 전부 `unmarked` 로 잡힌다. 등급에는 영향이 없다.
 - 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
 
 verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 처리), `RETRY`(CRITICAL≥1 — 무인 loop 면 maker 를 다시 스핀할 감), `RETRY_SOFT`(MAJOR≥1 — 정체 시 사람 승인으로 통과 가능), `PASS`(MINOR 만/깨끗).
