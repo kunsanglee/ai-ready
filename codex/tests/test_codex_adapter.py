@@ -56,6 +56,12 @@ class CodexAdapterTests(unittest.TestCase):
         for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
             self.assertIn("reviewed", text,
                           f"{name} 가 checker 출력의 reviewed 를 안 적는다 — 계약이 갈라진다")
+        # 출력 필드가 늘면 두 곳이 함께 늘어야 한다. `in_scope` 는 1.4.0 이 더한 것인데, 이
+        # 시험이 `reviewed` 만 보고 있어 한쪽만 적힌 상태가 통과했다. 위 독스트링이 드는
+        # 0.9.7 사고와 같은 종류라 같은 자리에서 잠근다.
+        for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
+            self.assertIn("in_scope", text,
+                          f"{name} 가 checker 출력의 in_scope 를 안 적는다 — 계약이 갈라진다")
         # 옛 스키마가 남아 있으면 그걸 따라 짠 checker 가 채점에서 exit 65 로 거부된다.
         for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
             self.assertNotIn('{"base", "findings"', text,
@@ -83,16 +89,20 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertRegex(role, r"Do not put severity|overall judgement",
                          "역할 계약이 총평 금지를 안 적는다 — 등급을 매기면 경고 층이 게이트로 읽힌다")
 
-    def test_build_start_gate_requires_the_three_fields(self):
+    def test_build_start_gate_requires_the_spec_fields(self):
         """codex 트리에는 결정론 게이트가 없어 이 산문이 계약의 전부다.
 
-        Claude 트리는 jq 두 자리가 강제하지만 codex 스킬 본문에는 셸 블록이 없다. 세 자리
+        Claude 트리는 jq 두 자리가 강제하지만 codex 스킬 본문에는 셸 블록이 없다. 자리
         이름이 문서에서 빠지면 그 호스트에서는 아무것도 요구하지 않는 상태가 된다.
         1.0.0 에서 이 게이트를 안 지나던 단일 변경 경로가 `build` 로 흡수돼, 이제 이 스킬
         하나가 유일한 착수 경로다 — 여기서 빠지면 우회로가 아니라 게이트 자체가 없어진다.
+
+        **자리가 늘면 이 목록도 늘어야 한다.** 1.4.0 이 `non_goals` 를 더했을 때 이 목록이
+        안 따라와, codex 트리의 그 이름을 전부 딴 것으로 바꿔도 시험이 통과했다. claude 쪽은
+        jq 두 자리와 python 여덟 건이 잠그는데 이쪽만 비어 있었다.
         """
         skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
-        for field in ("exit_criteria", "irreversible", "tiebreaks"):
+        for field in ("exit_criteria", "irreversible", "tiebreaks", "non_goals"):
             self.assertIn(field, skill, f"start gate 가 {field} 를 안 요구한다")
 
     def test_checker_lens_split_is_stated_in_both_places(self):

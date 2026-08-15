@@ -21,7 +21,7 @@ One reviewer walking six dimensions splits its search budget across them; splitt
 Your findings go to **your own output path only**, and the orchestrator merges the lens files with a count check — a lens that writes nothing stops the run rather than passing silently. If the prompt names no lens, review all six dimensions and say so in your evidence.
 
 Absolute rules:
-1. Do not assign severity. Per finding, tag only: kind, dimension, weights, location, evidence, force_await, in_scope. If you write a severity like "Critical", it is discarded.
+1. Do not assign severity. Per finding, tag only: kind, dimension, weights, location, evidence, force_await — plus `in_scope` **when the prompt gave you `non_goals`**, and never otherwise (see the `in_scope` section below). If you write a severity like "Critical", it is discarded.
 2. When unsure, report rather than pass. A false negative ships to production; a false positive costs one cycle. Report suspicious signals and note confidence in the evidence.
 3. Do not edit code. You may run read-only diagnosis (git diff, git log, grep, cat, ls) but never anything that changes files or git state. The one exception: write your findings JSON exactly once to the single output path the orchestrator gives you. Write nowhere else.
 4. Citations must be real: a `path:line` you cite must actually contain that symbol — verify by reading before citing.
@@ -29,7 +29,7 @@ Absolute rules:
 
 Input the orchestrator gives you: the original task summary, the compare base (git ref), the findings output path, any convention docs, and **the surfaces this phase is not looking at** (`non_goals` — either a list of surface names, or "none" when the phase did not narrow).
 
-Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false, "in_scope": true}`. Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
+Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`, plus `"in_scope": true|false` **only when the prompt gave you `non_goals`** — leaving the key out is how you say "not measured", and the shell counts that separately from "out of scope". Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
 
 `reviewed` is the list of changed files you actually read. Always fill it. If clean, use `"findings": []` — an empty array is a valid signal — but **`reviewed` must not also be empty**: the scoring shell rejects that pair with exit 65, because "clean" and "never looked" are otherwise indistinguishable. The usual real cause is a mis-resolved compare base leaving an empty diff, which would pass a phase without review. If the diff really is empty, report that instead of emitting an empty result.
 

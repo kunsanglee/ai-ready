@@ -200,20 +200,6 @@ PHASES_2 = {
 }
 
 
-def with_non_goals(data: dict) -> dict:
-    """`non_goals` 를 안 적은 판에 기본값(`false`)을 채운다.
-
-    이 자리가 필수가 되면서, **다른** 자리를 겨눈 위반 사례가 전부 `non_goals` 도 함께
-    지목받게 됐다 — 그러면 그 사례가 겨눈 자리를 실제로 잡는지 이 시험이 못 가린다.
-    `non_goals` 자체를 겨눈 사례만 직접 적고 나머지는 여기서 채운다.
-    """
-    out = json.loads(json.dumps(data))
-    if isinstance(out.get("phases"), list):
-        for p in out["phases"]:
-            if isinstance(p, dict):
-                p.setdefault("non_goals", False)
-    return out
-
 _MODULE_TMP: Path | None = None
 _TEMPLATE: Path | None = None
 
@@ -698,74 +684,63 @@ class TestSpecGate(BlockCase):
     """
 
     # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합).
-    # 여기 판들은 `non_goals` 를 안 적었다 — 아래에서 `with_non_goals` 로 채운다. 안 채우면
-    # 전부가 `non_goals` 도 함께 지목받아, 각 판이 겨눈 자리를 실제로 잡는지 가려지지 않는다.
-    _OTHER_FIELD_VIOLATIONS = {
+    # **한 자리를 겨눈 판은 나머지 자리를 다 채워 둔다.** 안 채우면 그 판이 겨냥하지 않은 이름까지
+    # 함께 불려, 겨눈 자리를 실제로 잡는지 가려지지 않는다. 자리가 늘 때마다 여기 리터럴에 한 줄씩
+    # 더한다 — 채우는 함수를 따로 두면 호출자가 하나뿐인 우회가 된다.
+    VIOLATIONS = {
         "exit_criteria 키 없음": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "irreversible": False,
+                         "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"exit_criteria"}),
         "exit_criteria 빈 배열": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": [],
-                         "irreversible": False,
+                         "irreversible": False, "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"exit_criteria"}),
         "exit_criteria 빈 문자열 항목": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": [""],
-                         "irreversible": False,
+                         "irreversible": False, "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"exit_criteria"}),
         "phase 하나만 exit_criteria 누락": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": ["x 를 지우면 빨개진다"],
-                         "irreversible": False, "steps": [{"ac_cmd": "x", "status": "pending"}]},
+                         "irreversible": False, "non_goals": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]},
                         {"name": "b", "status": "pending", "irreversible": False,
+                         "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"exit_criteria"}),
         "irreversible 키 없음": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"irreversible"}),
         "irreversible 빈 문자열": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
-                         "irreversible": "",
+                         "irreversible": "", "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"irreversible"}),
         "tiebreaks 키 없음": (
             {"phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
-                         "irreversible": False,
+                         "irreversible": False, "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"tiebreaks"}),
         "tiebreaks 빈 배열": (
             {"tiebreaks": [],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
-                         "irreversible": False,
+                         "irreversible": False, "non_goals": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"tiebreaks"}),
-        # 값은 있는데 정보가 없는 판. 두 게이트가 같은 판정을 해야 한다(순회 입구 쪽은
-        # TestLoopBuildSetup.SPEC_FIELD_VIOLATIONS 의 같은 이름 두 건).
-        "irreversible 이 true": (
-            {"tiebreaks": ["t"],
-             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
-                         "irreversible": True,
-                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
-            {"irreversible"}),
-        "공백문자만": (
-            {"tiebreaks": ["  "],
-             "phases": [{"name": "a", "status": "pending", "exit_criteria": [" "],
-                         "irreversible": "   ", "non_goals": ["  "],
-                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
-            {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
-    }
-
-    # `non_goals` 를 겨눈 판만 직접 적는다. `irreversible` 과 같은 형태(`false` 또는 비지 않은
-    # 값)라 판정도 같아야 하고, 다르면 사람이 두 자리에 다른 규칙을 외워야 한다.
-    _NON_GOALS_VIOLATIONS = {
+        # `non_goals` 는 `irreversible` 과 같은 형태(`false` 또는 비지 않은 값)라 판정도 같아야
+        # 한다. 다르면 사람이 두 자리에 다른 규칙을 외워야 한다. 네 판이 새 jq 의 서로 다른
+        # 분기에 대응한다 — 존재·불리언 true 거부·배열 길이·`all(.phases[];...)` 한정자.
         "non_goals 키 없음": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
@@ -793,12 +768,21 @@ class TestSpecGate(BlockCase):
                          "irreversible": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"non_goals"}),
-    }
-
-    VIOLATIONS = {
-        **{k: (with_non_goals(d), e) for k, (d, e) in _OTHER_FIELD_VIOLATIONS.items()},
-        **_NON_GOALS_VIOLATIONS,
-        # 옛 형식은 어느 자리도 안 채운 판이라 네 이름이 전부 불려야 한다. 위 채움을 안 거친다.
+        # 값은 있는데 정보가 없는 판. 두 게이트가 같은 판정을 해야 한다(순회 입구 쪽은
+        # TestLoopBuildSetup.SPEC_FIELD_VIOLATIONS 의 같은 이름 두 건).
+        "irreversible 이 true": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": True, "non_goals": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"irreversible"}),
+        "공백문자만": (
+            {"tiebreaks": ["  "],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": [" "],
+                         "irreversible": "   ", "non_goals": ["  "],
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
+        # 옛 형식은 어느 자리도 안 채운 판이라 네 이름이 전부 불려야 한다.
         "필수 자리 다 없음(0.9.11 형식)": (
             PHASES_2_LEGACY,
             {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
@@ -1063,6 +1047,12 @@ class TestCheckerAndScoring(BlockCase):
         self.assertIn("checker 렌즈: contract safety quality", r.out, repr(r))
         self.assertIn("checker 공통 값: base=origin/main", r.out)
         self.assertIn("docs/CONVENTIONS.md", r.out, "컨벤션 문서 값이 창에 안 나왔다")
+        # `non_goals` 도 같은 성질이다. 창에 안 나오면 오케스트레이터가 렌즈 프롬프트에 넣을
+        # 값이 없고, 렌즈는 계약대로 `in_scope` 를 생략해 계측이 전부 미표시가 된다. 그러면
+        # 착수 전 검사만 통과한 채 이 기능이 한 번도 안 도는 상태가 초록으로 남는다 —
+        # 실제로 이 줄이 없을 때 그 echo 를 지워도 188건이 전부 통과했다.
+        self.assertIn("이번 phase 의 non_goals: 수신 층 / 성능 튜닝", r.out,
+                      "phase 의 non_goals 값이 창에 안 나왔다 — 프롬프트에 넣을 것이 없다")
         for lens in self.LENSES:
             self.assertIn(str(self.lens_path(lens)), r.out,
                           f"{lens} 렌즈 출력 경로가 창에 안 나왔다 — 프롬프트에 넣을 값이 없다")
@@ -1094,6 +1084,12 @@ class TestCheckerAndScoring(BlockCase):
         r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("사이클 1 → verdict=AWAIT_USER", r.out, repr(r))
+        # 범위 계측이 사람 눈에 닿는 유일한 자리다. 이 줄이 없으면 `decide.sh` 가 세기만 하고
+        # 아무도 안 읽는다. 픽스처 렌즈 출력에는 `in_scope` 가 없으므로 전부 미표시로 잡히고,
+        # 그 상태가 "범위 밖이 없다" 가 아니라 "안 쟀다" 로 읽혀야 한다.
+        self.assertIn("범위 밖(계측, 판정 무관)", r.out, "범위 계측 줄이 창에 안 나왔다")
+        self.assertRegex(r.out, r"미표시=[1-9]",
+                         "표시 없는 finding 이 미표시로 안 잡혔다 — 0 이면 쟀다는 뜻이 된다")
         hist = (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()
         self.assertEqual(len(hist), 1)
         self.assertEqual(json.loads(hist[0])["iteration"], 1)

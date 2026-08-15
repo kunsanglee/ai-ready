@@ -333,7 +333,10 @@ jq -e 'all(.phases[]; (.non_goals | type) as $t
         | ($t=="boolean" and .non_goals==false)
           or ($t=="array" and (.non_goals|length)>0 and all(.non_goals[]; type=="string" and test("\\S"))))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING non_goals"
-[ -z "$MISSING" ] || { echo "build: phases.json 에 착수 전 스펙 검사 자리가 없다 —$MISSING 없음/빈값. Step 1 로 돌아가 채운 뒤 재개한다(우회 경로 없음)." >&2; exit 65; }
+# 여기 걸리는 흔한 경우는 **옛 버전이 만든 진행 중 분해**다(자리가 늘면 그 전에 만든 파일이 전부
+# 걸린다). 그때 Step 1 로 되돌리면 안 된다 — Step 1 은 분해를 새로 쓰는 단계라 `status=done` 이
+# 날아가고 끝난 phase 를 다시 개발한다. 이 자리에서 할 일은 그 칸을 채우는 것뿐이다.
+[ -z "$MISSING" ] || { echo "build: phases.json 에 착수 전 스펙 검사 자리가 없다 —$MISSING 없음/빈값. 그 자리만 채우고 재개한다 — 분해를 새로 쓰지 않는다(done 진행도가 날아간다). 우회 경로 없음." >&2; exit 65; }
 
 # (1b) 순회가 소비하는 자리 검증 — score.sh 의 변질 입력 exit 65 거부와 같은 결.
 #      .phases 비배열/빈배열, phase 의 name·steps 누락, step 의 ac_cmd 누락(AC 없으면 step 이 아님),
@@ -488,8 +491,13 @@ echo "checker 렌즈: $LENSES"
 echo "checker 공통 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[${LOOP_RUBRIC_LOCAL:-없음}]"
 # 이번 phase 가 안 볼 표면. `false` 면 안 좁힌 것이라 렌즈는 모든 finding 을 범위 안으로 표시한다.
 # 값을 창에 내야 프롬프트에 그대로 옮길 수 있다 — 변수 대입만으론 오케스트레이터가 값을 모른다.
-echo "이번 phase 의 non_goals: $(jq -r --arg p "$PHASE" '.phases[] | select(.name==$p) | .non_goals
-       | if type=="array" then join(" / ") else "없음(표면을 안 좁힘 — 전부 범위 안)" end' "$PHASES")"
+# **못 찾은 경우를 빈 값으로 두지 않는다.** `select` 가 아무것도 안 고르면 조건식에 닿기 전에 빈
+# 출력으로 끝나, 창에는 라벨만 남고 그것이 "안 좁힘" 인지 "phase 이름이 틀림" 인지 갈리지 않는다.
+echo "이번 phase 의 non_goals: $(jq -r --arg p "$PHASE" '
+  [.phases[] | select(.name==$p) | .non_goals] as $ng
+  | if   ($ng | length) == 0        then "!! phases.json 에서 phase \($p) 를 못 찾음 — PHASE 값 확인"
+    elif ($ng[0] | type) == "array" then ($ng[0] | join(" / "))
+    else "없음(표면을 안 좁힘 — 전부 범위 안)" end' "$PHASES")"
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 ```
 
@@ -523,7 +531,7 @@ SCORED=$(bash "$ENG/score.sh" "$F") || {
   echo "build: 채점이 입력을 거부했다(exit 65) — checker 출력 계약 위반. 흔한 원인은 깨끗한 결과에 reviewed 를 안 채운 것. 멈춰 사람 호출" >&2
   exit 65
 }                                                                # finding 마다 severity·await 부여
-VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, counts, await}
+VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, counts, out_of_scope, await}
 STALL=$(printf '%s' "$VERDICT"  | bash "$ENG/stall.sh" --state "$STATE")   # 정체 판정 + 상태 영속
 ITER=$(( $(wc -l < "$HIST" 2>/dev/null | tr -d ' ') + 1 ))
 jq -nc --argjson it "$ITER" \

@@ -98,7 +98,7 @@ Repeat until PASS, brake, or AWAIT_USER:
    - `PASS`: this phase is done. Record it and move on.
    - `RETRY` or `RETRY_SOFT`: **spawn a new maker** per cycle step 1, with the scored findings file as its one input, then return to the gate. Never resume the maker that just ran — that is the accumulation invariant 1 exists to prevent. A `simplicity` finding lands here often; if the loop stalls on one, offer the human the option of passing with that MAJOR on the record.
    - `AWAIT_USER`: stop and hand to a human — do not continue.
-7. **Brake.** Stop and report if scored cycles plus gate failures reach the allowed iterations (default 5, hard ceiling 10) or the elapsed budget is exhausted. Never loop unbounded.
+7. **Brake.** Stop and report if scored cycles plus gate failures reach the allowed iterations (default 5, hard ceiling 10) or the elapsed budget is exhausted. Never loop unbounded. **Hand the cycle's `out_of_scope` counts up with the report** — whether the exit criteria held and whether the remaining findings are inside what the phase set out to do are the two halves of the same call, and this is the moment a human makes it. One condition on reading them: when `unmarked` equals the total finding count, the lenses tagged nothing, so those numbers are not evidence — that is "never measured", not "nothing out of scope".
 
 ## Design drift is a human gate
 
