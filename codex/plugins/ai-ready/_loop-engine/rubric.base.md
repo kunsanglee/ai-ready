@@ -176,7 +176,7 @@ floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외�
 > **simplicity 가 MAJOR 인 이유는 두 실패를 동시에 피하려는 것이다.** MINOR 로 두면 잡아도 PASS 를 막지 않아
 > 과잉 설계가 기록만 되고 그대로 남는다 — 무인 루프가 수렴시킨 코드가 단순성 검사를 사실상 안 받는 셈이다.
 > CRITICAL 로 두면 반대로 "더 단순한 형태가 있다" 는 판단이 갈리는 지적이 PASS 를 완전히 막아, 루프가 취향
-> 논쟁으로 회차를 태운다. MAJOR 는 `RETRY_SOFT` 를 내서 고치려 시도하되 정체하면 사람이 그 등급을 안고
+> 논쟁으로 회차를 더 쓴다. MAJOR 는 `RETRY_SOFT` 를 내서 고치려 시도하되 정체하면 사람이 그 등급을 안고
 > 통과시킬 수 있는 자리다. 이 차원은 "더 적은 코드로 같은 일이 되는가" 만 보고, 등가 대안을 제시할 수 없는
 > 지적은 checker 본문이 금지한다.
 
@@ -213,11 +213,11 @@ floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외�
 |---|---|---|---|---|---|
 | intent-nongoal-violation | intent | agent | BLOCKER | no | 문서가 금지한 동작 수행. intent floor(MAJOR) 위로 |
 | intent-overreach | intent | agent | MINOR | no | scope 초과 구현. intent floor(MAJOR) 아래로 |
-| doc-lags-code | intent | agent | MINOR | no | 문서가 코드를 못 따라간 것(새 결정·필드·DDL 이 문서에 아직 없음, 문서가 적은 개수·목록이 낡음). intent floor(MAJOR) 아래로 — 코드는 정상이고 문서만 고치면 되는 자리라 회차를 태우지 않는다. **코드가 문서를 어기는 반대 방향(`intent-requirement-missing`·`intent-nongoal-violation`)은 등급 그대로다** |
+| doc-lags-code | intent | agent | MINOR | no | 문서가 코드를 못 따라간 것(새 결정·필드·DDL 이 문서에 아직 없음, 문서가 적은 개수·목록이 낡음). intent floor(MAJOR) 아래로 — 코드는 정상이고 문서만 고치면 되는 자리라 회차를 더 쓰지 않는다. **코드가 문서를 어기는 반대 방향(`intent-requirement-missing`·`intent-nongoal-violation`)은 등급 그대로다** |
 | n-plus-1 | runtime | agent | MAJOR | no | runtime floor(CRITICAL) 아래. hotpath 가중 시 CRITICAL |
 | test-missing | convention | agent | CRITICAL | no | 작성·수정한 코드에 대응 테스트 누락. 프로젝트 테스트 규약 기준. convention floor(MINOR) 위로 — 코드 변경분 테스트 필수 |
-| test-vacuous | convention | agent | CRITICAL | no | 테스트가 있으나 변경을 되돌려도 통과한다(아무것도 잠그지 않음). 없는 것보다 나쁘다 — 덮인 것처럼 보인다 |
-| comment-noise | simplicity | agent | MINOR | no | 코드를 그대로 다시 말하는 주석. simplicity floor(MAJOR) 아래로 — 잡되 통과를 막지 않는다(주석 문구로 회차를 태우지 않게) |
+| test-vacuous | convention | agent | CRITICAL | no | 테스트가 있으나 변경을 되돌려도 통과한다(되돌림을 아무것도 잡아내지 못한다). 없는 것보다 나쁘다 — 덮인 것처럼 보인다 |
+| comment-noise | simplicity | agent | MINOR | no | 코드를 그대로 다시 말하는 주석. simplicity floor(MAJOR) 아래로 — 잡되 통과를 막지 않는다(주석 문구로 회차를 더 쓰지 않게) |
 | comment-rot | convention | agent | MINOR | no | 주석이 **그 파일이 안 바뀌어도 틀려질 수 있는 것**을 말한다 — 다른 컴포넌트의 동작, 근거가 다른 파일에 있는 개수·주기. 그 값이 바뀔 때 이 파일은 안 열리므로 아무도 모르고, 주석만 틀려져도 컴파일·테스트는 통과한다. convention floor(MINOR) 와 같다 — `comment-noise` 와 같은 이유로 통과를 막지 않는다. **셋은 대상이 아니다**: 그 문장 안에서 다 세어지는 개수, 날짜를 붙인 실측 기록(기록은 낡아도 거짓이 아니다), 검사가 지키고 있는 사실(테스트·빌드 게이트가 확인하면 조용히 안 틀려지고 검사가 먼저 실패한다 — 프로젝트가 주석 속 경로 실재를 검사한다면 경로가 그 경우다). `comment-noise`(중복)·`doc-lags-code`(문서가 코드에 뒤처짐)와 다른 축이다: 여기는 코드 옆 주석이 **바깥 사실**을 말하는 것 |
 | ddl-safety | runtime | gate | BLOCKER | always | 자동화 금지 1 — 운영 DB DML/DDL. 비가역이라 등급 무관 사람 대기 |
 | money-path-change | runtime | agent | BLOCKER | always | 자동화 금지 2 — 돈·포인트·정산·결제 경로 |
