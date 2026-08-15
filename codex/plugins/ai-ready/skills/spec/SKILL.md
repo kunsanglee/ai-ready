@@ -24,7 +24,7 @@ Two files under `.loop/spec/<slug>/`:
 - `decisions.json` — the ledger. Each entry is `{id, lens, subject, question, what_diverges, disposition, evidence?, answer?, note?}`. `disposition` is one of `open`, `resolved-from-code`, `default`, `asked`, `deferred`.
 - `spec.md` — the document `build` will consume. Sections: goal, non-goals, decisions (with evidence), exit criteria, failure floor, open questions.
 
-The exit criteria section becomes `exit_criteria` in the decomposition, and the open questions feed the `irreversible` and `tiebreaks` judgements. Writing those two sections loosely means `build`'s pre-flight check stops you there instead.
+The exit criteria section becomes `exit_criteria` in the decomposition, the non-goals section becomes that phase's `non_goals`, and the open questions feed the `irreversible` and `tiebreaks` judgements. Writing those sections loosely means `build`'s pre-flight check stops you there instead. The non-goals section had nowhere to land in `build` for a long time; 1.4.0 added `non_goals` and connected it.
 
 ## Procedure
 

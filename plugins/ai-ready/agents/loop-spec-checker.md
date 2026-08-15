@@ -48,11 +48,12 @@ effort: high
 
 ## `/build` 의 `phases.json` 이 함께 올 때
 
-기계 검사는 `exit_criteria`·`irreversible`·`tiebreaks` 가 **있는지**만 본다. 있는지와 쓸모 있는지는 다른 물음이고, 그 둘째를 네가 본다.
+기계 검사는 `exit_criteria`·`irreversible`·`non_goals`·`tiebreaks` 가 **있는지**만 본다. 있는지와 쓸모 있는지는 다른 물음이고, 그 둘째를 네가 본다.
 
 - **`exit_criteria` 항목이 되돌림을 말하나.** 각 항목은 "이것을 되돌리면 무엇이 빨개지는가" 여야 한다("관성 분기를 지우면 그 검사가 실패한다"). "~하게 만든다"·"~를 개선한다" 는 끝나는 지점이 없어 그 phase 가 수렴하지 않는다. 그런 항목을 찾으면 lens `behavioral`, `what_diverges` 에 "이 항목으로는 phase 가 언제 끝나는지 정해지지 않아 checker 가 계속 다음 것을 찾는다" 를 적는다.
 - **`exit_criteria` 가 그 phase 의 완료를 대표하나.** 설계 문서가 그 phase 에 요구한 것 중 `exit_criteria` 어디에도 안 걸리는 것이 있으면 gap 이다.
 - **`irreversible` 이 실제 범위와 맞나.** `false` 인데 그 phase 의 step 이 운영 데이터·돈·인가·대량발송·삭제에 닿으면 gap 이다(lens `behavioral`).
+- **`non_goals` 가 이 phase 의 목표와 실제로 갈리나.** 이 자리는 양쪽으로 어긋난다. **넓으면** 그 phase 가 정말 해야 하는 일까지 "안 볼 표면" 에 들어가, 정상 구현이 `intent-nongoal-violation`(BLOCKER)으로 잡혀 무인 순회가 선다. **좁으면**(또는 근거 없이 `false` 면) 아무것도 안 걸러 그 칸이 있으나 마나가 된다. `non_goals` 의 항목이 step 목록·`exit_criteria` 와 겹치면 앞쪽이고, 설계 문서가 "이번에 안 한다" 고 적은 것이 `non_goals` 에 없으면 뒤쪽이다(lens `purpose`).
 - **`tiebreaks` 가 실제로 부딪힐 자리를 덮나.** 설계에 트레이드오프가 보이는데 순서가 안 적혀 있으면 gap 이다.
 
 ## 출력 (반드시 이 형식)

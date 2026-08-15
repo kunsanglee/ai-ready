@@ -166,9 +166,9 @@ dependencies {
 
 MAIN_KT = "fun main() { println(\"scratch\") }\n"
 
-# 세 자리가 없는 옛 형식. 0.9.11 까지는 이것으로 순회가 돌았다(위임만 못 했다). 0.9.12 부터
-# tiebreaks·exit_criteria·irreversible 이 필수라 **이 판은 어느 자리에서도 통과하면 안 된다** —
-# 그 전환을 잠그는 것이 아래 TestSpecGate 의 회귀 대상이다.
+# 필수 자리가 없는 옛 형식. 0.9.11 까지는 이것으로 순회가 돌았다(위임만 못 했다). 0.9.12 부터
+# tiebreaks·exit_criteria·irreversible 이, 1.4.0 부터 non_goals 가 필수라 **이 판은 어느
+# 자리에서도 통과하면 안 된다** — 그 전환을 잠그는 것이 아래 TestSpecGate 의 회귀 대상이다.
 PHASES_2_LEGACY = {
     "phases": [
         {"name": "foundation", "status": "pending", "design_ref": "docs/design.md §C5",
@@ -182,19 +182,37 @@ PHASES_2_LEGACY = {
     ]
 }
 
-# 기본 픽스처 — 세 자리를 갖춘 현행 형식. 착수 전 검사와 순회 입력 검증이 **둘 다** 이 셋을
+# 기본 픽스처 — 필수 자리를 갖춘 현행 형식. 착수 전 검사와 순회 입력 검증이 **둘 다** 이것들을
 # 요구하므로, 다른 시험(예산·phase 스코프·done 갱신)이 쓰는 기본판도 이것이어야 한다.
+# 두 phase 가 `non_goals` 의 두 형태를 각각 든다 — 표면을 좁힌 쪽과 안 좁힌 쪽(`false`).
 PHASES_2 = {
     "tiebreaks": ["잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다"],
     "phases": [
         {**PHASES_2_LEGACY["phases"][0],
          "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다"],
-         "irreversible": False},
+         "irreversible": False,
+         "non_goals": ["수신 층", "성능 튜닝"]},
         {**PHASES_2_LEGACY["phases"][1],
          "exit_criteria": ["결선을 끊으면 통합 시험이 빨개진다"],
-         "irreversible": "운영 DB 마이그레이션"},
+         "irreversible": "운영 DB 마이그레이션",
+         "non_goals": False},
     ],
 }
+
+
+def with_non_goals(data: dict) -> dict:
+    """`non_goals` 를 안 적은 판에 기본값(`false`)을 채운다.
+
+    이 자리가 필수가 되면서, **다른** 자리를 겨눈 위반 사례가 전부 `non_goals` 도 함께
+    지목받게 됐다 — 그러면 그 사례가 겨눈 자리를 실제로 잡는지 이 시험이 못 가린다.
+    `non_goals` 자체를 겨눈 사례만 직접 적고 나머지는 여기서 채운다.
+    """
+    out = json.loads(json.dumps(data))
+    if isinstance(out.get("phases"), list):
+        for p in out["phases"]:
+            if isinstance(p, dict):
+                p.setdefault("non_goals", False)
+    return out
 
 _MODULE_TMP: Path | None = None
 _TEMPLATE: Path | None = None
@@ -551,10 +569,10 @@ class TestLoopBuildSetup(BlockCase):
 
     @staticmethod
     def with_spec_fields(data: dict) -> dict:
-        """위반 사례에 착수 전 검사 셋을 채워 넣는다.
+        """위반 사례에 착수 전 검사가 요구하는 자리를 채워 넣는다.
 
-        순회 검증이 0.9.12 부터 세 자리도 요구하므로, 채우지 않으면 모든 사례가 "세 자리가
-        없어서" 죽는다 — 그러면 name 누락·status 오타를 실제로 잡는지 이 시험이 못 가린다.
+        순회 검증이 0.9.12 부터 그 자리들을 함께 요구하므로, 채우지 않으면 모든 사례가 "그
+        자리가 없어서" 죽는다 — 그러면 name 누락·status 오타를 실제로 잡는지 이 시험이 못 가린다.
         """
         out = json.loads(json.dumps(data))
         out.setdefault("tiebreaks", ["잠그는 것이 먼저다"])
@@ -563,6 +581,7 @@ class TestLoopBuildSetup(BlockCase):
                 if isinstance(p, dict):
                     p.setdefault("exit_criteria", ["되돌리면 그 검사가 실패한다"])
                     p.setdefault("irreversible", False)
+                    p.setdefault("non_goals", False)
         return out
 
     def test_schema_violations_stop_the_run(self):
@@ -589,14 +608,24 @@ class TestLoopBuildSetup(BlockCase):
                 self.setup_phases(self.with_spec_fields(data))
                 r = self.run_block("b-budget")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 통과시켰다\n{r}")
-                self.assertIn("착수 전 스펙 검사 셋이 없다", r.err, repr(r))
+                self.assertIn("착수 전 스펙 검사 자리가 없다", r.err, repr(r))
                 self.assertIn("exit_criteria", r.err, "무엇이 빠졌는지 이름으로 안 나온다")
 
-    # 착수 전 검사 셋이 빠지거나 정보가 없는 판 — 0.9.11 까지는 순회가 이걸 그대로 받았다.
+    # 착수 전 검사가 요구하는 자리가 빠지거나 정보가 없는 판 — 0.9.11 까지는 순회가 이걸 그대로 받았다.
     # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)
     SPEC_FIELD_VIOLATIONS = {
-        "셋 다 없음(0.9.11 형식)": (
-            PHASES_2_LEGACY, {"exit_criteria", "irreversible", "tiebreaks"}),
+        "필수 자리 다 없음(0.9.11 형식)": (
+            PHASES_2_LEGACY,
+            {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
+        "non_goals 만 없음": (
+            {"tiebreaks": PHASES_2["tiebreaks"],
+             "phases": [{k: v for k, v in p.items() if k != "non_goals"}
+                        for p in PHASES_2["phases"]]}, {"non_goals"}),
+        # `true` 는 "좁히는데 어딘지 안 적음" 이다 — irreversible 과 같은 판정.
+        "non_goals 가 true": (
+            {"tiebreaks": PHASES_2["tiebreaks"],
+             "phases": [{**p, "non_goals": True} for p in PHASES_2["phases"]]},
+            {"non_goals"}),
         "tiebreaks 만 없음": (
             {k: v for k, v in PHASES_2.items() if k != "tiebreaks"}, {"tiebreaks"}),
         "exit_criteria 만 없음": (
@@ -614,18 +643,19 @@ class TestLoopBuildSetup(BlockCase):
              "phases": [{**p, "irreversible": True} for p in PHASES_2["phases"]]},
             {"irreversible"}),
         # 공백만 든 문자열. length 는 문자 수라 이것을 통과시킨다 — 판정은 test("\\S") 여야 한다.
-        "세 자리가 공백문자뿐": (
+        "값이 공백문자뿐": (
             {"tiebreaks": ["   "],
-             "phases": [{**p, "exit_criteria": ["  "], "irreversible": " "}
+             "phases": [{**p, "exit_criteria": ["  "], "irreversible": " ",
+                         "non_goals": ["  "]}
                         for p in PHASES_2["phases"]]},
-            {"exit_criteria", "irreversible", "tiebreaks"}),
+            {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
     }
 
     def test_missing_spec_fields_also_stop_the_run(self):
-        """순회 입구에도 세 자리가 걸린다 — 재개로 들어오는 경로에 우회로를 남기지 않는다.
+        """순회 입구에도 같은 자리들이 걸린다 — 재개로 들어오는 경로에 우회로를 남기지 않는다.
 
         Step 1 의 검사는 사람 승인 앞에서 한 번 돌지만 재개는 Step 2 로 바로 들어온다. 여기가
-        비어 있으면 세 자리 없는 phases.json 이 재개 한 번으로 무인 순회에 올라탄다.
+        비어 있으면 그 자리들 없는 phases.json 이 재개 한 번으로 무인 순회에 올라탄다.
 
         **이름을 지목하는지도 함께 본다.** 이 자리에 오는 파일은 정의상 Step 1 을 안 거친 것이라
         (0.9.11 때 만들어져 진행 중이던 것, 또는 손편집), "스키마 위반" 한 줄만 받으면 사람이
@@ -637,7 +667,7 @@ class TestLoopBuildSetup(BlockCase):
                 self.setup_phases(data)
                 r = self.run_block("b-budget")
                 self.assertEqual(r.rc, 65, f"[{label}] 를 순회에 태웠다\n{r}")
-                self.assertIn("착수 전 스펙 검사 셋이 없다", r.err, repr(r))
+                self.assertIn("착수 전 스펙 검사 자리가 없다", r.err, repr(r))
                 named = {f for f in TestSpecGate.FIELDS if f in r.err}
                 self.assertEqual(named, expected,
                                  f"[{label}] 지목한 자리가 다르다 — 사람이 무엇을 채울지 못 읽는다\n{r}")
@@ -659,7 +689,7 @@ class TestSpecGate(BlockCase):
 
     **0.9.12 에서 우회로를 없앴다.** 종전에는 이 검사가 위임 모드 전용이라 실패하면 직접 모드로
     돌면 그만이었다 — 검사 옆에 우회로가 있으면 그 검사는 권고다. 이제 실패는 시작 자체를 막고,
-    같은 셋을 순회 입구(`lb-budget`)도 요구한다.
+    같은 자리들을 순회 입구(`lb-budget`)도 요구한다.
 
     **여기가 잠그는 것은 착수 검사(`lb-specgate`) 쪽 두 방향뿐이다.** 순회 입구 쪽 두 방향은
     `TestLoopBuildSetup` 의 `test_missing_spec_fields_also_stop_the_run`(거부)과
@@ -667,8 +697,10 @@ class TestSpecGate(BlockCase):
     시험에서 연달아 돌리는 판을 따로 두면 같은 단언을 다시 재는 것이 된다.
     """
 
-    # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합)
-    VIOLATIONS = {
+    # 라벨 → (phases.json, 이름이 불려야 하는 자리 집합).
+    # 여기 판들은 `non_goals` 를 안 적었다 — 아래에서 `with_non_goals` 로 채운다. 안 채우면
+    # 전부가 `non_goals` 도 함께 지목받아, 각 판이 겨눈 자리를 실제로 잡는지 가려지지 않는다.
+    _OTHER_FIELD_VIOLATIONS = {
         "exit_criteria 키 없음": (
             {"tiebreaks": ["t"],
              "phases": [{"name": "a", "status": "pending", "irreversible": False,
@@ -715,9 +747,6 @@ class TestSpecGate(BlockCase):
                          "irreversible": False,
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
             {"tiebreaks"}),
-        "셋 다 없음(0.9.11 형식)": (
-            PHASES_2_LEGACY,
-            {"exit_criteria", "irreversible", "tiebreaks"}),
         # 값은 있는데 정보가 없는 판. 두 게이트가 같은 판정을 해야 한다(순회 입구 쪽은
         # TestLoopBuildSetup.SPEC_FIELD_VIOLATIONS 의 같은 이름 두 건).
         "irreversible 이 true": (
@@ -729,12 +758,53 @@ class TestSpecGate(BlockCase):
         "공백문자만": (
             {"tiebreaks": ["  "],
              "phases": [{"name": "a", "status": "pending", "exit_criteria": [" "],
-                         "irreversible": "   ",
+                         "irreversible": "   ", "non_goals": ["  "],
                          "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
-            {"exit_criteria", "irreversible", "tiebreaks"}),
+            {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
     }
 
-    FIELDS = ("exit_criteria", "irreversible", "tiebreaks")
+    # `non_goals` 를 겨눈 판만 직접 적는다. `irreversible` 과 같은 형태(`false` 또는 비지 않은
+    # 값)라 판정도 같아야 하고, 다르면 사람이 두 자리에 다른 규칙을 외워야 한다.
+    _NON_GOALS_VIOLATIONS = {
+        "non_goals 키 없음": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"non_goals"}),
+        "non_goals 가 true": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False, "non_goals": True,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"non_goals"}),
+        "non_goals 빈 배열": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False, "non_goals": [],
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"non_goals"}),
+        "phase 하나만 non_goals 누락": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False, "non_goals": ["수신 층"],
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]},
+                        {"name": "b", "status": "pending", "exit_criteria": ["빨개진다"],
+                         "irreversible": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"non_goals"}),
+    }
+
+    VIOLATIONS = {
+        **{k: (with_non_goals(d), e) for k, (d, e) in _OTHER_FIELD_VIOLATIONS.items()},
+        **_NON_GOALS_VIOLATIONS,
+        # 옛 형식은 어느 자리도 안 채운 판이라 네 이름이 전부 불려야 한다. 위 채움을 안 거친다.
+        "필수 자리 다 없음(0.9.11 형식)": (
+            PHASES_2_LEGACY,
+            {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
+    }
+
+    FIELDS = ("exit_criteria", "irreversible", "tiebreaks", "non_goals")
 
     def prepare(self, data: dict) -> None:
         self.setup_loop()
@@ -753,7 +823,7 @@ class TestSpecGate(BlockCase):
                                  f"[{label}] 지목한 자리가 다르다 — 사람이 무엇을 더 적을지 못 읽는다\n{r}")
 
     def test_complete_spec_passes(self):
-        """대조군 — 위 아홉 건이 셋의 부재로 죽은 것이지, 블록이 늘 죽는 게 아니다."""
+        """대조군 — 위 판들이 필수 자리의 부재로 죽은 것이지, 블록이 늘 죽는 게 아니다."""
         self.prepare(PHASES_2)
         r = self.run_block("b-specgate")
         self.assertEqual(r.rc, 0, repr(r))

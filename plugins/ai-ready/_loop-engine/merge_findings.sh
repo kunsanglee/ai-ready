@@ -135,10 +135,20 @@ jq -s --argjson lenses "$(printf '%s\n' "${lenses[@]}" | jq -R . | jq -s .)" '
   # 같은 (차원·종류·위치)를 두 렌즈가 냈으면 하나로 접는다. 축이 갈려 있어 드물지만, 렌즈가 자기
   # 축 밖 차원을 내면 생긴다. 접을 때 가중은 합집합, 사람 대기는 OR — 어느 방향으로도 조용히
   # 약해지지 않게 보수적으로 합친다. 차원이 다르면 접지 않는다(checker 계약이 차원별 별도 finding 이다).
+  #
+  # `in_scope` 는 세 상태를 그대로 유지한다: true(이번 phase 가 보기로 한 표면) / false(안 보기로
+  # 한 표면) / null(렌즈가 표시를 안 달았음). **`truthy` 로 접으면 안 된다** — 그러면 안 단 것이
+  # false 로 떨어져 "아무도 안 쟀다" 가 "범위 밖이다" 로 둔갑하고, 이 필드를 넣은 목적인 계측이
+  # 거짓 수치를 낸다. 접는 방향은 true 우선이다: 한 렌즈가 범위 안이라 보면 범위 안으로 남긴다.
+  # 지금 이 값은 등급을 바꾸지 않지만(집계 전용), 나중에 강등을 얹더라도 false 쪽이 내리는
+  # 방향이라 true 우선이 보수적이다.
   | ($all | group_by([.dimension // "", .kind // "", .location // ""])
           | map(.[0] + {
               weights: ([ .[] | (.weights | norm) ] | add // [] | unique),
               force_await: ([ .[] | .force_await | truthy ] | any),
+              in_scope: (if   any(.[]; .in_scope == true)  then true
+                         elif any(.[]; .in_scope == false) then false
+                         else null end),
               evidence: (if (length > 1)
                          then ((.[0].evidence // "") + " [같은 자리를 렌즈 " + ([.[].lens] | unique | join("+")) + " 가 중복 보고 — 병합]")
                          else (.[0].evidence // "") end)
