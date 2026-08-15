@@ -9,8 +9,11 @@
 ## 핵심 원칙
 
 - **severity 는 checker(LLM)가 매기지 않는다.** checker 는 finding 을 발견해
-  `(종류 kind, 차원 dimension, 가중조건 플래그 weights, 위치 location, 근거 evidence)` 만 태깅한다.
-  이 문서의 표를 보고 결정론 셸이 severity 를 매긴다. 같은 코드엔 항상 같은 severity.
+  `(종류 kind, 차원 dimension, 가중조건 플래그 weights, 위치 location, 근거 evidence, 사람 대기 force_await)`
+  를 태깅하고, phase 가 안 볼 표면(`non_goals`)을 프롬프트로 받았으면 범위 표시 `in_scope` 를 더한다
+  (계약 전문은 이 루프의 checker 역할 계약 문서 — 호스트마다 그 문서가 놓인 자리가 다르다).
+  이 문서의 표를 보고 결정론 셸이 severity 를 매긴다.
+  같은 코드엔 항상 같은 severity.
 - **종료는 점수 합산이 아니라 severity 게이트.** 게이트 모두 통과 + `BLOCKER 0 AND CRITICAL 0` → PASS.
   가중 합산("총점 82라 통과")은 critical 하나를 사소한 감점에 묻으므로 금지.
 - **brake 가 평가보다 먼저, 결정론 게이트가 LLM 검증보다 먼저.**
