@@ -643,6 +643,60 @@ assert_eq "merge: 중복 접기 — force_await OR" \
   "$(jq -r '.findings[] | select(.kind=="n-plus-1") | .force_await' <<<"$dup_merged")" "true"
 rm -rf "$mgtmp"
 
+# ── 11. 범위 계측(in_scope) — 세기만 하고 판정은 안 건드린다 ──────
+# phase 가 "이번에 안 볼 표면"(`phases.json` 의 `non_goals`)을 미리 적고 렌즈가 finding 마다
+# 안팎을 표시하면, "이 지적이 이번 목표 안인가" 라는 물음의 답이 사람 머릿속이 아니라 파일에 남는다.
+# **지금은 등급을 안 내린다** — 근거가 한 저장소 한 루프뿐이라 재는 장치를 먼저 두는 단계다.
+# 그래서 이 절의 핵심 단언은 마지막 둘(verdict 불변)이다. 그것이 깨지면 계측이 아니라 판정 변경이다.
+sctmp="$(mktemp -d)"
+sc_in='{"reviewed":["src/A.kt"],"findings":[
+  {"id":"a","kind":"n-plus-1","dimension":"runtime","location":"src/A.kt:1","in_scope":true},
+  {"id":"b","kind":"dead-code","dimension":"simplicity","location":"src/B.kt:2","in_scope":false},
+  {"id":"c","kind":"convention-violation","dimension":"convention","location":"src/C.kt:3"},
+  {"id":"d","kind":"unknown-thing","dimension":"security","location":"src/D.kt:4","in_scope":"false"}
+]}'
+sc_out="$(printf '%s' "$sc_in" | bash "$DIR/score.sh" | bash "$DIR/decide.sh")"
+scf() { jq -r "$1" <<<"$sc_out"; }
+
+assert_eq "범위: 명시 false 만 범위 밖으로 센다"   "$(scf '.out_of_scope.MAJOR')"    "1"
+# 필드를 안 단 것과 오타 값(`"false"`)은 둘 다 unmarked 다. 오타를 범위 밖으로 읽으면 수치가
+# 부풀고, 나중에 강등을 얹었을 때 그 오타 하나가 등급을 내린다.
+assert_eq "범위: 필드 누락+오타 값 → unmarked 2"   "$(scf '.out_of_scope.unmarked')" "2"
+assert_eq "범위: 오타 값은 범위 밖이 아니다"       "$(scf '.out_of_scope.CRITICAL')" "0"
+# 세 갈래(안·밖·미표시)의 합이 총수와 같아야, unmarked 가 총수와 같은 회차를 "렌즈가 표시를
+# 통째로 빠뜨렸다" 로 읽을 수 있다. 안 맞으면 0 이 "범위 밖 없음" 인지 "안 쟀음" 인지 갈리지 않는다.
+assert_eq "범위: 안+밖+미표시 = 총 finding 수" \
+  "$(jq -r '[.counts[]] | add' <<<"$sc_out")" \
+  "$(jq -r '(1) + ([.out_of_scope.BLOCKER,.out_of_scope.CRITICAL,.out_of_scope.MAJOR,.out_of_scope.MINOR,.out_of_scope.unmarked] | add)' <<<"$sc_out")"
+
+# **판정 불변 — 이 절의 계약이다.** 범위 표시가 있든 없든 verdict 는 등급만으로 정해진다.
+assert_eq "범위: verdict 는 등급대로(RETRY)" "$(scf .verdict)" "RETRY"
+# 대조군. 같은 입력에서 표시를 전부 지워도 판정이 같아야 한다 — 다르면 계측이 판정에 샌 것이다.
+sc_bare="$(printf '%s' "$sc_in" | jq -c 'del(.findings[].in_scope)' | bash "$DIR/score.sh" | bash "$DIR/decide.sh")"
+assert_eq "범위: 표시를 다 지워도 같은 verdict" "$(jq -r .verdict <<<"$sc_bare")" "$(scf .verdict)"
+assert_eq "범위: 표시를 다 지워도 같은 counts"  "$(jq -c .counts <<<"$sc_bare")"  "$(jq -c .counts <<<"$sc_out")"
+# 반대 대조군. 전부 범위 밖이라 표시해도 verdict 는 안 내려간다(강등이 없다는 뜻).
+sc_all_out="$(printf '%s' "$sc_in" | jq -c '.findings |= map(.in_scope = false)' | bash "$DIR/score.sh" | bash "$DIR/decide.sh")"
+assert_eq "범위: 전부 범위 밖이어도 verdict 그대로" "$(jq -r .verdict <<<"$sc_all_out")" "RETRY"
+
+# 병합 쪽 3상태. `truthy` 로 접으면 안 단 것이 false 로 떨어져 계측이 거짓 수치를 낸다.
+cat > "$sctmp/l1.json" <<'J'
+{"base":"origin/main","reviewed":["src/A.kt"],"findings":[
+ {"id":"1","kind":"k","dimension":"runtime","location":"src/A.kt:1","in_scope":false},
+ {"id":"2","kind":"k2","dimension":"runtime","location":"src/B.kt:2","in_scope":false}]}
+J
+cat > "$sctmp/l2.json" <<'J'
+{"base":"origin/main","reviewed":["src/A.kt"],"findings":[
+ {"id":"1","kind":"k","dimension":"runtime","location":"src/A.kt:1","in_scope":true},
+ {"id":"9","kind":"k9","dimension":"runtime","location":"src/Z.kt:9"}]}
+J
+sc_merged="$(bash "$DIR/merge_findings.sh" --expect 2 "contract=$sctmp/l1.json" "safety=$sctmp/l2.json")"
+scm() { jq -r --arg id "$1" '.findings[] | select(.id==$id) | .in_scope | tostring' <<<"$sc_merged"; }
+assert_eq "merge: 렌즈가 갈리면 범위 안이 이긴다" "$(scm contract-1)" "true"
+assert_eq "merge: 단독 범위 밖은 그대로"          "$(scm contract-2)" "false"
+assert_eq "merge: 안 단 것은 null 로 남는다"      "$(scm safety-9)"   "null"
+rm -rf "$sctmp"
+
 # ── 결과 ─────────────────────────────────────────────────────────
 echo "────────────────────────"
 echo "통과 $pass / 실패 $fail"

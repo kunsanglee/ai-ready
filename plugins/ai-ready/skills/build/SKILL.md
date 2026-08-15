@@ -1,6 +1,6 @@
 ---
 name: build
-description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 실행층. 일을 phase/step 으로 쪼개 사람 승인을 한 번 받은 뒤, phase 마다 maker 서브에이전트가 고치고 축이 갈린 checker 렌즈 셋(contract·safety·quality)이 서로를 모른 채 병렬로 점검하고 결정론 채점(rubric)이 등급을 매겨 PASS 까지 반복한다. severity 는 LLM 이 아니라 셸이 매겨 판정 일관성을 보장하고, 렌즈 결과는 개수를 세어 합치므로 축 하나가 죽으면 멈춘다. 착수 전 스펙 검사 셋(exit_criteria·irreversible·tiebreaks)을 통과해야 시작하고, 순회는 서브에이전트 오케스트레이터에 내려 사이클 잡음이 사람 창에 안 쌓이게 한다. 변경 하나만 수렴시키는 경우는 phase 가 하나인 특수한 경우다(종전 /loop-run). 호출 /build [phase당회차] [설계문서경로]. Use this skill when the user says "/build", "루프 돌려", "설계대로 쭉 빌드해", "이 작업 루프로 수렴시켜", "여러 페이즈 무인 개발", or wants the verification loop to autonomously implement and converge. 1회 점검만은 /review, 종료 후 교훈 수확은 /lessons.
+description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 실행층. 일을 phase/step 으로 쪼개 사람 승인을 한 번 받은 뒤, phase 마다 maker 서브에이전트가 고치고 축이 갈린 checker 렌즈 셋(contract·safety·quality)이 서로를 모른 채 병렬로 점검하고 결정론 채점(rubric)이 등급을 매겨 PASS 까지 반복한다. severity 는 LLM 이 아니라 셸이 매겨 판정 일관성을 보장하고, 렌즈 결과는 개수를 세어 합치므로 축 하나가 죽으면 멈춘다. 착수 전 스펙 검사(exit_criteria·irreversible·non_goals·tiebreaks)를 통과해야 시작하고, 순회는 서브에이전트 오케스트레이터에 내려 사이클 잡음이 사람 창에 안 쌓이게 한다. 변경 하나만 수렴시키는 경우는 phase 가 하나인 특수한 경우다(종전 /loop-run). 호출 /build [phase당회차] [설계문서경로]. Use this skill when the user says "/build", "루프 돌려", "설계대로 쭉 빌드해", "이 작업 루프로 수렴시켜", "여러 페이즈 무인 개발", or wants the verification loop to autonomously implement and converge. 1회 점검만은 /review, 종료 후 교훈 수확은 /lessons.
 ---
 
 # build — 설계를 사람 없이 구현해 수렴시킨다
@@ -22,7 +22,7 @@ description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 �
 
 그래서 **매 회차 새 maker 로 통일**했고, 두 스킬의 차이가 0이 되어 하나로 합쳤다.
 
-**합친 것이 더 중요한 이유가 하나 더 있다.** 아래 "착수 전 스펙 검사 셋"은 무인 완주를 가르는 게이트인데 `loop-build` 에만 있었다. 스킬이 둘이면 `/loop-run` 이 그 게이트를 통째로 우회하는 경로가 된다 — **검사 옆에 우회로가 있으면 그 검사는 검사가 아니라 권고다.** 합치면서 그 우회로가 닫혔다.
+**합친 것이 더 중요한 이유가 하나 더 있다.** 아래 "착수 전 스펙 검사"는 무인 완주를 가르는 게이트인데 `loop-build` 에만 있었다. 스킬이 둘이면 `/loop-run` 이 그 게이트를 통째로 우회하는 경로가 된다 — **검사 옆에 우회로가 있으면 그 검사는 검사가 아니라 권고다.** 합치면서 그 우회로가 닫혔다.
 
 `/loop-run` 을 쓰던 자리는 `/build` 로 바꾸면 된다. 달라지는 것은 작업 지시를 자유 산문 파일이 아니라 **phase 하나짜리 `phases.json`** 으로 적는다는 것뿐이고, 그 파일은 이 스킬이 대화 합의에서 써서 사람에게 확인받는다(Step 1).
 
@@ -181,7 +181,7 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
 
 ```jsonc
 // phases.json — 분해 결과 + 진행 상태. phase·step 각각 4-state: pending → in_progress → done | blocked
-// tiebreaks·exit_criteria·irreversible 세 자리는 선택이 아니라 필수다(아래 "착수 전 스펙 검사 셋").
+// tiebreaks·exit_criteria·irreversible·non_goals 는 선택이 아니라 필수다(아래 "착수 전 스펙 검사").
 {
   "tiebreaks": ["잠그는 것이 원본과 호출 규약을 맞추는 것보다 앞선다"],
   "phases": [
@@ -189,6 +189,7 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
       "design_ref": "x.md §현재 동작 C5 데이터 모델",   // 이 phase 가 구현하는 설계 문서 구역(정합 점검 + 종료 후 문서 반영 기준)
       "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다", "빈 입력으로 부르면 exit 65 로 죽는다"],
       "irreversible": false,          // 닿으면 "운영 DB 마이그레이션" 처럼 영역을 문자열로
+      "non_goals": ["수신 층", "성능 튜닝"],   // 이번에 안 볼 표면. 안 좁히면 false
       "steps": [
         { "id": "types",  "goal": "도메인 타입 정의", "layer": "domain",
           "signature": "data class X(...)", "ac_cmd": "./gradlew :x-domain:compileKotlin",
@@ -202,20 +203,21 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
 - 분해가 애매하면(자기완결 step 으로 안 쪼개지거나 AC 커맨드를 못 붙이면) **여기서 멈추고 사람에게 되돌린다.** 무인 시작 금지(불변 7).
 - 승인되면 사람이 빠진다. 이후 Step 2 는 자율 진행한다.
 
-#### 착수 전 스펙 검사 셋 (통과해야 시작한다)
+#### 착수 전 스펙 검사 (통과해야 시작한다)
 
 **무엇이 무인 완주를 가르나 — 사람 게이트가 아니라 스펙의 질이다.** 같은 날 같은 저장소에서 돌린 두 phase 가 근거다. 한 phase 는 목표를 "세웠다고 적은 장치가 실제로 잠기게 한다" 로 줬고 **여섯 사이클, 사람이 한 번 끼어들어야 닫혔다** — 목표를 항목으로 나열할 수 없어 하나를 닫으면 checker 가 다음을 찾았다. 다른 phase 는 목표를 **변이 여섯으로 미리 적어** 줬고("관성 분기를 지우면 빨개진다" 같은 것) **네 사이클, 사람이 한 번도 필요 없었다.** 차이는 스펙 하나뿐이었다. 그래서 이 스킬은 사람이 필요한지를 **실행 중에 판정하지 않고 착수 전에 검사한다.**
 
-아래 셋은 **선택이 아니다.** 하나라도 없으면 `phases.json` 을 고쳐 다시 온다 — 다른 방식으로 도는 우회로는 없다. 검사 옆에 우회로가 있으면 그 검사는 검사가 아니라 권고가 되고, 이 셋이 막으려던 사고는 바로 그 우회로 쪽에서 일어났다.
+아래 항목은 전부 **선택이 아니다.** 하나라도 없으면 `phases.json` 을 고쳐 다시 온다 — 다른 방식으로 도는 우회로는 없다. 검사 옆에 우회로가 있으면 그 검사는 검사가 아니라 권고가 되고, 이것들이 막으려던 사고는 바로 그 우회로 쪽에서 일어났다.
 
 1. **완료 조건을 항목으로 나열할 수 있나.** phase 마다 `exit_criteria` 를 배열로 적는다. 각 항목은 **되돌렸을 때 무엇이 빨개지는지** 를 말해야 한다("관성 분기를 지우면 그 검사가 실패한다" 처럼). "~하게 만든다" 같은 서술은 항목이 아니다 — 끝나는 지점이 없어 그 phase 가 수렴하지 않는다.
 2. **되돌릴 수 없는 영역에 닿나.** phase 마다 `irreversible` 에 그 답을 적는다. 닿으면 어느 영역인지 문자열로(그 자리만 사람에게 올린다는 뜻), 안 닿으면 `false`(그 이유로 멈출 일이 없다는 뜻). 무엇이 그 목록인지는 BASE rubric 의 `force_await=always` 종류다.
 3. **부딪힐 판단에 우선순위를 적었나.** 최상위 `tiebreaks` 에 측정으로 안 갈리는 트레이드오프를 미리 순서 지어 둔다. 안 적으면 오케스트레이터가 그 자리에서 멈춰 결국 사람을 부른다.
+4. **이번에 안 볼 표면을 적었나.** phase 마다 `non_goals` 에 답한다. 좁히면 그 표면들을 문자열 배열로(`["수신 층", "성능 튜닝"]`), 안 좁히면 `false`. 이 칸이 여는 것이 둘이다. **하나는 바로 선다** — 문서가 "안 한다" 고 적은 것을 구현하면 checker 가 `intent-nongoal-violation` 으로 내고 그 종류는 BLOCKER 라 사람을 부른다. 종류는 계약에 원래 있었는데 **적을 칸이 없어 아무도 그 기준을 받은 적이 없다.** 다른 하나는 계측이다 — 렌즈가 finding 마다 범위 안팎을 표시하고 회차 끝의 `out_of_scope` 가 그 수를 센다. **그 수는 등급을 안 바꾼다.** 회차를 다 쓰고 멈춘 자리에서 사람이 묻는 것이 "이 지적이 이번 목표 안인가" 인데 그 답이 지금까지 아무 데도 안 남았고, 이 칸이 그것을 파일로 남긴다.
 
 기계가 보는 것은 **있는지 없는지**뿐이고, 그 검사가 아래 블록이다. 각 항목이 **정말** 되돌림과 빨개짐을 말하는지는 다음 절의 `loop-spec-checker` 와 사람이 본다.
 
 ```bash
-# 착수 전 스펙 검사 — 통과해야 순회를 시작한다. 셋을 따로 세는 이유는 사람에게 무엇을 더 적어야
+# 착수 전 스펙 검사 — 통과해야 순회를 시작한다. 자리마다 따로 세는 이유는 사람에게 무엇을 더 적어야
 # 하는지 이름으로 알려주기 위해서다(jq -e 한 방이면 "뭔가 빠졌다" 까지만 나온다). 판정은 세 jq 모두
 # 결정론이고, 하나라도 없으면 exit 65 로 멈춘다 — 무인으로 길게 돌 때 사람이 없어서, 이 셋이 없으면
 # 오케스트레이터가 결국 그 자리에서 멈춘다. 착수 전에 거르는 편이 싸다.
@@ -240,6 +242,13 @@ jq -e 'all(.phases[]; (.irreversible | type) as $t
 # (3) 부딪힐 판단의 우선순위 — 최상위 tiebreaks, 비지 않은 문자열 배열.
 jq -e '.tiebreaks | type=="array" and length>0 and all(.[]; type=="string" and test("\\S"))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING tiebreaks"
+# (4) 이번에 안 볼 표면 — 안 좁히면 false, 좁히면 어느 표면인지 적은 문자열 배열. (2)와 같은 모양이다.
+#     `true` 는 "좁히는데 어딘지 안 적음" 이라 거부한다 — 통과시키면 checker 가 기준으로 쓸 것이 없고,
+#     `intent-nongoal-violation` 도 범위 표시도 그 phase 에서 아무것도 안 한다.
+jq -e 'all(.phases[]; (.non_goals | type) as $t
+        | ($t=="boolean" and .non_goals==false)
+          or ($t=="array" and (.non_goals|length)>0 and all(.non_goals[]; type=="string" and test("\\S"))))' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING non_goals"
 
 [ -z "$MISSING" ] || { echo "build: 착수 전 스펙 검사 실패 —$MISSING 없음/빈값. phases.json 의 그 자리를 채우고 다시 시작한다(우회 경로 없음)." >&2; exit 65; }
 echo "build: 착수 전 스펙 검사 통과"
@@ -247,7 +256,7 @@ echo "build: 착수 전 스펙 검사 통과"
 
 #### 스펙 완전성 점검 (loop-spec-checker) — 승인 화면 앞
 
-위 기계 검사가 통과하면 `Agent` 로 `loop-spec-checker` 를 **한 번** 띄운다. 기계가 세 자리가 **있는지**를 봤으니 이 에이전트는 그것이 **쓸모 있는지**를 본다 — `exit_criteria` 항목이 되돌림을 말하는지, 그 phase 의 완료를 대표하는지, `irreversible` 이 실제 범위와 맞는지.
+위 기계 검사가 통과하면 `Agent` 로 `loop-spec-checker` 를 **한 번** 띄운다. 기계가 그 자리들이 **있는지**를 봤으니 이 에이전트는 그것이 **쓸모 있는지**를 본다 — `exit_criteria` 항목이 되돌림을 말하는지, 그 phase 의 완료를 대표하는지, `irreversible` 이 실제 범위와 맞는지, 그리고 `non_goals` 가 이 phase 의 목표와 **실제로 갈리는지**. 마지막 것은 양쪽으로 어긋날 수 있다. 넓게 적으면 정상 구현이 `intent-nongoal-violation` 으로 잡혀 사람을 부르고, 좁게 적으면 아무것도 안 걸러 그 칸이 있으나 마나가 된다.
 
 프롬프트에 담는 것: 설계 문서 경로와 `$PHASES` 경로(점검 대상), 컨벤션 문서 경로·지식층 값(`$LOOP_CONVENTION_DOCS`·`$LOOP_KNOWLEDGE_LAYER` 값 자체 — **환경변수는 서브에이전트에 전달되지 않는다**), 결과 출력 경로 `$LOOP_DIR/spec-gaps.json`.
 
@@ -293,7 +302,7 @@ build 시작 — phase N개, 진행은 .loop/run/{ticket}/phases.json 에서 볼
 
 `phases.json` 의 phase 를 순서대로 돈다. 각 phase 를 아래 안쪽 루프로 PASS 시키고 다음으로 넘어간다.
 
-순회 시작 전 두 가지를 한다. 먼저 `phases.json` 이 소비 가능한 형식인지 **fail-loud 로 검증**한다. **Step 1 의 세 자리도 여기서 다시 요구한다** — Step 1 의 검사는 사람 승인 앞에서 한 번 돌지만, 순회는 **재개로도 진입**하고 그 사이에 `phases.json` 이 손으로 편집될 수 있다. 소비 직전에 한 번 더 보는 것이 그 창을 닫는다. 그다음 phase 수 `N` 으로 전체 시간 상한을 재계산한다.
+순회 시작 전 두 가지를 한다. 먼저 `phases.json` 이 소비 가능한 형식인지 **fail-loud 로 검증**한다. **Step 1 이 요구한 자리들도 여기서 다시 요구한다** — Step 1 의 검사는 사람 승인 앞에서 한 번 돌지만, 순회는 **재개로도 진입**하고 그 사이에 `phases.json` 이 손으로 편집될 수 있다. 소비 직전에 한 번 더 보는 것이 그 창을 닫는다. 그다음 phase 수 `N` 으로 전체 시간 상한을 재계산한다.
 
 ```bash
 # 재유도 프리앰블 — 이 블록도 별도 Bash 호출이라 carry-over 를 가정하지 않는다.
@@ -304,7 +313,7 @@ LOOP_DIR="$(cat "$PROJECT_ROOT/.loop/run/.active-$BR" 2>/dev/null)" && [ -f "$LO
   || { echo "build: params.env 없음 — Step 0 미실행/폐기됨" >&2; exit 65; }
 set -a; . "$LOOP_DIR/params.env"; set +a
 
-# (1a) 착수 전 스펙 검사 셋 재확인 — Step 1 과 같은 판정, 같은 이름 지목.
+# (1a) 착수 전 스펙 검사 재확인 — Step 1 과 같은 판정, 같은 이름 지목.
 #      이 자리에 오는 파일은 정의상 Step 1 을 **안 거친** 것이다: 진행 중이던 옛 phases.json 이거나,
 #      Step 1 뒤에 손으로 편집된 것. 그래서 "스키마 위반" 한 줄로 끝내면 사람이 status 오타부터
 #      찾게 된다. 아래 (1b)와 나눠 두는 이유가 그 진단이다.
@@ -320,7 +329,11 @@ jq -e 'all(.phases[]; (.irreversible | type) as $t
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING irreversible"
 jq -e '.tiebreaks | type=="array" and length>0 and all(.[]; type=="string" and test("\\S"))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING tiebreaks"
-[ -z "$MISSING" ] || { echo "build: phases.json 에 착수 전 스펙 검사 셋이 없다 —$MISSING 없음/빈값. Step 1 로 돌아가 채운 뒤 재개한다(우회 경로 없음)." >&2; exit 65; }
+jq -e 'all(.phases[]; (.non_goals | type) as $t
+        | ($t=="boolean" and .non_goals==false)
+          or ($t=="array" and (.non_goals|length)>0 and all(.non_goals[]; type=="string" and test("\\S"))))' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING non_goals"
+[ -z "$MISSING" ] || { echo "build: phases.json 에 착수 전 스펙 검사 자리가 없다 —$MISSING 없음/빈값. Step 1 로 돌아가 채운 뒤 재개한다(우회 경로 없음)." >&2; exit 65; }
 
 # (1b) 순회가 소비하는 자리 검증 — score.sh 의 변질 입력 exit 65 거부와 같은 결.
 #      .phases 비배열/빈배열, phase 의 name·steps 누락, step 의 ac_cmd 누락(AC 없으면 step 이 아님),
@@ -446,12 +459,14 @@ fi
 
 **환경변수는 서브에이전트에 전달되지 않는다** — 아래 값 전부를 프롬프트 텍스트로 넘긴다. 세 프롬프트가 공유하는 것과 렌즈마다 다른 것을 가른다.
 
-- 공통: 설계 문서 경로와 이 phase 의 `design_ref`·step 목록, **이 phase 의 `exit_criteria` 항목 전부**, 비교 베이스 `$LOOP_BASE_BRANCH`, 컨벤션 문서 `$LOOP_CONVENTION_DOCS`·지식층 `$LOOP_KNOWLEDGE_LAYER`(비었으면 "없음" 명시 — checker 가 "컨벤션 문서 없음, 신뢰도 제한" 경로를 정직하게 타게), 종류 어휘 rubric 두 경로(BASE `$ENG/rubric.base.md`, LOCAL `$LOOP_RUBRIC_LOCAL` 있으면).
+- 공통: 설계 문서 경로와 이 phase 의 `design_ref`·step 목록, **이 phase 의 `exit_criteria` 항목 전부**, **이 phase 의 `non_goals`**, 비교 베이스 `$LOOP_BASE_BRANCH`, 컨벤션 문서 `$LOOP_CONVENTION_DOCS`·지식층 `$LOOP_KNOWLEDGE_LAYER`(비었으면 "없음" 명시 — checker 가 "컨벤션 문서 없음, 신뢰도 제한" 경로를 정직하게 타게), 종류 어휘 rubric 두 경로(BASE `$ENG/rubric.base.md`, LOCAL `$LOOP_RUBRIC_LOCAL` 있으면).
 - 렌즈마다: **렌즈 이름과 담당 차원**, 그리고 **그 렌즈 전용 출력 경로**.
 
 **`exit_criteria` 를 왜 checker 에 넘기나 — 안 넘기면 아무도 안 재기 때문이다.** 착수 전 검사는 그 항목이 *있는지* 만 보고, PASS 판정은 `BLOCKER 0 AND CRITICAL 0` 이라 그 phase 의 완료 조건과 무관하다. 그 사이에 "관성 분기를 지우면 그 검사가 실패한다" 를 적어 두고 실제로 그런지 재는 자리가 없었다. 항목을 프롬프트에 실으면 점검자가 그것을 **정합 판정의 기준**으로 삼아, 조건이 성립하지 않으면 `intent-requirement-missing` 으로 낸다(그 dimension floor 가 MAJOR 라 `RETRY_SOFT` 가 되어 다음 회차로 돌아간다). 평가 *계산기* 는 고정이고 **평가 대상 기준을 phase 가 가져오는 것**이 이 구조가 작업마다 달라지는 방식이다 — 계산기까지 매번 새로 지으면 같은 코드가 회차마다 다른 등급을 받아 정체 감지가 무너지고, 루프가 코드 대신 기준을 낮춰 통과할 수 있다.
 
 **그리고 성립 여부를 파일로 받는다.** `exit_criteria` 를 받은 checker 는 출력에 `exit_criteria_probes` 를 함께 낸다(계약은 `agents/loop-checker.md`) — 조건마다 무엇을 되돌려 무엇이 빨개졌는지, 어떤 명령으로 쟀는지가 들어간다. **이 필드는 채점에 안 들어가고 병합본에도 안 실린다. 렌즈별 결과 파일이 정본이다.** 그런데도 표준으로 두는 이유는 아래 분기에서 사람이 phase 를 닫을지 정할 때 **그것이 유일한 근거**이기 때문이다. 요구해야 생기는 것은 계약이 아니다.
+
+**`non_goals` 도 같은 이유로 넘긴다 — 안 넘기면 그 칸이 아무 일도 안 한다.** 넘기면 렌즈가 그것을 두 가지로 쓴다. 첫째, 그 표면을 실제로 구현한 것이 보이면 `intent-nongoal-violation`(BLOCKER)으로 낸다. 둘째, finding 마다 `in_scope` 로 이번 목표 안팎을 표시한다. **표시는 등급을 안 바꾼다** — `decide.sh` 가 `out_of_scope` 로 세기만 하고 verdict 는 등급만으로 정해진다(계약은 `_loop-engine/decide.sh` 헤더). 세는 이유는 아래 "완료 조건이 전부 성립했는데" 분기에서 사람이 답해야 하는 물음이 정확히 그것이고, 지금까지 그 답이 파일에 없었기 때문이다. 확신이 안 서는 finding 은 범위 **안**으로 기울이는 것이 계약이다 — 안 쟀거나 애매한 것이 통과 방향으로 떨어지지 않게 하는 이 엔진의 규율과 같은 방향이다.
 
 **maker 가 보고한 것을 checker 프롬프트에 절대 넣지 마라**(불변 1). 한 줄짜리 `ok` 도 옮기지 않는다.
 
@@ -471,6 +486,10 @@ for L in $LENSES; do : > "$LOOP_DIR/checker-$PHASE-$L.json"; done
 # 프롬프트에 넣을 값을 창에 출력한다 — 변수 대입만으론 오케스트레이터가 값을 알 수 없다(대입은 stdout 이 없다).
 echo "checker 렌즈: $LENSES"
 echo "checker 공통 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[${LOOP_RUBRIC_LOCAL:-없음}]"
+# 이번 phase 가 안 볼 표면. `false` 면 안 좁힌 것이라 렌즈는 모든 finding 을 범위 안으로 표시한다.
+# 값을 창에 내야 프롬프트에 그대로 옮길 수 있다 — 변수 대입만으론 오케스트레이터가 값을 모른다.
+echo "이번 phase 의 non_goals: $(jq -r --arg p "$PHASE" '.phases[] | select(.name==$p) | .non_goals
+       | if type=="array" then join(" / ") else "없음(표면을 안 좁힘 — 전부 범위 안)" end' "$PHASES")"
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 ```
 
@@ -522,6 +541,11 @@ V=$(printf  '%s' "$VERDICT" | jq -r .verdict)
 ST=$(printf '%s' "$STALL"   | jq -r .status)
 KS=$(printf '%s' "$KINDST"  | jq -r .status)
 echo "사이클 $ITER → verdict=$V / stall=$ST / counts=$(printf '%s' "$VERDICT" | jq -c .counts)"
+# 범위 계측 — **판정에 안 들어간다.** verdict 는 위 등급만으로 정해지고 이 줄은 세기만 한다.
+# `미표시` 가 총 finding 수와 같으면 렌즈가 표시를 통째로 빠뜨린 것이다. 그 회차의 범위 수치는
+# 근거로 쓰지 않는다 — 0 이 "범위 밖이 없다" 가 아니라 "아무도 안 쟀다" 이기 때문이다.
+printf '%s' "$VERDICT" | jq -r '.out_of_scope
+  | "범위 밖(계측, 판정 무관): BLOCKER=\(.BLOCKER) CRITICAL=\(.CRITICAL) MAJOR=\(.MAJOR) MINOR=\(.MINOR) / 미표시=\(.unmarked)"'
 echo "반복 종류: $(printf '%s' "$KINDST" | jq -r '"\(.status) kind=\(.kind // "-") streak=\(.streak)/\(.threshold)"')"
 # 렌즈별 적발 수 — 한 축이 매번 0건이면 그 렌즈 프롬프트를 의심할 근거가 된다(빈 결과는 증거가 아니다).
 printf '%s' "$SCORED" | jq -r '[.findings[] | .lens // "?"] | group_by(.) | map("\(.[0])=\(length)") | "렌즈별 적발: " + join(" ")'
@@ -537,13 +561,15 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 아래 **위에서부터** 먼저 걸리는 것을 따른다.
 
 1. `V == AWAIT_USER` → **멈춤, 사람 호출.** 비가역·자동화 금지 영역(BLOCKER/force_await). maker 가 손대면 안 된다.
-2. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `>= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN`) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다. **`exit_criteria_probes` 가 있으면 조건별 성립 여부를 함께 넘긴다** — 사람이 "한 회차 더" 와 "여기서 닫는다" 를 가르는 재료가 그것뿐이다(아래 블록).
+2. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `>= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN`) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다. **`exit_criteria_probes` 가 있으면 조건별 성립 여부를 함께 넘긴다** — 사람이 "한 회차 더" 와 "여기서 닫는다" 를 가르는 재료가 그것이다(아래 블록). **회차 요약의 범위 계측(`out_of_scope`)도 함께 넘긴다** — 조건이 성립했나와 남은 지적이 이번 목표 안인가는 같은 판단의 두 반쪽이다.
 3. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
 4. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 3번과 **전할 말이 다르다.** 3번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다 — 코드가 아니라 phase 목표를 의심하라"** 다. 사람에게 물을 것 둘: 이 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다.
 5. `V == PASS` → 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
 6. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall/반복 종류 미도달) → **Step 2-5(maker 스핀)** 로.
 
 > **완료 조건이 전부 성립했는데 조건 밖 지적만 남았으면 — 사람이 그 phase 를 닫을 수 있다.** PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고 **그 phase 의 완료 조건을 안 본다.** 그래서 조건을 다 만족하고도 조건 **밖** CRITICAL 때문에 안 닫히는 상태가 성립한다. 사람이 고를 것은 셋이다. (a) 회차 상한을 올려 한 번 더 돈다. (b) **여기서 닫고 남은 지적을 다음 phase 로 세운다** — `phases.json` 에 phase 를 하나 더하면 회차가 새로 시작된다. 회차 상한은 "한 목표에 몇 번까지 매달릴 것인가" 라, 목표가 바뀌면 새로 세는 것이 맞다(편법이 아니다). (c) 목표가 애초에 열거 불가능했다고 보고 `exit_criteria` 를 다시 적는다. **이 판단은 자동으로 못 한다** — 조건 성립은 checker 가 되돌림으로 재지만 "이 지적이 조건 밖인가" 는 사람이 정한다. 2026-08-11 `agent-ts` 의 저장 계층 첫 phase 가 완료 조건 열한 개를 전부 만족하고도 조건 밖 CRITICAL 때문에 회차 상한 여덟을 다 썼고, (b) 로 닫았다.
+>
+> **판단은 여전히 사람이 하되, 재료는 이제 파일에 있다.** phase 가 `non_goals` 에 안 볼 표면을 적었으면 렌즈가 finding 마다 안팎을 표시하고 회차 요약의 `out_of_scope` 가 그 수를 센다. **그 수는 등급을 안 내린다.** 세는 것과 판정하는 것을 갈라 둔 이유는 근거가 아직 한 저장소 한 루프뿐이어서다 — 재는 장치를 먼저 두고, 수치가 쌓인 뒤에 강등을 얹을지 정한다. 읽을 때 조건이 하나 있다: **`미표시` 가 총 건수와 같은 회차의 수치는 근거가 아니다.** 그건 범위 밖이 없다는 뜻이 아니라 렌즈가 표시를 안 달았다는 뜻이다.
 >
 > **설계 drift 는 무인이 판단하지 않는다(사람 게이트).** 실제 구현이 최초 설계(`design_ref`)와 달라져야 한다고 maker 가 보고하거나, checker 가 "코드가 설계와 다른데 코드 쪽이 맞아 보인다"를 잡으면 — 코드를 설계에 맞추는 걸로 끝내지 않고 **`AWAIT_USER` 로 멈춰 사람에게 설계 재결정을 맡긴다.** 이 스킬은 "설계대로 구현"이 목표이지 "설계를 고쳐 구현"이 아니다.
 
@@ -686,8 +712,8 @@ echo "build: 런타임 상태 폐기 — $LOOP_DIR"
 | 정체 감지가 매번 INIT | 사이클 간 `stall-{phase}.json` 이 사라짐 | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history-{phase}.jsonl` append 누락 | Step 2-3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
 | 무한 같은 finding | maker 가 안 고치고 재진입 | Step 2-6 트리 확인이 잡는다. 그게 정체로 뜨면 못 고치는 finding 이므로 AWAIT_USER |
-| `build: 착수 전 스펙 검사 실패` | `phases.json` 에 세 자리 중 하나가 없다 | 그 자리를 채우고 다시 시작한다. **우회 경로는 없다** |
-| `build: phases.json 스키마 위반` | name·steps·ac_cmd·status 중 하나가 계약 밖 | 위 (1b) 조건을 보고 고친다. 세 자리 누락은 (1a)가 따로 이름을 지목한다 |
+| `build: 착수 전 스펙 검사 실패` | `phases.json` 에 필수 자리 하나가 없다(메시지가 이름을 지목한다) | 그 자리를 채우고 다시 시작한다. **우회 경로는 없다** |
+| `build: phases.json 스키마 위반` | name·steps·ac_cmd·status 중 하나가 계약 밖 | 위 (1b) 조건을 보고 고친다. 필수 자리 누락은 (1a)가 따로 이름을 지목한다 |
 | maker 가 매 회차 같은 접근을 반복 | 반복 표시를 프롬프트에 안 넣었다 | Step 2-5 의 `jq` 출력을 프롬프트에 그대로 넣는다. 이게 회차 간 유일한 기억이다 |
 | maker 스핀 후 트리 그대로 | 자기 검증에서 컴파일이 깨져 아무것도 못 고쳤거나, `blocked` 인데 스핀을 계속함 | Step 2-6 이 잡는다. maker 의 종료 문자열이 `blocked` 였는지 확인 |
 | 게이트 큐가 `gate-output-unparsed` 한 건뿐 | `gate_parse.py` 가 그 도구의 오류 형식을 모름 | 그 항목의 꼬리로 고치되, 반복되면 파서에 패턴 추가 후보로 보고. **큐가 비는 것보다 이게 낫다** |

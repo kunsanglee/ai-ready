@@ -8,13 +8,13 @@ severity 는 checker 가 매기지 않는다 — 이 셸이 [`rubric.base.md`](.
 
 ```
 checker 렌즈 셋(축마다 자기 JSON findings 파일)
-   │  { findings: [ {kind, dimension, weights[], force_await?, location, evidence}, ... ] }
+   │  { findings: [ {kind, dimension, weights[], force_await?, in_scope?, location, evidence}, ... ] }
    ▼
 merge_findings.sh  렌즈 결과를 **개수를 세어** 하나로 합침 (--expect N 미달이면 exit 65)
    ▼
 score.sh    종류 lookup + 가중 상향 + force_await  → finding 마다 severity/await 부여
    ▼
-decide.sh   집계 → verdict: AWAIT_USER | RETRY | RETRY_SOFT | PASS  (+ counts)
+decide.sh   집계 → verdict: AWAIT_USER | RETRY | RETRY_SOFT | PASS  (+ counts, 범위 계측 out_of_scope)
    ▼
 stall.sh    등급 개수 벡터 사전식 + best-ever floor → 정체/악화 판정 (사이클 간 상태 파일)
 ```
@@ -43,7 +43,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 | `lib.sh` | 공용 부트스트랩: repo root·rubric 경로, severity 사다리, rubric 표 추출(awk/jq) | (source 전용) |
 | `merge_findings.sh` | 축별 checker 렌즈가 각자 쓴 findings 파일 N 개를 채점 입력 하나로 합침. **`--expect N` 개수 검사가 존재 이유** — 렌즈가 죽어도 남은 결과는 형식이 멀쩡해 세지 않으면 그 축이 점검 없이 통과한다. 빈 파일·형식 위반·렌즈 간 base 불일치도 exit 65 | `--expect N 렌즈=경로 ...` → 합쳐진 findings JSON |
 | `score.sh` | 깨끗함↔안 봄 게이트(findings·reviewed 둘 다 비면 exit 65), 종류 lookup → base severity, 경로 유도 + checker 가중 합집합으로 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
-| `decide.sh` | severity 집계 → 종료 verdict | scored JSON → `{verdict, counts, await}` |
+| `decide.sh` | severity 집계 → 종료 verdict. **`out_of_scope` 는 세기만 하고 verdict 에 안 들어간다** — phase 가 안 보기로 한 표면의 지적이 몇 건인지 남기는 계측이다(등급을 내릴지는 수치가 쌓인 뒤에 정한다) | scored JSON → `{verdict, counts, out_of_scope, await}` |
 | `stall.sh` | 사전식 벡터 + best-ever floor 정체 판정 | decide JSON + `--state <file>` → 갱신된 상태 |
 | `lessons.sh` | 루프 종료 후 history-{phase}.jsonl diff → 출처1 실수(고쳐진 finding) 추출 | `--history <file>` → mistakes JSON |
 | `test.sh` | 결정론 채점 회귀 테스트: 정상 채점 고정 + 변질 입력 fail-loud + lessons 결정론 | (인자 없음) → 통과/실패, exit 0=전부 통과 |
