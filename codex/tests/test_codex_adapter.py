@@ -86,7 +86,7 @@ class CodexAdapterTests(unittest.TestCase):
                           f"{name} 가 checker 출력의 reviewed 를 안 적는다 — 계약이 갈라진다")
         # 출력 필드가 늘면 두 곳이 함께 늘어야 한다. `in_scope` 는 1.4.0 이 더한 것인데, 이
         # 시험이 `reviewed` 만 보고 있어 한쪽만 적힌 상태가 통과했다. 위 독스트링이 드는
-        # 0.9.7 사고와 같은 종류라 같은 자리에서 잠근다.
+        # 0.9.7 사고와 같은 종류라 같은 자리에서 함께 확인한다.
         # 단어 경계로 본다 — 부분 문자열 대조는 `in_scopeZZ` 같은 접미사 개명을 그대로 통과시킨다.
         for name, text in (("SKILL.md", skill), ("checker-role.md", role)):
             self.assertRegex(text, r"\bin_scope\b",
@@ -141,7 +141,7 @@ class CodexAdapterTests(unittest.TestCase):
 
         **자리가 늘면 이 목록도 늘어야 한다.** 1.4.0 이 `non_goals` 를 더했을 때 이 목록이
         안 따라와, codex 트리의 그 이름을 전부 딴 것으로 바꿔도 시험이 통과했다. claude 쪽은
-        jq 두 자리와 python 여덟 건이 잠그는데 이쪽만 비어 있었다.
+        jq 두 자리와 python 여덟 건이 그것을 확인하는데 이쪽만 비어 있었다.
 
         **파일 전체가 아니라 게이트 항목만 본다.** 같은 이름들이 phase loop 재확인 절과
         렌즈 위임 절에도 나와서, 파일 전체를 대조하면 착수 게이트 문단에서 `non_goals`
