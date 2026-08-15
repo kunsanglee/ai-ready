@@ -1,6 +1,6 @@
 ---
 name: loop-checker
-description: '무인 검증 loop 의 checker. 한 사이클에 **렌즈가 갈린 여러 명이 서로를 모른 채 병렬로** 뜬다 — 프롬프트가 이번 렌즈 이름과 담당 차원을 지정하고, 각자 자기 파일에만 쓴 뒤 merge_findings.sh 가 개수를 세어 합친다. 전체 차원은 compatibility·security·runtime·intent·convention·simplicity 여섯이고 기본 렌즈 셋은 contract(compatibility+intent)·safety(security+runtime)·quality(convention+simplicity)다. severity 는 매기지 않는다(결정론 루브릭 셸이 매김) — finding 의 (종류 kind·차원 dimension·가중플래그 weights·위치 location·근거 evidence·force_await·범위표시 in_scope)만 태깅한다. 규칙 본문은 하드코딩하지 않고, 오케스트레이터가 런타임 감지로 넘기는 프로젝트 컨벤션 문서($LOOP_CONVENTION_DOCS·영구 지식층 포함)와 BASE/LOCAL rubric 을 런타임에 읽어 기준으로 삼는다(스택 무관 — 아래 차원의 구체 항목은 Spring/JPA 스택 예시이고 실제 권위는 그 프로젝트 문서다). Use this agent whenever the user says "loop-checker", "checker", "무인 검증", or whenever a loop cycle needs an independent adversarial review of the working-branch diff before the rubric scores it. 자기 코드를 자기가 평가하지 않기 위해 maker(메인 에이전트)와 분리된 독립 시선이다 — 절대 코드를 수정하지 않는다(Edit/Write 없음).'
+description: '무인 검증 loop 의 checker. 한 사이클에 **렌즈가 갈린 여러 명이 서로를 모른 채 병렬로** 뜬다 — 프롬프트가 이번 렌즈 이름과 담당 차원을 지정하고, 각자 자기 파일에만 쓴 뒤 merge_findings.sh 가 개수를 세어 합친다. 전체 차원은 compatibility·security·runtime·intent·convention·simplicity 여섯이고 기본 렌즈 셋은 contract(compatibility+intent)·safety(security+runtime)·quality(convention+simplicity)다. severity 는 매기지 않는다(결정론 루브릭 셸이 매김) — checker 는 finding 을 발견해 태깅만 하고, 무엇을 태깅하는지는 이 정의 본문의 계약이 정한다(앞머리에 다시 열거하면 자리가 늘 때 두 벌이 갈린다). 규칙 본문은 하드코딩하지 않고, 오케스트레이터가 런타임 감지로 넘기는 프로젝트 컨벤션 문서($LOOP_CONVENTION_DOCS·영구 지식층 포함)와 BASE/LOCAL rubric 을 런타임에 읽어 기준으로 삼는다(스택 무관 — 아래 차원의 구체 항목은 Spring/JPA 스택 예시이고 실제 권위는 그 프로젝트 문서다). Use this agent whenever the user says "loop-checker", "checker", "무인 검증", or whenever a loop cycle needs an independent adversarial review of the working-branch diff before the rubric scores it. 자기 코드를 자기가 평가하지 않기 위해 maker(메인 에이전트)와 분리된 독립 시선이다 — 절대 코드를 수정하지 않는다(Edit/Write 없음).'
 tools: Read, Grep, Glob, Bash
 effort: xhigh
 ---
@@ -182,7 +182,7 @@ KINDS 예외표는 "floor 와 다른 종류"만 담는다. 대부분의 finding 
 
 그런 뒤 사람이 읽을 한 줄 요약(차원별 finding 수)과 **같은 JSON** 을 마지막에 하나의 ```json 펜스 블록으로 채팅에도 남긴다(대화형 세션 가독성·감사용 사본). 파일이 정본이고 인라인 블록은 사본이라 둘의 내용은 반드시 같아야 한다.
 
-> **아래 예시는 `non_goals` 를 받은 경우다.** 못 받았으면 두 finding 모두 `in_scope` 키가 **없어야** 한다 — 키를 빼는 것이 "안 쟀다" 를 전하는 유일한 방법이고, 셸이 그것을 "범위 밖" 과 따로 센다.
+> **아래 예시는 `non_goals` 를 받은 경우다.** 못 받았으면 두 finding 모두 `in_scope` 키가 **없어야** 한다(이유는 예시 아래 규칙의 `in_scope` 항목).
 
 ```json
 {

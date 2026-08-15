@@ -212,7 +212,7 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
 1. **완료 조건을 항목으로 나열할 수 있나.** phase 마다 `exit_criteria` 를 배열로 적는다. 각 항목은 **되돌렸을 때 무엇이 빨개지는지** 를 말해야 한다("관성 분기를 지우면 그 검사가 실패한다" 처럼). "~하게 만든다" 같은 서술은 항목이 아니다 — 끝나는 지점이 없어 그 phase 가 수렴하지 않는다.
 2. **되돌릴 수 없는 영역에 닿나.** phase 마다 `irreversible` 에 그 답을 적는다. 닿으면 어느 영역인지 문자열로(그 자리만 사람에게 올린다는 뜻), 안 닿으면 `false`(그 이유로 멈출 일이 없다는 뜻). 무엇이 그 목록인지는 BASE rubric 의 `force_await=always` 종류다.
 3. **부딪힐 판단에 우선순위를 적었나.** 최상위 `tiebreaks` 에 측정으로 안 갈리는 트레이드오프를 미리 순서 지어 둔다. 안 적으면 오케스트레이터가 그 자리에서 멈춰 결국 사람을 부른다.
-4. **이번에 안 볼 표면을 적었나.** phase 마다 `non_goals` 에 답한다. 좁히면 그 표면들을 문자열 배열로(`["수신 층", "성능 튜닝"]`), 안 좁히면 `false`. 이 칸이 여는 것이 둘이다. **하나는 바로 선다** — 문서가 "안 한다" 고 적은 것을 구현하면 checker 가 `intent-nongoal-violation` 으로 내고 그 종류는 BLOCKER 라 사람을 부른다. 종류는 계약에 원래 있었는데 **적을 칸이 없어 아무도 그 기준을 받은 적이 없다.** 다른 하나는 계측이다 — 렌즈가 finding 마다 범위 안팎을 표시하고 회차 끝의 `out_of_scope` 가 그 수를 센다. **그 수는 등급을 안 바꾼다.** 회차를 다 쓰고 멈춘 자리에서 사람이 묻는 것이 "이 지적이 이번 목표 안인가" 인데 그 답이 지금까지 아무 데도 안 남았고, 이 칸이 그것을 파일로 남긴다.
+4. **이번에 안 볼 표면을 적었나.** phase 마다 `non_goals` 에 답한다. 좁히면 그 표면들을 문자열 배열로(`["수신 층", "성능 튜닝"]`), 안 좁히면 `false`. **모든 phase 에 같은 값을 복사하면 아무것도 안 좁혀진다** — 설계 문서의 "안 만드는 것" 은 작업 **전체**가 안 만드는 것이라 공통으로 깔리고, 거기에 **그 phase 만 안 보는 표면**(다음 phase 가 볼 것)을 더해야 이 칸이 일을 한다. 그 "다음 phase 가 본다" 는 문서에 없는 정보라 여기 분해에서 정해진다. 이 칸이 여는 것이 둘이다. **하나는 바로 선다** — 문서가 "안 한다" 고 적은 것을 구현하면 checker 가 `intent-nongoal-violation` 으로 내고 그 종류는 BLOCKER 라 사람을 부른다. 종류는 계약에 원래 있었는데 **적을 칸이 없어 아무도 그 기준을 받은 적이 없다.** 다른 하나는 계측이다 — 렌즈가 finding 마다 범위 안팎을 표시하고 회차 끝의 `out_of_scope` 가 그 수를 센다. **그 수는 등급을 안 바꾼다.** 회차를 다 쓰고 멈춘 자리에서 사람이 묻는 것이 "이 지적이 이번 목표 안인가" 인데 그 답이 지금까지 아무 데도 안 남았고, 이 칸이 그것을 파일로 남긴다.
 
 기계가 보는 것은 **있는지 없는지**뿐이고, 그 검사가 아래 블록이다. 각 항목이 **정말** 되돌림과 빨개짐을 말하는지는 다음 절의 `loop-spec-checker` 와 사람이 본다.
 
@@ -334,9 +334,9 @@ jq -e 'all(.phases[]; (.non_goals | type) as $t
           or ($t=="array" and (.non_goals|length)>0 and all(.non_goals[]; type=="string" and test("\\S"))))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING non_goals"
 # 여기 걸리는 흔한 경우는 **옛 버전이 만든 진행 중 분해**다(자리가 늘면 그 전에 만든 파일이 전부
-# 걸린다). 그때 Step 1 로 되돌리면 안 된다 — Step 1 은 분해를 새로 쓰는 단계라 `status=done` 이
-# 날아가고 끝난 phase 를 다시 개발한다. 이 자리에서 할 일은 그 칸을 채우는 것뿐이다.
-[ -z "$MISSING" ] || { echo "build: phases.json 에 착수 전 스펙 검사 자리가 없다 —$MISSING 없음/빈값. 그 자리만 채우고 재개한다 — 분해를 새로 쓰지 않는다(done 진행도가 날아간다). 우회 경로 없음." >&2; exit 65; }
+# 걸린다). **채우는 것은 사람이다** — `non_goals` 를 적는 것이 phase 목표를 좁히는 일이라, 위
+# "멈추고 위로 올리는 것 셋" 이 오케스트레이터에게 직접 하지 말라고 적은 바로 그 종류다.
+[ -z "$MISSING" ] || { echo "build: phases.json 에 착수 전 스펙 검사 자리가 없다 —$MISSING 없음/빈값. 사람이 그 자리만 채우고 재개한다(안 좁혔으면 false) — 분해를 새로 쓰지 않는다(done 진행도가 날아간다). 우회 경로 없음." >&2; exit 65; }
 
 # (1b) 순회가 소비하는 자리 검증 — score.sh 의 변질 입력 exit 65 거부와 같은 결.
 #      .phases 비배열/빈배열, phase 의 name·steps 누락, step 의 ac_cmd 누락(AC 없으면 step 이 아님),
@@ -491,13 +491,16 @@ echo "checker 렌즈: $LENSES"
 echo "checker 공통 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[${LOOP_RUBRIC_LOCAL:-없음}]"
 # 이번 phase 가 안 볼 표면. `false` 면 안 좁힌 것이라 렌즈는 모든 finding 을 범위 안으로 표시한다.
 # 값을 창에 내야 프롬프트에 그대로 옮길 수 있다 — 변수 대입만으론 오케스트레이터가 값을 모른다.
-# **못 찾은 경우를 빈 값으로 두지 않는다.** `select` 가 아무것도 안 고르면 조건식에 닿기 전에 빈
-# 출력으로 끝나, 창에는 라벨만 남고 그것이 "안 좁힘" 인지 "phase 이름이 틀림" 인지 갈리지 않는다.
-echo "이번 phase 의 non_goals: $(jq -r --arg p "$PHASE" '
-  [.phases[] | select(.name==$p) | .non_goals] as $ng
-  | if   ($ng | length) == 0        then "!! phases.json 에서 phase \($p) 를 못 찾음 — PHASE 값 확인"
-    elif ($ng[0] | type) == "array" then ($ng[0] | join(" / "))
-    else "없음(표면을 안 좁힘 — 전부 범위 안)" end' "$PHASES")"
+# **phase 를 하나로 못 집으면 값을 내지 않고 멈춘다.** 이 줄의 출력은 렌즈 프롬프트에 그대로
+# 옮겨지는 값이라, 여기에 진단 문구를 실으면 렌즈가 그것을 "안 볼 표면" 의 이름으로 받는다.
+# 빈 `PHASE` 도 이 경로로 떨어지고(위 "영속 없이" 주석이 적는 실패 모드), 이름이 둘 이상이면
+# 뒤엣것의 답이 조용히 사라진다 — (1b) 스키마 검사에 이름 유일성 조건이 없어 통과하는 입력이다.
+NON_GOALS=$(jq -er --arg p "$PHASE" '[.phases[] | select(.name==$p) | .non_goals]
+  | if   length != 1              then empty
+    elif (.[0] | type) == "array" then (.[0] | join(" / "))
+    else "없음(표면을 안 좁힘 — 전부 범위 안)" end' "$PHASES") || {
+  echo "build: phases.json 에서 phase '$PHASE' 를 하나로 못 집었다(없거나 같은 이름이 둘 이상) — PHASE 값과 phase 이름을 확인한다. 멈춤" >&2; exit 65; }
+echo "이번 phase 의 non_goals: $NON_GOALS"
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 ```
 
@@ -720,7 +723,9 @@ echo "build: 런타임 상태 폐기 — $LOOP_DIR"
 | 정체 감지가 매번 INIT | 사이클 간 `stall-{phase}.json` 이 사라짐 | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history-{phase}.jsonl` append 누락 | Step 2-3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
 | 무한 같은 finding | maker 가 안 고치고 재진입 | Step 2-6 트리 확인이 잡는다. 그게 정체로 뜨면 못 고치는 finding 이므로 AWAIT_USER |
-| `build: 착수 전 스펙 검사 실패` | `phases.json` 에 필수 자리 하나가 없다(메시지가 이름을 지목한다) | 그 자리를 채우고 다시 시작한다. **우회 경로는 없다** |
+| `build: 착수 전 스펙 검사 실패` | Step 1 에서 `phases.json` 에 필수 자리 하나가 없다(메시지가 이름을 지목한다) | 그 자리를 채우고 다시 시작한다. **우회 경로는 없다** |
+| `build: phases.json 에 착수 전 스펙 검사 자리가 없다` | 같은 판정이 **순회 입구(1a)** 에서 났다. 흔한 원인은 옛 버전이 만든 진행 중 분해 | **사람이** 그 자리만 채우고 재개한다(안 좁혔으면 `false`). **Step 1 로 돌아가지 않는다** — 거기는 분해를 새로 쓰는 단계라 `status=done` 진행도가 날아간다 |
+| `build: phases.json 에서 phase '<이름>' 를 하나로 못 집었다` | `PHASE` 가 비었거나 오타이거나, 같은 이름의 phase 가 둘 이상 | 재개가 `PHASE` 를 물려받았는지 먼저 본다(빈 값이면 그쪽이다). 이름이 겹치면 하나로 만든다 — 이력·결과 파일이 이름으로 갈린다 |
 | `build: phases.json 스키마 위반` | name·steps·ac_cmd·status 중 하나가 계약 밖 | 위 (1b) 조건을 보고 고친다. 필수 자리 누락은 (1a)가 따로 이름을 지목한다 |
 | maker 가 매 회차 같은 접근을 반복 | 반복 표시를 프롬프트에 안 넣었다 | Step 2-5 의 `jq` 출력을 프롬프트에 그대로 넣는다. 이게 회차 간 유일한 기억이다 |
 | maker 스핀 후 트리 그대로 | 자기 검증에서 컴파일이 깨져 아무것도 못 고쳤거나, `blocked` 인데 스핀을 계속함 | Step 2-6 이 잡는다. maker 의 종료 문자열이 `blocked` 였는지 확인 |
