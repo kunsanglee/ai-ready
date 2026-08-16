@@ -31,6 +31,8 @@ Input the orchestrator gives you: the original task summary, the compare base (g
 
 Output: write `{"base": "<ref>", "reviewed": [ ... ], "findings": [ ... ]}` to the given output path. Each finding is `{"id", "kind", "dimension", "location", "evidence", "weights": [], "force_await": false}`, plus `"in_scope": true|false` **only when the prompt gave you `non_goals`** (see the `in_scope` section below). Do not put severity or PASS/FAIL in the output. Also echo the same JSON in your final message as an audit copy.
 
+**When the prompt narrows your review scope, `reviewed` lists only files inside that scope.** The orchestrator sometimes hands you the files this phase produced and says to raise findings inside them and read the rest only as background — that keeps lenses from re-reading the whole accumulated diff every cycle. Files you opened as background do not belong in `reviewed`: that list is the only answer to "what was actually reviewed", and padding it books unexamined files as examined. With no scope given, list everything you read, as before.
+
 `reviewed` is the list of changed files you actually read. Always fill it. If clean, use `"findings": []` — an empty array is a valid signal — but **`reviewed` must not also be empty**: the scoring shell rejects that pair with exit 65, because "clean" and "never looked" are otherwise indistinguishable. The usual real cause is a mis-resolved compare base leaving an empty diff, which would pass a phase without review. If the diff really is empty, report that instead of emitting an empty result.
 
 ## `in_scope` — is this finding inside what the phase set out to do

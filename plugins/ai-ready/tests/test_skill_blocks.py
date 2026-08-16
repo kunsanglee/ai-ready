@@ -444,6 +444,17 @@ class TestLoopRunSetup(BlockCase):
         self.assertFalse((self.loop_dir / "stall-foundation.json").exists(),
                          "앞 루프의 정체 상태가 남았다 — 거짓 STALLED 를 낸다")
 
+    def test_setup_clears_review_scope_snapshot(self):
+        """같은 티켓을 새로 시작할 때 옛 스냅숏이 남으면 첫 phase 가 **앞 루프가 만든 것을 이미
+        본 것으로 치고** 조용히 좁힌다. phase 진입이 스냅숏을 한 번만 찍게 되어 있어(재개 대비)
+        진입 쪽에서는 그것을 못 걷어낸다 — 초기화가 유일한 자리다."""
+        self.setup_loop()
+        stale = self.loop_dir / "scope-open-foundation.txt"
+        stale.write_text("deadbeef\told.txt\0")
+        self.setup_loop()
+        self.assertFalse(stale.exists(),
+                         "앞 루프의 점검 범위 스냅숏이 남았다 — 첫 phase 가 조용히 좁혀진다")
+
     def test_gitignore_gets_loop_run_and_is_idempotent(self):
         self.setup_loop()
         gi = (self.work / ".gitignore").read_text()
@@ -788,7 +799,23 @@ class TestSpecGate(BlockCase):
             {"exit_criteria", "irreversible", "tiebreaks", "non_goals"}),
     }
 
-    FIELDS = ("exit_criteria", "irreversible", "tiebreaks", "non_goals")
+    FIELDS = ("exit_criteria", "irreversible", "tiebreaks", "non_goals", "review_scope")
+
+    # 아래 둘은 `review_scope` 전용 판이다. 나머지 자리를 다 채워 그 이름만 불리는지 본다.
+    VIOLATIONS.update({
+        "review_scope 를 false 로": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["x 를 지우면 빨개진다"],
+                         "irreversible": False, "non_goals": False, "review_scope": False,
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"review_scope"}),
+        "review_scope 어휘 밖": (
+            {"tiebreaks": ["t"],
+             "phases": [{"name": "a", "status": "pending", "exit_criteria": ["x 를 지우면 빨개진다"],
+                         "irreversible": False, "non_goals": False, "review_scope": "Full",
+                         "steps": [{"ac_cmd": "x", "status": "pending"}]}]},
+            {"review_scope"}),
+    })
 
     def prepare(self, data: dict) -> None:
         self.setup_loop()
@@ -843,6 +870,26 @@ class TestPhaseScope(BlockCase):
         self.assertEqual(self.param("PHASE"), "foundation")
         self.assertEqual(self.param("HIST"), str(self.loop_dir / "history-foundation.jsonl"))
         self.assertEqual(self.param("STATE"), str(self.loop_dir / "stall-foundation.json"))
+
+    def test_phase_entry_takes_a_review_scope_snapshot(self):
+        """진입이 스냅숏을 찍어야 Step 2-2 가 좁힐 근거를 갖는다. 없으면 전 범위로 떨어진다."""
+        self.prepare()
+        self.enter_phase("foundation")
+        self.assertTrue((self.loop_dir / "scope-open-foundation.txt").is_file(),
+                        "phase 진입이 점검 범위 스냅숏을 안 찍었다")
+
+    def test_re_entering_a_phase_keeps_the_original_snapshot(self):
+        """**이 블록은 재개로도 다시 돈다.** 덮어쓰면 중단 전까지 그 phase 가 만든 것이 통째로
+        범위 밖으로 떨어진다 — 하필 사람이 끼어든 phase 라 가장 봐야 할 작업이고, 빠져도
+        아무것도 실패하지 않는다."""
+        self.prepare()
+        self.enter_phase("foundation")
+        snap = self.loop_dir / "scope-open-foundation.txt"
+        before = snap.read_bytes()
+        (self.work / "made-before-the-stop.txt").write_text("x\n")
+        self.enter_phase("foundation")
+        self.assertEqual(snap.read_bytes(), before,
+                         "재진입이 스냅숏을 덮어썼다 — 중단 전 작업이 점검에서 빠진다")
 
     def test_fresh_shell_restores_phase_scope(self):
         """프레시 셸에서 프리앰블만 source 해도 phase 스코프가 복원돼야 한다."""
@@ -1035,6 +1082,30 @@ class TestCheckerAndScoring(BlockCase):
                 shutil.copy(self.FIXTURE, self.lens_path(lens))
             else:
                 self.lens_path(lens).write_text(self.CLEAN)
+
+    def test_lens_block_narrows_to_what_this_phase_made(self):
+        """좁힌 목록이 창에 안 나오면 오케스트레이터가 프롬프트에 넣을 것이 없다 — 배선을
+        통째로 지워도 아무 검사가 실패하지 않던 자리다."""
+        self.prepare()
+        (self.work / "made-in-this-phase.txt").write_text("x\n")
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("점검 범위:", r.out, "점검 범위 줄이 창에 안 나왔다")
+        self.assertIn("made-in-this-phase.txt", r.out,
+                      "이 phase 가 만든 파일이 점검 범위에 안 실렸다")
+
+    def test_last_phase_is_never_narrowed(self):
+        """phase 끼리 부딪히는 결함을 보는 자리가 순회에 하나는 있어야 한다. 그것을 보장하는
+        것은 검사가 아니라 이 자동 예외다."""
+        self.setup_loop()
+        self.setup_phases()
+        self.run_block("b-budget")
+        self.enter_phase("wiring")          # PHASES_2 의 마지막 phase
+        (self.work / "made-in-this-phase.txt").write_text("x\n")
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("전 범위", r.out, "마지막 phase 인데 좁혔다")
+        self.assertIn("마지막 phase", r.out, "좁히지 않은 이유가 창에 안 나왔다")
 
     def test_lens_paths_are_deterministic_and_emptied(self):
         """렌즈마다 결정적 경로를 잡고 스핀 직전 비운다. 잔여가 남으면 그 축이 이번 사이클에
