@@ -520,23 +520,22 @@ echo "이번 phase 의 non_goals: $NON_GOALS"
 # `review_scope: "full"` 로 그렇게 만들 수 있다.
 LAST_PHASE="$(jq -r '.phases[-1].name' "$PHASES")"
 WANT="$(jq -r --arg p "$PHASE" '[.phases[] | select(.name==$p) | .review_scope // "phase"] | .[0]' "$PHASES")"
-SCOPE_FILE="$LOOP_DIR/scope-$PHASE.txt"
 if [ "$PHASE" = "$LAST_PHASE" ] || [ "$WANT" = "full" ]; then
-  rm -f "$SCOPE_FILE"
   echo "점검 범위: 전 범위 — $LOOP_BASE_BRANCH...HEAD 전부 (이유: $([ "$PHASE" = "$LAST_PHASE" ] && echo '마지막 phase' || echo 'review_scope=full'))"
 else
-  python3 "$ENG/review_scope.py" since --base "$LOOP_BASE_BRANCH" \
-    --snapshot "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT" > "$SCOPE_FILE"
-  NSCOPE="$(grep -c '' "$SCOPE_FILE" 2>/dev/null || echo 0)"
-  NALL="$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD | grep -c '' || echo 0)"
-  if [ "$NSCOPE" -eq 0 ]; then
+  # **줄을 세지 않고 빈 문자열인지 본다.** `grep -c ''` 는 빈 입력에서 `0` 을 찍고 종료코드 1 로
+  # 끝나 `|| echo 0` 이 한 번 더 찍는다. 그러면 값이 `0\n0` 이 되어 정수 비교가 죽고, 하필
+  # **아래 안전 분기를 건너뛰어 빈 목록이 렌즈로 넘어간다**(실측). 세는 값이 안내 문구에만
+  # 쓰이는데 그것 때문에 판정이 갈리는 자리라, 세기를 없애는 것이 그 갈래를 통째로 지운다.
+  SCOPE="$(python3 "$ENG/review_scope.py" since --base "$LOOP_BASE_BRANCH" \
+    --snapshot "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT")"
+  if [ -z "$SCOPE" ]; then
     # 빈 목록을 넘기면 렌즈가 볼 것이 없다고 읽는다 — 좁히기 실패와 "아무것도 안 고쳤다" 가
     # 같은 값이라, 여기서는 안전한 쪽인 전 범위로 떨어진다. Step 2-6 이 트리 미변경을 따로 잡는다.
-    rm -f "$SCOPE_FILE"
     echo "점검 범위: 이 phase 가 바꾼 파일 0건 — 좁히지 않고 전 범위를 넘긴다"
   else
-    echo "점검 범위: 이 phase 가 바꾼 $NSCOPE 개 파일 (누적 변경 $NALL 개 중). 앞 phase 가 이미 본 것은 이번에 안 넘긴다"
-    sed 's/^/  /' "$SCOPE_FILE"
+    echo "점검 범위: 아래 파일들 — 지적은 이 안에서 내고 나머지는 배경으로만 읽는다"
+    printf '%s\n' "$SCOPE" | sed 's/^/  /'
   fi
 fi
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done

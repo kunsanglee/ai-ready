@@ -150,15 +150,14 @@ def main() -> int:
         missing = snaps / "nope"
         check("스냅숏 부재 = 전부 범위", "with space.txt" in since(root, missing), True)
 
-        # ── pathspec 출력은 인용해서 낸다 ──────────────────────────────────
-        # 자기 스냅숏 위에서 잰다. 앞 검사들이 만든 파일이 섞이면 기대값이 그 순서에 매인다.
+        # ── 진입 전에 지워져 있던 파일을 되살리는 것도 이번 phase 의 변경이다 ──
+        # 되살리면 base 대비 무변경이 되어 현재 상태 목록에서 통째로 빠진다. 그래서 없는 쪽에
+        # "지워짐" 을 기본값으로 주면 스냅숏의 "지워짐" 과 같아져 안 바뀐 것으로 떨어진다.
+        (root / "base.txt").unlink()
         s9 = snaps / "s9"
         snapshot(root, s9)
-        (root / "another space.txt").write_text("q\n", encoding="utf-8")
-        ps = run(
-            root, "since", "--base", "mainline", "--snapshot", str(s9), "--format", "pathspec"
-        ).strip()
-        check("pathspec 은 인용된다", ps, "'another space.txt'")
+        (root / "base.txt").write_text("base\n", encoding="utf-8")
+        check("지워져 있던 파일을 되살린 것이 잡힌다", since(root, s9), ["base.txt"])
 
     print(f"review_scope: 통과 {_pass} / 실패 {_fail}")
     return 1 if _fail else 0

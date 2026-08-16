@@ -148,4 +148,27 @@ if [ -n "$brace_bad" ]; then
 fi
 echo "[brace] OK — 변수 뒤에 한글이 바로 붙은 자리 없음"
 
+# --- `grep -c` 의 종료코드를 `|| echo` 로 덮었나 ---   # grepc-check-example
+# grep 은 일치가 하나도 없으면 **`0` 을 찍고 종료코드 1 로** 끝난다. 그래서 `$(grep -c … || echo 0)`   # grepc-check-example
+# 는 0 을 두 번 찍어 값이 `0\n0` 이 되고, 그 값으로 정수 비교를 하면 셸이 "integer expression
+# expected" 로 죽으면서 조건이 **거짓**이 된다. 하필 그 조건이 "비었으면 안전한 쪽으로 간다" 인
+# 경우가 있어, 문서가 약속한 안전 분기가 통째로 도달 불가가 된다(2026-08-16 실측 — 점검 범위
+# 좁히기에서 빈 목록이 그대로 렌즈로 넘어갔다).
+#
+#   나쁨:  N="$(grep -c '' "$f" || echo 0)"; [ "$N" -eq 0 ] && …   # grepc-check-example
+#   좋음:  V="$(cmd)"; [ -z "$V" ] && …
+#
+# 세는 값이 안내 문구에만 쓰이는데 그것 때문에 판정이 갈리는 것이 이 버그의 모양이라, 세기를
+# 없애는 쪽이 갈래를 통째로 지운다. 예외가 정말 필요하면 줄 끝에 grepc-check-example 을 단다.
+grepc_bad="$(grep -rn 'grep -c' --include='*.sh' --include='*.md' --include='*.py' \
+  build core plugins codex 2>/dev/null \
+  | grep '|| echo' | grep -v 'grepc-check-example' || true)"
+if [ -n "$grepc_bad" ]; then
+  echo "[grep-c] 일치 0건이면 값이 두 줄이 된다 — 정수 비교가 죽고 그 조건이 거짓이 된다:" >&2
+  printf '%s\n' "$grepc_bad" | cut -c1-160 | sed 's/^/          /' >&2
+  echo "         세지 말고 값을 변수로 받아 [ -z \"\$VAR\" ] 로 본다." >&2
+  exit 1
+fi
+echo "[grep-c] OK — grep -c 종료코드를 덮는 자리 없음"
+
 echo "드리프트 테스트 통과."

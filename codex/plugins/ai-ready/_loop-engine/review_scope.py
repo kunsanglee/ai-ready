@@ -16,16 +16,16 @@
 git 객체를 새로 쓰지 않고 작업 트리를 읽기만 한다.
 
 **이것이 좁히는 것은 렌즈가 읽는 양이지 판정 기준이 아니다.** 좁히면 phase 끼리 부딪히는
-결함이 안 보이므로, 분해는 phase 하나에 `review_scope: "full"` 을 줘서 전 범위를 한 번은
-보게 해야 한다. 그 요구는 `/build` 의 착수 전 검사가 든다.
+결함이 안 보이므로 전 범위를 보는 자리가 순회에 하나는 있어야 하는데, 그것을 보장하는 것은
+검사가 아니라 셸이다 — `skills/build/SKILL.md` 의 "점검 범위" 블록이 **마지막 phase 를 무조건
+전 범위로 돌린다.** 중간 phase 도 분해에 `review_scope: "full"` 을 적어 그렇게 만들 수 있다.
 
 사용법:
     review_scope.py snapshot --base <ref> --out <파일>
-    review_scope.py since    --base <ref> --snapshot <파일> [--format lines|pathspec]
+    review_scope.py since    --base <ref> --snapshot <파일>
 
-`since` 의 출력:
-    lines    — 파일 경로를 한 줄에 하나씩(기본). 없으면 아무것도 안 낸다.
-    pathspec — `git diff <base>...HEAD --` 뒤에 그대로 붙일 수 있는 인용된 경로들.
+`since` 는 파일 경로를 한 줄에 하나씩 낸다. 바뀐 것이 없으면 아무것도 안 낸다 — 부르는 쪽은
+그 빈 출력을 "좁히지 않는다" 로 읽는다(빈 목록을 렌즈에 넘기면 아무것도 안 보게 된다).
 
 종료코드는 둘 다 0 이 정상이다. git 이 없거나 저장소가 아니면 2 로 죽는다 — 조용히 빈 목록을
 내면 "이번 phase 가 아무것도 안 만들었다" 와 구분이 안 되고, 그 오독이 전 범위 점검을
@@ -110,7 +110,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base", required=True)
     parser.add_argument("--out")
     parser.add_argument("--snapshot")
-    parser.add_argument("--format", choices=("lines", "pathspec"), default="lines")
     parser.add_argument("--root", default=".")
     args = parser.parse_args(argv)
 
@@ -132,17 +131,16 @@ def main(argv: list[str] | None = None) -> int:
     # 놓친다 — 그런 파일은 HEAD 에도 없고 미추적 목록에도 없어서 `_changed_paths` 가 못 준다.
     # 스냅숏에만 남아 있는 것이 유일한 흔적이라, 그 쪽에서 끌어와야 삭제가 변경으로 잡힌다.
     # (추적 중인 파일의 삭제는 `diff HEAD` 가 주므로 이 합집합이 그 경우를 중복 세지 않는다.)
+    # **없는 쪽에 기본값을 주지 않는다.** `state.get(rel, DELETED)` 로 두면, 진입 시점에 이미
+    # 지워져 있던(`-`) 추적 파일을 이번 phase 가 원래 내용으로 되살렸을 때 그 파일이 base 대비
+    # 무변경이 되어 `state` 에서 빠지고, 기본값 `-` 가 스냅숏의 `-` 와 같아져 안 바뀐 것이 된다.
+    # 되살리기도 이번 phase 가 한 변경이라 렌즈가 봐야 한다(실측으로 갈렸다).
     touched = sorted(
-        rel
-        for rel in set(state) | set(before)
-        if before.get(rel) != state.get(rel, DELETED)
+        rel for rel in set(state) | set(before) if before.get(rel) != state.get(rel)
     )
 
-    if args.format == "pathspec":
-        print(" ".join(f"'{p}'" for p in touched))
-    else:
-        for rel in touched:
-            print(rel)
+    for rel in touched:
+        print(rel)
     return 0
 
 
