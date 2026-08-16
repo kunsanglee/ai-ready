@@ -63,8 +63,8 @@ MUTATIONS = [
         '''  || { echo "build: params.env 없음 — Step 0 미실행/폐기됨" >&2; exit 65; }
 set -a; . "$LOOP_DIR/params.env"; set +a
 
-# (1a) 착수 전 스펙 검사 셋 재확인''',
-        "\n# (1a) 착수 전 스펙 검사 셋 재확인",
+# (1a) 착수 전 스펙 검사 재확인''',
+        "\n# (1a) 착수 전 스펙 검사 재확인",
         ["TestBlockInventory.test_state_blocks_rederive_or_are_prepended",
          "TestLoopBuildSetup.test_budget_block_without_pointer_fails_loud"],
         "0.9.4 결함 2 — Step 0 과 같은 셸이라 가정하면 PHASES·BUDGET_MIN 이 빈 값으로 돈다.",
