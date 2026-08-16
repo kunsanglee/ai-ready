@@ -168,6 +168,45 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertIn("--expect 3", skill,
                       "SKILL.md 가 렌즈 개수 검사(--expect)를 안 적는다 — 죽은 축이 통과로 읽힌다")
 
+    def test_review_scope_contract_is_stated_on_both_sides(self):
+        """점검 범위 좁히기는 이 트리에서 산문이 계약의 전부다 — 셸 게이트가 없다.
+
+        Claude 쪽은 블록 시험이 배선을 잡지만 여기는 문장이 빠져도 아무것도 안 실패한다.
+        빠지면 갈라지는 방향이 둘이다. 스폰 절이 좁히기를 안 적으면 렌즈가 매 회차 누적 변경을
+        통째로 다시 읽고(이 기능이 아예 안 도는데 초록이다), 계약이 `reviewed` 와의 관계를
+        안 적으면 배경으로 열어 본 파일까지 점검된 것으로 집계된다.
+        """
+        skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "build" / "references" / "checker-role.md").read_text(encoding="utf-8")
+
+        self.assertIn("review_scope.py", skill,
+                      "스폰 절이 범위 산출 스크립트를 안 적는다 — 좁히기가 한 번도 안 돈다")
+        for mode in ("snapshot", "since"):
+            self.assertIn(mode, skill, f"스폰 절이 {mode} 모드를 안 적는다")
+        # **개수로 세지 않는다.** 세 자리에 있어야 하는데 총계로 재면 한 자리가 빠져도 다른
+        # 자리에 둘이 있으면 통과한다(실측: 필드 열거에서 지웠는데 `>= 3` 이 통과했다).
+        # 자리마다 그 문단을 특정하는 문장으로 확인한다.
+        for where, anchor in (
+            ("필드 열거", "There is no other mode to fall back to"),
+            ("재개 재점검", "do not rewrite the decomposition"),
+        ):
+            para = next((p for p in skill.split("\n") if anchor in p), None)
+            self.assertIsNotNone(para, f"{where} 문단을 못 찾았다 — 앵커가 낡았다")
+            self.assertIn("review_scope", para,
+                          f"{where} 문단이 review_scope 를 안 적는다 — 분해를 쓰는 사람이 "
+                          f"그 필드가 있는 줄 모른 채 지나간다")
+        self.assertIn('"full"', skill, "안 좁히는 값의 어휘를 안 적는다")
+
+        # 좁히면 phase 끼리 부딪히는 결함을 아무도 안 본다 — 그 대가를 갚는 문장.
+        for token in ("last phase", "not narrowed"):
+            self.assertIn(token, skill,
+                          f"전 범위를 보는 자리를 남긴다는 계약('{token}')이 없다")
+
+        # 렌즈 계약: 좁힌 범위와 reviewed 의 관계.
+        self.assertIn("reviewed", role)
+        self.assertIn("background", role,
+                      "checker-role 이 배경 읽기와 reviewed 의 관계를 안 적는다")
+
     def test_audit_bundle_has_no_hook_installer(self):
         scripts = PLUGIN / "skills" / "audit" / "scripts"
         for filename in ("audit.py", "scaffold.py", "extract_antipatterns.py", "dashboard.py"):

@@ -144,7 +144,10 @@ fi
 # (`history.jsonl`·`stall.json`)을 함께 잡는다. 0.9.x 루프가 완주 전에 멈췄으면 같은 티켓
 # 디렉터리에 그 파일이 남아 있고, `history-*` 만 지우면 살아남아 종료 후 lesson 수확이
 # 글롭으로 그것까지 읽어 옛 루프의 실수가 이번 교훈 후보에 섞인다.
-rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json
+# **점검 범위 스냅숏도 함께 지운다.** phase 진입이 그것을 한 번만 찍게 되어 있어(재개 대비),
+# 같은 티켓을 새로 시작할 때 옛 스냅숏이 남아 있으면 첫 phase 가 **앞 루프가 만든 것을 이미
+# 본 것으로 치고 조용히 좁힌다.** 초기화 대상에서 빠지면 그 실패는 아무 데도 안 드러난다.
+rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json "$LOOP_DIR"/scope-open-*.txt
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -190,6 +193,9 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
       "exit_criteria": ["관성 분기를 지우면 그 검사가 실패한다", "빈 입력으로 부르면 exit 65 로 죽는다"],
       "irreversible": false,          // 닿으면 "운영 DB 마이그레이션" 처럼 영역을 문자열로
       "non_goals": ["수신 층", "성능 튜닝"],   // 이번에 안 볼 표면. 안 좁히면 false
+      "review_scope": "phase",        // 선택. 기본 "phase"(이 phase 가 만든 파일만 렌즈에 넘긴다).
+                                      // "full" 이면 안 좁힌다. **마지막 phase 는 적든 안 적든 full 이다** —
+                                      // phase 끼리 부딪히는 결함을 보는 자리가 순회에 하나는 있어야 한다.
       "steps": [
         { "id": "types",  "goal": "도메인 타입 정의", "layer": "domain",
           "signature": "data class X(...)", "ac_cmd": "./gradlew :x-domain:compileKotlin",
@@ -249,6 +255,12 @@ jq -e 'all(.phases[]; (.non_goals | type) as $t
         | ($t=="boolean" and .non_goals==false)
           or ($t=="array" and (.non_goals|length)>0 and all(.non_goals[]; type=="string" and test("\\S"))))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING non_goals"
+# (5) 점검 범위 — 선택 필드지만 값이 있으면 어휘 안이어야 한다. 없으면 "phase"(좁힘)가 기본이다.
+#     **`false` 를 거부하는 것이 이 검사의 요점이다.** 바로 위 non_goals 가 `false` = "안 좁힘" 이라
+#     그 관용을 옮겨 적기 쉬운데, jq 의 `//` 는 false 도 빈 값으로 봐서 그 값이 조용히 "좁힘" 으로
+#     떨어진다 — 안 좁히려던 사람이 정확히 반대를 얻는다(실측: false·"Full"·"all" 전부 좁혔다).
+jq -e 'all(.phases[]; if has("review_scope") then (.review_scope | IN("phase","full")) else true end)' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING review_scope"
 
 [ -z "$MISSING" ] || { echo "build: 착수 전 스펙 검사 실패 —$MISSING 없음/빈값. phases.json 의 그 자리를 채우고 다시 시작한다(우회 경로 없음)." >&2; exit 65; }
 echo "build: 착수 전 스펙 검사 통과"
@@ -333,6 +345,12 @@ jq -e 'all(.phases[]; (.non_goals | type) as $t
         | ($t=="boolean" and .non_goals==false)
           or ($t=="array" and (.non_goals|length)>0 and all(.non_goals[]; type=="string" and test("\\S"))))' \
   "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING non_goals"
+# (5) 점검 범위 — 선택 필드지만 값이 있으면 어휘 안이어야 한다. 없으면 "phase"(좁힘)가 기본이다.
+#     **`false` 를 거부하는 것이 이 검사의 요점이다.** 바로 위 non_goals 가 `false` = "안 좁힘" 이라
+#     그 관용을 옮겨 적기 쉬운데, jq 의 `//` 는 false 도 빈 값으로 봐서 그 값이 조용히 "좁힘" 으로
+#     떨어진다 — 안 좁히려던 사람이 정확히 반대를 얻는다(실측: false·"Full"·"all" 전부 좁혔다).
+jq -e 'all(.phases[]; if has("review_scope") then (.review_scope | IN("phase","full")) else true end)' \
+  "$PHASES" >/dev/null 2>&1 || MISSING="$MISSING review_scope"
 # 여기 걸리는 흔한 경우는 **옛 버전이 만든 진행 중 분해**다(자리가 늘면 그 전에 만든 파일이 전부
 # 걸린다). **채우는 것은 사람이다** — `non_goals` 를 적는 것이 phase 목표를 좁히는 일이라, 위
 # "멈추고 위로 올리는 것 셋" 이 오케스트레이터에게 직접 하지 말라고 적은 바로 그 종류다.
@@ -379,6 +397,28 @@ PHASE="<이 phase 의 name>"
 printf 'PHASE=%q\nHIST=%q\nSTATE=%q\n' "$PHASE" "$LOOP_DIR/history-$PHASE.jsonl" "$LOOP_DIR/stall-$PHASE.json" >> "$LOOP_DIR/params.env"
 rm -f "$LOOP_DIR/gate.fail"   # 게이트 실패 카운터도 phase 단위로 리셋
 touch "$LOOP_DIR/history-$PHASE.jsonl"
+# 들어오는 순간의 변경 상태를 파일별 해시로 적어 둔다. Step 2-2 가 이것과 비교해 **이 phase 가
+# 실제로 만든 것**만 렌즈에 넘긴다. 스냅숏이 없으면 그 단계가 좁히기를 건너뛰고 전 범위를
+# 넘기므로, 이 줄이 빠져도 점검이 헐거워지지 않고 느려지기만 한다(안전한 쪽으로 떨어진다).
+#
+# **한 phase 에 한 번만 찍는다 — 이 블록은 재개로도 다시 실행된다.** 사람 멈춤(AWAIT_USER·
+# STALLED·brake) 뒤에 이어가면 위 재유도 프리앰블부터 이 줄까지 그대로 다시 돌고, 덮어쓰면
+# **중단 전까지 그 phase 가 만든 것이 통째로 범위 밖으로 떨어진다**(실측: 파일 셋을 만든 뒤
+# 다시 찍으니 범위가 셋에서 하나로 줄었다). 하필 사람이 끼어든 phase 라 가장 봐야 할 작업이고,
+# 빠져도 아무것도 실패하지 않는다. 바로 위 시간 상한 블록이 같은 이유로 멱등을 요구한다.
+#
+# **이미 회차를 돈 phase 에는 새로 찍지 않는다.** 스냅숏이 없는데 이력이 있으면 그 phase 는
+# 좁히기가 들어오기 전 판으로 돌던 중이다(업그레이드하고 재개한 경우). 거기서 지금 찍으면
+# 그때까지 만든 것이 스냅숏에 들어가 **업그레이드 전 작업이 통째로 범위 밖이 된다** — 위와
+# 같은 사고를 다른 문으로 들이는 것이다. 스냅숏을 안 만들면 Step 2-2 가 전 범위로 떨어진다.
+if [ -f "$LOOP_DIR/scope-open-$PHASE.txt" ]; then
+  echo "점검 범위 스냅숏: 이미 있다(재개) — 덮지 않는다"
+elif [ -s "$LOOP_DIR/history-$PHASE.jsonl" ]; then
+  echo "점검 범위 스냅숏: 안 찍는다 — 이 phase 는 이미 회차를 돌았다(좁히기 이전 판). 전 범위로 돈다"
+else
+  python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" \
+    --out "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT"
+fi
 echo "phase 진입: $PHASE"
 ```
 
@@ -464,6 +504,13 @@ fi
 
 - 공통: 설계 문서 경로와 이 phase 의 `design_ref`·step 목록, **이 phase 의 `exit_criteria` 항목 전부**, **이 phase 의 `non_goals`**, 비교 베이스 `$LOOP_BASE_BRANCH`, 컨벤션 문서 `$LOOP_CONVENTION_DOCS`·지식층 `$LOOP_KNOWLEDGE_LAYER`(비었으면 "없음" 명시 — checker 가 "컨벤션 문서 없음, 신뢰도 제한" 경로를 정직하게 타게), 종류 어휘 rubric 두 경로(BASE `$ENG/rubric.base.md`, LOCAL `$LOOP_RUBRIC_LOCAL` 있으면).
 - 렌즈마다: **렌즈 이름과 담당 차원**, 그리고 **그 렌즈 전용 출력 경로**.
+- 그리고 **점검 범위** — 아래 블록이 낸 값을 그대로 옮긴다. 파일 목록이 나왔으면 "지적은 이 파일들 안에서 낸다, 나머지는 배경으로만 읽는다" 를 함께 적고, "전 범위" 가 나왔으면 그대로 적는다.
+
+**점검 범위를 왜 좁히나 — 안 좁히면 마지막 phase 의 렌즈가 첫 phase 를 처음부터 다시 읽는다.** 비교 베이스는 Step 0 에서 한 번 정해지고 순회 내내 그대로라, 렌즈가 보는 양은 phase 가 진행될수록 자라기만 한다. 실측에서 회차 하나가 76분이었고 게이트는 그중 14초였다 — 나머지는 렌즈가 **누적된** 변경을 읽는 시간이다. 여덟째 회차의 렌즈도 첫 회차와 같은 2,600줄을 여덟 번째로 읽었다. `review_scope.py` 가 phase 진입 스냅숏과 지금을 견줘 **이 phase 가 실제로 만든 파일**만 뽑는다. 경로 목록이 아니라 내용 해시로 재는 것이 요점이다 — 목록으로 재면 **앞 phase 가 만든 파일을 이번 phase 가 고친 경우**가 빠지고, 빠져도 아무 검사가 실패하지 않는다(`_loop-engine/test_review_scope.py` 가 그 성질을 든다).
+
+**좁히기가 공짜가 아니라서 전 범위를 보는 자리를 하나 남긴다.** 좁히면 phase 끼리 부딪히는 결함이 안 보인다 — 첫 phase 의 코드와 다섯째 phase 의 코드가 맞물려 깨지는 자리가 그렇다. 그래서 **마지막 phase 는 자동으로 안 좁히고**, 중간 phase 도 필요하면 `review_scope: "full"` 로 그렇게 만든다. 되돌림 확인처럼 전 범위를 다시 도는 phase 가 그 자리로 적당하다.
+
+**그 보장은 순회를 끝까지 도는 것에 달려 있다.** brake·`AWAIT_USER`·`STALLED` 로 마지막 phase 이전에 멈추면 전 범위를 본 자리가 **한 번도 안 돈다.** 그 상태에서 사람이 "여기서 닫는다" 를 고르려면 그 사실을 알아야 하므로, 멈춰서 사람을 부를 때 **전 범위로 돈 phase 가 있었는지 한 줄로 함께 올린다**(`phases.json` 의 `done` 인 phase 중 마지막이거나 `review_scope: "full"` 인 것이 있었나). 그리고 **phase 가 하나뿐인 분해에서는 그 하나가 곧 마지막이라 이 기능이 아예 안 걸린다** — 변경 하나를 수렴시키는 경우가 그렇고, 그때는 좁힐 앞 phase 도 없으니 손해가 없다.
 
 **`exit_criteria` 를 왜 checker 에 넘기나 — 안 넘기면 아무도 안 재기 때문이다.** 착수 전 검사는 그 항목이 *있는지* 만 보고, PASS 판정은 `BLOCKER 0 AND CRITICAL 0` 이라 그 phase 의 완료 조건과 무관하다. 그 사이에 "관성 분기를 지우면 그 검사가 실패한다" 를 적어 두고 실제로 그런지 재는 자리가 없었다. 항목을 프롬프트에 실으면 점검자가 그것을 **정합 판정의 기준**으로 삼아, 조건이 성립하지 않으면 `intent-requirement-missing` 으로 낸다(그 dimension floor 가 MAJOR 라 `RETRY_SOFT` 가 되어 다음 회차로 돌아간다). 평가 *계산기* 는 고정이고 **평가 대상 기준을 phase 가 가져오는 것**이 이 구조가 작업마다 달라지는 방식이다 — 계산기까지 매번 새로 지으면 같은 코드가 회차마다 다른 등급을 받아 정체 감지가 무너지고, 루프가 코드 대신 기준을 낮춰 통과할 수 있다.
 
@@ -501,6 +548,39 @@ NON_GOALS=$(jq -er --arg p "$PHASE" '[.phases[] | select(.name==$p) | .non_goals
     else "없음(표면을 안 좁힘 — 전부 범위 안)" end' "$PHASES") || {
   echo "build: phases.json 에서 phase '$PHASE' 를 하나로 못 집었다(없거나 같은 이름이 둘 이상) — PHASE 값과 phase 이름을 확인한다. 멈춤" >&2; exit 65; }
 echo "이번 phase 의 non_goals: $NON_GOALS"
+# 점검 범위 — 이 phase 가 실제로 만든 것. phase 진입 스냅숏과 지금을 견줘 뽑는다.
+# **마지막 phase 는 안 좁힌다.** 좁히면 phase 끼리 부딪히는 결함을 아무도 안 보게 되므로,
+# 전 범위를 보는 자리가 순회 안에 반드시 하나는 있어야 한다. 중간 phase 도 필요하면
+# `review_scope: "full"` 로 그렇게 만들 수 있다.
+LAST_PHASE="$(jq -r '.phases[-1].name' "$PHASES")"
+WANT="$(jq -r --arg p "$PHASE" '[.phases[] | select(.name==$p) | .review_scope // "phase"] | .[0]' "$PHASES")"
+if [ "$PHASE" = "$LAST_PHASE" ] || [ "$WANT" = "full" ]; then
+  echo "점검 범위: 전 범위 — $LOOP_BASE_BRANCH...HEAD 전부 (이유: $([ "$PHASE" = "$LAST_PHASE" ] && echo '마지막 phase' || echo 'review_scope=full'))"
+elif [ ! -f "$LOOP_DIR/scope-open-$PHASE.txt" ]; then
+  # **진입 스냅숏이 없으면 좁히지 않는다.** 이 판으로 올리기 전에 시작된 phase 가 그 경로다.
+  # 스냅숏 없이 `since` 를 부르면 빈 목록이 아니라 **누적 변경 전부**가 나오는데, 그것을 그대로
+  # 찍으면 "이 phase 가 바꾼 N 개" 로 보여 사람이 좁혀진 줄로 읽는다. 따로 가르는 이유가 그것이다.
+  echo "점검 범위: 전 범위 — 이 phase 의 진입 스냅숏이 없다(좁히기가 들어오기 전에 시작된 phase). 다음 phase 부터 좁혀진다"
+else
+  # **줄을 세지 않고 빈 문자열인지 본다.** 세면 `grep -c` 가 빈 입력에서 `0` 을 찍고 종료코드 1 로
+  # 끝나는 성질에 걸려 아래 안전 분기가 통째로 도달 불가가 된다(실측). `build/drift-test.sh` 의
+  # `[grep-c]` 가 그 패턴이 다시 들어오는 것을 막는다.
+  #
+  # **종료코드가 0 이 아니면 좁히지 않는다.** 범위를 못 내는 사정(저장소 루트가 아닌 경로,
+  # 목록에 담을 수 없는 경로)은 전부 넓은 쪽으로 떨어져야 한다 — 빈 출력을 그냥 받으면
+  # "아무것도 안 고쳤다" 와 구분이 안 되고, 그 오독이 전 범위 점검을 빈 점검으로 바꾼다.
+  if ! SCOPE="$(python3 "$ENG/review_scope.py" since --base "$LOOP_BASE_BRANCH" \
+      --snapshot "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT")"; then
+    echo "점검 범위: 전 범위 — 범위 산출이 거부했다(위 사유). 좁히지 않는다"
+  elif [ -z "$SCOPE" ]; then
+    # 빈 목록을 넘기면 렌즈가 볼 것이 없다고 읽는다 — 좁히기 실패와 "아무것도 안 고쳤다" 가
+    # 같은 값이라, 여기서는 안전한 쪽인 전 범위로 떨어진다. Step 2-6 이 트리 미변경을 따로 잡는다.
+    echo "점검 범위: 이 phase 가 바꾼 파일 0건 — 좁히지 않고 전 범위를 넘긴다"
+  else
+    echo "점검 범위: 아래 파일들 — 지적은 이 안에서 내고 나머지는 배경으로만 읽는다"
+    printf '%s\n' "$SCOPE" | sed 's/^/  /'
+  fi
+fi
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 ```
 
@@ -576,6 +656,8 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 3. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
 4. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 3번과 **전할 말이 다르다.** 3번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다 — 코드가 아니라 phase 목표를 의심하라"** 다. 사람에게 물을 것 둘: 이 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다.
 5. `V == PASS` → 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
+
+> **1~4 로 멈출 때는 "전 범위를 본 phase 가 아직 없다" 를 함께 올린다.** 점검 범위 좁히기는 마지막 phase 를 안 좁히는 것으로 대가를 갚는데, **그 자리는 순회를 끝까지 돌아야 온다.** 중간에 멈추면 phase 끼리 부딪히는 결함을 본 회차가 하나도 없이 끝나고, 사람은 "여기서 닫는다" 를 고를 때 그 사실을 모른다. 판정은 `jq -r '[.phases[] | select(.status=="done") | select(.review_scope=="full" or .name==$last)] | length'` 처럼 **닫힌 phase 중 안 좁힌 것이 있었나**로 낸다.
 6. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall/반복 종류 미도달) → **Step 2-5(maker 스핀)** 로.
 
 > **완료 조건이 전부 성립했는데 조건 밖 지적만 남았으면 — 사람이 그 phase 를 닫을 수 있다.** PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고 **그 phase 의 완료 조건을 안 본다.** 그래서 조건을 다 만족하고도 조건 **밖** CRITICAL 때문에 안 닫히는 상태가 성립한다. 사람이 고를 것은 셋이다. (a) 회차 상한을 올려 한 번 더 돈다. (b) **여기서 닫고 남은 지적을 다음 phase 로 세운다** — `phases.json` 에 phase 를 하나 더하면 회차가 새로 시작된다. 회차 상한은 "한 목표에 몇 번까지 매달릴 것인가" 라, 목표가 바뀌면 새로 세는 것이 맞다(편법이 아니다). (c) 목표가 애초에 열거 불가능했다고 보고 `exit_criteria` 를 다시 적는다. **이 판단은 자동으로 못 한다** — 조건 성립은 checker 가 되돌림으로 재지만 "이 지적이 조건 밖인가" 는 사람이 정한다. 2026-08-11 `agent-ts` 의 저장 계층 첫 phase 가 완료 조건 열한 개를 전부 만족하고도 조건 밖 CRITICAL 때문에 회차 상한 여덟을 다 썼고, (b) 로 닫았다.
@@ -720,6 +802,10 @@ echo "build: 런타임 상태 폐기 — $LOOP_DIR"
 | `score.sh: 입력 형식 오류 — exit 65` | 병합 결과가 계약 위반 | 병합 전 렌즈 파일들을 본다. `[ -s ]`·형식 검사는 merge 가 먼저 잡는다 |
 | `loop: findings 도 reviewed 도 비었다 — exit 65` | 렌즈 전부가 빈 결과 + `reviewed` 미기입. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** | 베이스 브랜치와 diff 범위를 먼저 확인한다. PASS 로 넘기지 말 것 |
 | 한 렌즈만 매번 0건 | 그 축 프롬프트가 잘못됐거나 담당 차원이 안 넘어감 | Step 2-3 의 "렌즈별 적발" 줄로 확인. **빈 결과를 깨끗함의 증거로 읽지 않는다** |
+| 회차가 갈수록 느려진다 | 비교 베이스가 순회 내내 고정이라 렌즈가 읽는 양이 자란다 | Step 2-2 의 "점검 범위" 줄을 본다. 매번 "전 범위" 로 나오면 phase 진입 스냅숏이 안 만들어진 것이다 |
+| 점검 범위가 매번 전 범위로 나온다 | 그 phase 가 마지막이거나 `review_scope: "full"` 이거나, 진입 스냅숏이 없다(이 기능 이전에 시작된 phase) | Step 2-2 의 "점검 범위" 줄이 이유를 함께 찍는다. **좁히기 실패는 느려질 뿐 헐거워지지 않는다** — 급하지 않다 |
+| `review_scope` 를 `false` 로 적었는데 좁혀진다 | jq 의 `//` 가 false 를 빈 값으로 봐서 기본값 `"phase"` 로 떨어진다. 옆 `non_goals` 는 `false` 가 "안 좁힘" 이라 관용이 반대다 | 착수 전 검사가 이제 `false` 를 거부한다. 안 좁히려면 `"full"` 이다 |
+| 좁혔더니 앞 phase 코드와 맞물린 결함을 놓쳤다 | 전 범위를 보는 phase 가 실질적으로 없었다 | 마지막 phase 는 자동으로 안 좁힌다. **다만 거기까지 못 갔으면 한 번도 안 돈 것이다** — brake·AWAIT_USER 로 멈췄다면 `done` 인 phase 중 전 범위로 돈 것이 있었는지 본다 |
 | 정체 감지가 매번 INIT | 사이클 간 `stall-{phase}.json` 이 사라짐 | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
 | 회차가 안 늘어남 | `history-{phase}.jsonl` append 누락 | Step 2-3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
 | 무한 같은 finding | maker 가 안 고치고 재진입 | Step 2-6 트리 확인이 잡는다. 그게 정체로 뜨면 못 고치는 finding 이므로 AWAIT_USER |
