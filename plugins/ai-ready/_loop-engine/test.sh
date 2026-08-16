@@ -544,6 +544,20 @@ else
   echo "SKIP  gate_parse 테스트 — python3 미설치"
 fi
 
+# ── 9-1. review_scope.py 점검 범위 (이 phase 가 실제로 만든 것) ──
+# 잘못 좁히면 그 회차의 변경이 통째로 안 읽히는데 그 실패는 조용하다 — 렌즈는 받은 목록만 보고
+# 깨끗하다고 답한다. 특히 "앞 phase 가 만든 파일을 이번 phase 가 고친" 자리가 순진한 구현에서
+# 빠지고, 빠져도 나머지가 전부 통과한다.
+if command -v python3 >/dev/null 2>&1; then
+  if rs_out="$(python3 "$DIR/test_review_scope.py" 2>&1)"; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1)); printf 'FAIL  review_scope 테스트\n%s\n' "$rs_out"
+  fi
+else
+  echo "SKIP  review_scope 테스트 — python3 미설치"
+fi
+
 # ── 10. merge_findings.sh 축별 병렬 checker 결과 병합 ─────────────
 # checker 를 축으로 갈라 병렬로 띄우면 결과가 파일 여러 개로 나온다. 그 사이를 잇는 셸이고,
 # **개수 검사가 존재 이유다** — 렌즈 하나가 죽어도 남은 둘의 결과는 형식이 멀쩡해서, 세지 않으면
