@@ -891,6 +891,19 @@ class TestPhaseScope(BlockCase):
         self.assertEqual(snap.read_bytes(), before,
                          "재진입이 스냅숏을 덮어썼다 — 중단 전 작업이 점검에서 빠진다")
 
+    def test_upgraded_mid_phase_does_not_snapshot(self):
+        """이미 회차를 돈 phase 에 스냅숏이 없으면, 지금 찍지 말고 전 범위로 돌아야 한다.
+
+        찍으면 **좁히기 이전 판으로 만든 것이 통째로 범위 밖**이 된다 — 재개 덮어쓰기와 같은
+        사고를 업그레이드라는 다른 문으로 들이는 것이다.
+        """
+        self.prepare()
+        (self.loop_dir / "history-foundation.jsonl").write_text('{"iteration":1}\n')
+        r = self.enter_phase("foundation")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertFalse((self.loop_dir / "scope-open-foundation.txt").exists(),
+                         "이미 회차를 돈 phase 에 스냅숏을 새로 찍었다 — 그 전 작업이 점검에서 빠진다")
+
     def test_fresh_shell_restores_phase_scope(self):
         """프레시 셸에서 프리앰블만 source 해도 phase 스코프가 복원돼야 한다."""
         self.prepare()

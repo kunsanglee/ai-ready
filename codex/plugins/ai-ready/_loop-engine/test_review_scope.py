@@ -145,10 +145,58 @@ def main() -> int:
         s8 = snaps / "s8"
         snapshot(root, s8)
         check("개행 경로를 담은 뒤 다시 읽으면 변경 없음", since(root, s8), [])
+        # 치운다. 남겨 두면 **바뀐 것으로 잡혀** 아래 검사들이 개행 방어(exit 3)에 걸린다.
+        (root / weird).unlink()
 
         # ── 스냅숏 파일이 없으면 첫 phase 로 본다 ──────────────────────────
         missing = snaps / "nope"
         check("스냅숏 부재 = 전부 범위", "with space.txt" in since(root, missing), True)
+
+        # ── 목록에 낼 수 없는 경로가 있으면 좁히기를 포기한다 ────────────────
+        # 개행이 든 경로는 줄 단위 출력에서 두 줄로 쪼개지고, 그 두 조각은 **둘 다 없는 경로**다 —
+        # 정작 바뀐 파일은 목록에서 사라진다. 목록을 고쳐 내는 대신 전 범위로 떨어뜨린다.
+        s_nl = snaps / "s_nl"
+        snapshot(root, s_nl)
+        (root / "changed-too.txt").write_text("c\n", encoding="utf-8")
+        (root / "odd\nname2.txt").write_text("w\n", encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "since", "--base", "mainline",
+             "--snapshot", str(s_nl), "--root", str(root)],
+            cwd=root, capture_output=True, text=True, check=False)
+        check("개행 경로가 끼면 좁히기를 거부한다", proc.returncode, 3)
+        check("거부해도 목록을 안 낸다", proc.stdout, "")
+        check("거부 사유를 stderr 로 알린다", "개행" in proc.stderr, True)
+        (root / "odd\nname2.txt").unlink()
+        (root / "changed-too.txt").unlink()
+
+        # ── --root 가 저장소 루트가 아니면 거부한다 ────────────────────────
+        # git 은 저장소 루트 기준 경로를 주는데 해시는 root 기준으로 연다. 어긋나면 변경이
+        # 통째로 "지워짐" 으로 접히고, 스냅숏과 다음 비교가 같은 값이라 영영 범위 밖에 남는다.
+        sub = root / "app"
+        sub.mkdir(exist_ok=True)
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "snapshot", "--base", "mainline",
+             "--out", str(snaps / "s_sub"), "--root", str(sub)],
+            cwd=root, capture_output=True, text=True, check=False)
+        check("하위 디렉터리를 루트로 주면 거부한다", proc.returncode, 2)
+        check("거부 사유에 저장소 루트를 적는다", "저장소 루트" in proc.stderr, True)
+
+        # ── 못 읽는 것과 사라진 것을 같은 값으로 접지 않는다 ──────────────────
+        # 둘을 같은 값으로 두면 **"지워져 있던 자리에 못 읽는 파일이 생겼다" 가 무변경**이 된다.
+        # 그 자리가 두 값이 갈리는 유일한 경우라, 여기 말고는 어느 단언도 이 구분을 안 잰다.
+        (root / "perm.txt").write_text("p1\n", encoding="utf-8")
+        git(root, "add", "perm.txt")
+        git(root, "commit", "-qm", "perm")
+        (root / "perm.txt").unlink()                       # 진입 시점: 지워짐
+        s_perm = snaps / "s_perm"
+        snapshot(root, s_perm)
+        (root / "perm.txt").write_text("p2\n", encoding="utf-8")   # 다른 내용으로 되살리고
+        (root / "perm.txt").chmod(0o000)                            # 못 읽게 만든다
+        try:
+            check("지워짐 → 못 읽음 이 변경으로 잡힌다",
+                  "perm.txt" in since(root, s_perm), True)
+        finally:
+            (root / "perm.txt").chmod(0o644)
 
         # ── 진입 전에 지워져 있던 파일을 되살리는 것도 이번 phase 의 변경이다 ──
         # 되살리면 base 대비 무변경이 되어 현재 상태 목록에서 통째로 빠진다. 그래서 없는 쪽에

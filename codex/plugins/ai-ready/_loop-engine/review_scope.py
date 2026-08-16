@@ -27,9 +27,12 @@ git 객체를 새로 쓰지 않고 작업 트리를 읽기만 한다.
 `since` 는 파일 경로를 한 줄에 하나씩 낸다. 바뀐 것이 없으면 아무것도 안 낸다 — 부르는 쪽은
 그 빈 출력을 "좁히지 않는다" 로 읽는다(빈 목록을 렌즈에 넘기면 아무것도 안 보게 된다).
 
-종료코드는 둘 다 0 이 정상이다. git 이 없거나 저장소가 아니면 2 로 죽는다 — 조용히 빈 목록을
-내면 "이번 phase 가 아무것도 안 만들었다" 와 구분이 안 되고, 그 오독이 전 범위 점검을
-빈 점검으로 바꾼다.
+종료코드는 0 이 정상이다. **0 이 아니면 부르는 쪽은 좁히지 말고 전 범위를 넘긴다** — 조용히
+빈 목록을 내면 "이번 phase 가 아무것도 안 만들었다" 와 구분이 안 되고, 그 오독이 전 범위
+점검을 빈 점검으로 바꾼다.
+
+    2 — git 이 없거나, 저장소가 아니거나, `--root` 가 저장소 루트가 아니다.
+    3 — 목록에 낼 수 없는 경로가 있다(경로에 개행). 좁히기만 포기하면 되는 자리라 2 와 가른다.
 """
 
 from __future__ import annotations
@@ -41,6 +44,11 @@ import sys
 from pathlib import Path
 
 DELETED = "-"  # 파일이 사라진 자리. 빈 해시와 구분되어야 "지웠다" 가 변경으로 잡힌다.
+# **못 읽은 것과 사라진 것을 같은 값으로 접지 않는다.** 권한이 막혔거나 서브모듈 디렉터리인
+# 경우가 그렇다. 같은 값이면 "읽을 수 없게 됐다" 는 변화가 안 잡히고, 그 파일은 내용이 어떻든
+# 범위 밖에 머문다. 다만 계속 못 읽는 상태면 두 회차의 값이 같아 안 바뀐 것으로 남는다 —
+# 그것까지 매번 범위에 넣으면 서브모듈이 회차마다 끼어든다.
+UNREADABLE = "?"
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -77,8 +85,10 @@ def _digest(root: Path, rel: str) -> str:
             for chunk in iter(lambda: fh.read(65536), b""):
                 h.update(chunk)
             return h.hexdigest()
-    except (FileNotFoundError, IsADirectoryError, PermissionError):
+    except FileNotFoundError:
         return DELETED
+    except (IsADirectoryError, PermissionError, OSError):
+        return UNREADABLE
 
 
 def _state(base: str, root: Path) -> dict[str, str]:
@@ -114,6 +124,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
+    # **저장소 루트가 아니면 거부한다.** `git diff --name-only` 는 저장소 루트 기준 경로를 주는데
+    # 해시는 `root / rel` 로 연다. root 가 하위 디렉터리면 그 경로가 없어 전부 "지워짐" 으로 접히고,
+    # 스냅숏과 다음 비교가 같은 값이라 **그 파일들이 영영 범위 밖에 남는다**(실측). 조용한 실패라
+    # 여기서 죽이는 편이 싸다.
+    top = _git(["rev-parse", "--show-toplevel"], root).strip()
+    if top and Path(top).resolve() != root:
+        sys.stderr.write(
+            f"review_scope: --root 가 저장소 루트가 아니다\n"
+            f"  받은 값: {root}\n  저장소 루트: {top}\n"
+            f"  경로 기준이 섞여 변경이 통째로 '지워짐' 으로 접힌다.\n")
+        raise SystemExit(2)
     state = _state(args.base, root)
 
     if args.mode == "snapshot":
@@ -138,6 +159,17 @@ def main(argv: list[str] | None = None) -> int:
     touched = sorted(
         rel for rel in set(state) | set(before) if before.get(rel) != state.get(rel)
     )
+
+    # **개행이 든 경로가 하나라도 있으면 좁히기를 포기한다.** 이 출력은 줄 단위라 그런 경로 하나가
+    # 두 줄로 쪼개지고, 쪼개진 두 조각은 **둘 다 없는 경로**다 — 정작 바뀐 파일은 목록에서 사라진다
+    # (실측). 목록을 고쳐 내는 대신 전 범위로 떨어뜨리는 이유는, 이 목록이 렌즈가 무엇을 볼지
+    # 정하는 값이라 한 줄이라도 못 믿으면 전체를 못 믿기 때문이다. 안전한 쪽은 넓은 쪽이다.
+    bad = [r for r in touched if "\n" in r]
+    if bad:
+        sys.stderr.write(
+            "review_scope: 경로에 개행이 들어 목록을 줄 단위로 못 낸다 — 좁히지 않는다\n"
+            + "".join(f"  {r!r}\n" for r in bad))
+        raise SystemExit(3)
 
     for rel in touched:
         print(rel)

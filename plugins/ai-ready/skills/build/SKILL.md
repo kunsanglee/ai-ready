@@ -406,9 +406,19 @@ touch "$LOOP_DIR/history-$PHASE.jsonl"
 # **중단 전까지 그 phase 가 만든 것이 통째로 범위 밖으로 떨어진다**(실측: 파일 셋을 만든 뒤
 # 다시 찍으니 범위가 셋에서 하나로 줄었다). 하필 사람이 끼어든 phase 라 가장 봐야 할 작업이고,
 # 빠져도 아무것도 실패하지 않는다. 바로 위 시간 상한 블록이 같은 이유로 멱등을 요구한다.
-[ -f "$LOOP_DIR/scope-open-$PHASE.txt" ] || \
+#
+# **이미 회차를 돈 phase 에는 새로 찍지 않는다.** 스냅숏이 없는데 이력이 있으면 그 phase 는
+# 좁히기가 들어오기 전 판으로 돌던 중이다(업그레이드하고 재개한 경우). 거기서 지금 찍으면
+# 그때까지 만든 것이 스냅숏에 들어가 **업그레이드 전 작업이 통째로 범위 밖이 된다** — 위와
+# 같은 사고를 다른 문으로 들이는 것이다. 스냅숏을 안 만들면 Step 2-2 가 전 범위로 떨어진다.
+if [ -f "$LOOP_DIR/scope-open-$PHASE.txt" ]; then
+  echo "점검 범위 스냅숏: 이미 있다(재개) — 덮지 않는다"
+elif [ -s "$LOOP_DIR/history-$PHASE.jsonl" ]; then
+  echo "점검 범위 스냅숏: 안 찍는다 — 이 phase 는 이미 회차를 돌았다(좁히기 이전 판). 전 범위로 돈다"
+else
   python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" \
     --out "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT"
+fi
 echo "phase 진입: $PHASE"
 ```
 
@@ -552,13 +562,17 @@ elif [ ! -f "$LOOP_DIR/scope-open-$PHASE.txt" ]; then
   # 찍으면 "이 phase 가 바꾼 N 개" 로 보여 사람이 좁혀진 줄로 읽는다. 따로 가르는 이유가 그것이다.
   echo "점검 범위: 전 범위 — 이 phase 의 진입 스냅숏이 없다(좁히기가 들어오기 전에 시작된 phase). 다음 phase 부터 좁혀진다"
 else
-  # **줄을 세지 않고 빈 문자열인지 본다.** `grep -c ''` 는 빈 입력에서 `0` 을 찍고 종료코드 1 로
-  # 끝나 `|| echo 0` 이 한 번 더 찍는다. 그러면 값이 `0\n0` 이 되어 정수 비교가 죽고, 하필
-  # **아래 안전 분기를 건너뛰어 빈 목록이 렌즈로 넘어간다**(실측). 세는 값이 안내 문구에만
-  # 쓰이는데 그것 때문에 판정이 갈리는 자리라, 세기를 없애는 것이 그 갈래를 통째로 지운다.
-  SCOPE="$(python3 "$ENG/review_scope.py" since --base "$LOOP_BASE_BRANCH" \
-    --snapshot "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT")"
-  if [ -z "$SCOPE" ]; then
+  # **줄을 세지 않고 빈 문자열인지 본다.** 세면 `grep -c` 가 빈 입력에서 `0` 을 찍고 종료코드 1 로
+  # 끝나는 성질에 걸려 아래 안전 분기가 통째로 도달 불가가 된다(실측). `build/drift-test.sh` 의
+  # `[grep-c]` 가 그 패턴이 다시 들어오는 것을 막는다.
+  #
+  # **종료코드가 0 이 아니면 좁히지 않는다.** 범위를 못 내는 사정(저장소 루트가 아닌 경로,
+  # 목록에 담을 수 없는 경로)은 전부 넓은 쪽으로 떨어져야 한다 — 빈 출력을 그냥 받으면
+  # "아무것도 안 고쳤다" 와 구분이 안 되고, 그 오독이 전 범위 점검을 빈 점검으로 바꾼다.
+  if ! SCOPE="$(python3 "$ENG/review_scope.py" since --base "$LOOP_BASE_BRANCH" \
+      --snapshot "$LOOP_DIR/scope-open-$PHASE.txt" --root "$PROJECT_ROOT")"; then
+    echo "점검 범위: 전 범위 — 범위 산출이 거부했다(위 사유). 좁히지 않는다"
+  elif [ -z "$SCOPE" ]; then
     # 빈 목록을 넘기면 렌즈가 볼 것이 없다고 읽는다 — 좁히기 실패와 "아무것도 안 고쳤다" 가
     # 같은 값이라, 여기서는 안전한 쪽인 전 범위로 떨어진다. Step 2-6 이 트리 미변경을 따로 잡는다.
     echo "점검 범위: 이 phase 가 바꾼 파일 0건 — 좁히지 않고 전 범위를 넘긴다"
@@ -642,6 +656,8 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 3. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
 4. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 3번과 **전할 말이 다르다.** 3번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다 — 코드가 아니라 phase 목표를 의심하라"** 다. 사람에게 물을 것 둘: 이 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다.
 5. `V == PASS` → 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
+
+> **1~4 로 멈출 때는 "전 범위를 본 phase 가 아직 없다" 를 함께 올린다.** 점검 범위 좁히기는 마지막 phase 를 안 좁히는 것으로 대가를 갚는데, **그 자리는 순회를 끝까지 돌아야 온다.** 중간에 멈추면 phase 끼리 부딪히는 결함을 본 회차가 하나도 없이 끝나고, 사람은 "여기서 닫는다" 를 고를 때 그 사실을 모른다. 판정은 `jq -r '[.phases[] | select(.status=="done") | select(.review_scope=="full" or .name==$last)] | length'` 처럼 **닫힌 phase 중 안 좁힌 것이 있었나**로 낸다.
 6. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall/반복 종류 미도달) → **Step 2-5(maker 스핀)** 로.
 
 > **완료 조건이 전부 성립했는데 조건 밖 지적만 남았으면 — 사람이 그 phase 를 닫을 수 있다.** PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고 **그 phase 의 완료 조건을 안 본다.** 그래서 조건을 다 만족하고도 조건 **밖** CRITICAL 때문에 안 닫히는 상태가 성립한다. 사람이 고를 것은 셋이다. (a) 회차 상한을 올려 한 번 더 돈다. (b) **여기서 닫고 남은 지적을 다음 phase 로 세운다** — `phases.json` 에 phase 를 하나 더하면 회차가 새로 시작된다. 회차 상한은 "한 목표에 몇 번까지 매달릴 것인가" 라, 목표가 바뀌면 새로 세는 것이 맞다(편법이 아니다). (c) 목표가 애초에 열거 불가능했다고 보고 `exit_criteria` 를 다시 적는다. **이 판단은 자동으로 못 한다** — 조건 성립은 checker 가 되돌림으로 재지만 "이 지적이 조건 밖인가" 는 사람이 정한다. 2026-08-11 `agent-ts` 의 저장 계층 첫 phase 가 완료 조건 열한 개를 전부 만족하고도 조건 밖 CRITICAL 때문에 회차 상한 여덟을 다 썼고, (b) 로 닫았다.
