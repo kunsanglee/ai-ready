@@ -518,8 +518,9 @@ def scan_target(target: Path, cfg: dict | None = None) -> dict:
             if d in OUTCOME_DIR_NAMES:
                 out["outcome_paths"].append(str(rel_dir / d))
 
-        # 파일 단위 검사
-        for f in filenames:
+        # 파일 단위 검사. 정렬해 수집 순서를 readdir 순서에서 떼어낸다 — 루트 문서를 하나만
+        # 집는 규칙들이 파일시스템 순서에 따라 CLAUDE.md 를 잴지 AGENTS.md 를 잴지 갈렸다.
+        for f in sorted(filenames):
             full = Path(dirpath) / f
             if f in CLAUDE_DOC_NAMES:
                 out["claude_docs"].append(full)
@@ -598,13 +599,16 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
         r = Rule("루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조", 4)
         if root_doc:
             text = doc_text.get(root_doc, "")
-            refs_catalog = any(c in text for c in PACKAGE_CATALOG_CANDIDATES)
+            # 카탈로그 이름을 적은 것만으로는 세지 않는다 — 파일이 실재하고 스텁이 아니어야 한다.
+            # 경로 갈래가 이미 _reference_target_counts 로 죽은 참조를 거르는 것과 같은 기준이다.
+            refs_catalog = (catalog_doc is not None and _has_min_content(catalog_doc)
+                            and any(c in text for c in PACKAGE_CATALOG_CANDIDATES))
             path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
             # 실재하지 않거나 스텁을 가리키는 참조는 세지 않는다 — _reference_target_counts 참조.
             non_http = {p for p in path_hits if not p.startswith("http") and "/" in p
                         and _reference_target_counts(target, p)}
             if refs_catalog:
-                r.award(4, [str(catalog_doc.relative_to(target))] if catalog_doc else ["PACKAGES.md 참조"],
+                r.award(4, [str(catalog_doc.relative_to(target))],
                         note="루트 문서가 패키지 카탈로그를 참조")
             elif len(non_http) >= 3:
                 r.award(3, sorted(non_http)[:5],
@@ -705,33 +709,44 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
     }
 
 
+def _root_doc_size_band(size: int) -> tuple[int, str]:
+    """루트 문서 바이트에 대한 (점수, 노트). 임계값 근거는 ROOT_DOC_MAX_BYTES 주석."""
+    if size < ROOT_DOC_MIN_BYTES:
+        return 2, f"{ROOT_DOC_MIN_BYTES:,}바이트 미만 — 너무 얇아 모듈 문서로의 지도 역할을 못 합니다"
+    if size <= ROOT_DOC_MAX_BYTES:
+        return 5, ""
+    if size <= ROOT_DOC_WARN_BYTES:
+        return 2, f"{ROOT_DOC_MAX_BYTES:,}바이트 초과 ~ {ROOT_DOC_WARN_BYTES:,}바이트 이하 — 다이어트 권장"
+    return 0, f"{size:,}바이트 — 너무 길어 매 세션 컨텍스트가 부풉니다"
+
+
 def score_doc_quality(target: Path, scan: dict, doc_text: dict) -> dict:
     rules = []
     claude_docs = scan["claude_docs"]
-    root_doc = next((d for d in claude_docs if d.parent == target), None)
     module_docs = [d for d in claude_docs if d.parent != target]
     single_module = is_single_module(scan["modules"], target)
     catalog_doc = find_package_catalog(target) if single_module else None
 
     # 2.1 루트 CLAUDE.md 상주 분량 (바이트 — 근거는 ROOT_DOC_MAX_BYTES 주석)
+    # 루트에 CLAUDE.md 와 AGENTS.md 가 함께 있으면 나쁜 쪽 점수를 규칙 점수로 쓴다. Claude 세션은
+    # CLAUDE.md 만, Codex 세션은 AGENTS.md 만 상주 적재하므로 한 세션이 무는 비용은 각자의 파일이고,
+    # 한쪽이 다른 쪽의 거울인 구성에서 합산하면 같은 내용을 두 번 세게 된다.
     r = Rule(ROOT_DOC_SIZE_RULE, 5)
-    if root_doc:
-        size = byte_size(root_doc)
-        # 줄 수도 함께 남긴다. 점수 근거는 바이트지만, 줄당 분량을 보면 표 행이 긴 것인지
-        # 문단이 많은 것인지 갈려 다이어트 방향이 달라진다.
-        ev = [f"{root_doc.relative_to(target)} ({size:,}바이트 / {line_count(root_doc)}줄)"]
-        if size < ROOT_DOC_MIN_BYTES:
-            r.award(2, ev,
-                    note=f"{ROOT_DOC_MIN_BYTES:,}바이트 미만 — 너무 얇아 모듈 문서로의 지도 역할을 못 합니다")
-        elif size <= ROOT_DOC_MAX_BYTES:
-            r.award(5, ev)
-        elif size <= ROOT_DOC_WARN_BYTES:
-            r.award(2, ev,
-                    note=f"{ROOT_DOC_MAX_BYTES:,}바이트 초과 ~ {ROOT_DOC_WARN_BYTES:,}바이트 이하 — 다이어트 권장")
-        else:
+    root_docs = sorted((d for d in claude_docs if d.parent == target), key=lambda p: p.name)
+    if root_docs:
+        bands = []
+        for doc in root_docs:
+            size = byte_size(doc)
+            # 줄 수도 함께 남긴다. 점수 근거는 바이트지만, 줄당 분량을 보면 표 행이 긴 것인지
+            # 문단이 많은 것인지 갈려 다이어트 방향이 달라진다.
             # 0점이어도 근거는 남긴다 — history 에 바이트가 쌓여야 추이가 보인다.
-            r.evidence.extend(ev)
-            r.note = f"{size:,}바이트 — 너무 길어 매 세션 컨텍스트가 부풉니다"
+            r.evidence.append(f"{doc.relative_to(target)} ({size:,}바이트 / {line_count(doc)}줄)")
+            bands.append(_root_doc_size_band(size))
+        points, note = min(bands, key=lambda b: b[0])
+        if points > 0:
+            r.award(points, note=note)
+        else:
+            r.note = note
     else:
         r.note = "루트 CLAUDE.md 없음"
     rules.append(r)
@@ -951,10 +966,16 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
             if layout_total == 0:
                 # C4: 레이아웃을 측정하지 못한 것이지 "60% 미만"이 아니다. 0점 침묵 대신
                 # 미측정임을 명시하고, 왜 측정이 성립하지 않는지를 스택 이름으로 말한다.
-                why = ("JVM 이지만 Controller 를 가진 도메인 패키지가 없음"
-                       if layout_applies else f"{stack_name} 스택 — 컨트롤러 레이아웃 개념이 없음")
-                r.award(4, evidence,
-                        note=f"카탈로그 OK / 표준 레이아웃 미측정 ({why}) — 카탈로그만으로 충분합니다")
+                # 레이아웃 개념이 없는 스택은 카탈로그가 만점 조건 전부다(SKILL.md·ACTION_HINTS
+                # 와 같은 약속). JVM 인데 Controller 도메인이 없는 쪽은 측정할 것이 남아 4점.
+                if layout_applies:
+                    r.award(4, evidence,
+                            note="카탈로그 OK / 표준 레이아웃 미측정 "
+                                 "(JVM 이지만 Controller 를 가진 도메인 패키지가 없음)")
+                else:
+                    r.award(5, evidence,
+                            note=f"카탈로그 OK / 표준 레이아웃 미측정 ({stack_name} 스택 — "
+                                 "컨트롤러 레이아웃 개념이 없음) — 카탈로그만으로 충분합니다")
             else:
                 r.award(4, evidence,
                         note=("카탈로그 OK / 표준 레이아웃 60% 미만 — 도메인 패키지에 "
@@ -1670,17 +1691,22 @@ def render_readme(audit: dict, out_dir: Path | None = None) -> str:
 
 # --- Main -----------------------------------------------------------------
 
+def history_path_for(out_dir: Path, timestamp: str) -> Path:
+    """보관 파일 경로. 파일명에 안전한 timestamp (UTC) — 콜론·플러스 문자 제거."""
+    ts = timestamp.replace(":", "-").replace("+", "_")
+    return out_dir / "history" / f"{ts}.json"
+
+
 def _archive_history(out_dir: Path, audit: dict) -> Path | None:
     """T-11: history/{timestamp}.json 으로 audit 결과 archive — dashboard 추이 차트 입력."""
-    history_dir = out_dir / "history"
+    path = history_path_for(out_dir, audit["timestamp"])
     try:
-        history_dir.mkdir(exist_ok=True)
-    except OSError:
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        print(f"경고: history 보관 실패({e}) — 이번 실행은 dashboard 추이 차트에 빠집니다",
+              file=sys.stderr)
         return None
-    # 파일명에 안전한 timestamp (UTC). 콜론·플러스 문자 제거.
-    ts = audit["timestamp"].replace(":", "-").replace("+", "_")
-    path = history_dir / f"{ts}.json"
-    path.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 
 
@@ -1754,7 +1780,9 @@ def main():
     print(f"  생성: {out_dir / 'audit.json'}")
     print(f"  생성: {out_dir / 'audit-report.md'}")
     print(f"  생성: {out_dir / 'README.md'}")
-    print(f"  archive: {out_dir / 'history'}/")
+    archived = history_path_for(out_dir, audit["timestamp"])
+    if archived.exists():
+        print(f"  archive: {archived}")
 
 
 if __name__ == "__main__":
