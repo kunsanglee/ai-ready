@@ -262,9 +262,9 @@ def _render_auto_block(rows: list[tuple[str, str]]) -> str:
     lines = []
     lines.append(AUTO_BEGIN)
     lines.append("")
-    # 자동 생성 표시는 AUTO_BEGIN 마커의 `(auto-generated)` 가 이미 한다 — 루트 문서는 매 세션
-    # always-loaded 라 같은 말을 산문으로 한 번 더 쓰면 그 분량을 매 세션 낸다. 아래 두 줄은
-    # 읽는 에이전트의 행동을 바꾸므로 남긴다.
+    # 마커의 `(auto-generated)` 는 출처만 말하고 "네 편집이 사라진다" 는 말하지 않는다 —
+    # 데이터 손실 경고라 한 줄은 남긴다. 재생성 방법 안내는 없어도 행동이 안 달라져 뺐다.
+    lines.append("> 이 영역의 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
     lines.append("> **읽기 강제 시점**: 작업 영역이 트리거에 해당하면 사용자 추가 지시 없이도 즉시 read.")
     lines.append("> **모듈 단위**: 모듈 CLAUDE.md 는 그 모듈 파일을 Read/Edit 할 때 Claude Code 가 자동 로드.")
     lines.append("")

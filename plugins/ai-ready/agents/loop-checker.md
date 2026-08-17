@@ -57,11 +57,11 @@ effort: xhigh
 
 각 finding 에 차원 태그를 단다: `compatibility | security | runtime | intent | convention | simplicity`. 한 코드가 여러 차원에 걸리면 차원별로 별도 finding 을 낸다(같은 위치라도).
 
-> **아래는 각 차원이 무엇을 보는가만 적는다.** 구체 점검 기준은 `$LOOP_CONVENTION_DOCS` 가 가리키는 그 프로젝트의 컨벤션 문서와 rubric 의 KINDS 표가 들고 있다. 차원의 의도는 스택 무관이고 구체 룰만 프로젝트가 채운다.
+> **아래는 각 차원이 무엇을 보는가만 적는다.** 구체 점검 기준은 `$LOOP_CONVENTION_DOCS` 가 가리키는 그 프로젝트의 컨벤션 문서와 rubric 의 KINDS 표가 들고 있다. 차원의 의도는 스택 무관이고 구체 룰만 프로젝트가 채운다. **종류 이름은 각 차원 끝의 목록에서 먼저 고른다** — 회차를 잇는 반복 감지(kindstreak)와 렌즈 간 중복 접기가 이름의 일치를 딛고 서므로, 목록에 맞는 이름이 있으면 새로 짓지 않는다.
 
 ### compatibility — 시간축 계약
 
-배포한 뒤 기존 클라이언트가 깨지는가를 본다. 응답·요청의 필드와 타입, 엔드포인트 경로·메서드, 에러 코드와 status 매핑이 대상이다. 작업 정의가 명시한 의도적 deprecation 이면 compatibility 가 아니라 intent 로 교차한다.
+배포한 뒤 기존 클라이언트가 깨지는가를 본다. 응답·요청의 필드와 타입, 엔드포인트 경로·메서드, 에러 코드와 status 매핑이 대상이다. 작업 정의가 명시한 의도적 deprecation 이면 compatibility 가 아니라 intent 로 교차한다. 종류: `compat-response-break / compat-request-break / compat-endpoint-errorcode`.
 
 ### security — 인가·인증·입력 안전
 
@@ -69,7 +69,7 @@ effort: xhigh
 
 ### runtime — 돌 때 터지거나 새는가
 
-메서드 본문을 위에서 아래로 따라가며 IO·락·트랜잭션·쿼리를 추적한다. 동시성, 트랜잭션 범위, 커밋 전 이벤트 발행, 멱등성(무인 loop 가 retry 하므로 결제·적립·발송이 중복될 수 있다), 무제한 조회, N+1, 논리 회귀, 외부 호출 타임아웃, 마이그레이션·DDL 안전성이 여기다. 운영 DB 를 비가역으로 바꾸는 것은 `force_await: true`.
+메서드 본문을 위에서 아래로 따라가며 IO·락·트랜잭션·쿼리를 추적한다. 동시성, 트랜잭션 범위, 커밋 전 이벤트 발행, 멱등성(무인 loop 가 retry 하므로 결제·적립·발송이 중복될 수 있다), 무제한 조회, N+1, 논리 회귀, 외부 호출 타임아웃, 마이그레이션·DDL 안전성이 여기다. 운영 DB 를 비가역으로 바꾸는 것은 `force_await: true`. 종류: `concurrency-bug / transaction-scope / event-before-commit / idempotency-missing / unbounded-findall / n-plus-1 / logic-regression / timeout-missing / enum-removal-risk / ddl-safety`.
 
 ### intent — 작업 정의 ↔ 코드 정합
 
@@ -79,9 +79,11 @@ effort: xhigh
 
 **PRD 없는 작업**(리팩토링·마이그레이션·테스트 보강)은 intent 를 끄지 말고 "동작 보존 + 범위 일탈" 로 좁혀 본다. 작업 정의 자체가 전혀 없으면 그 사실을 finding 으로 한 건 남긴다(loop 진입 가드가 막을 신호).
 
+종류: `intent-nongoal-violation / intent-requirement-missing / intent-overreach / doc-lags-code`.
+
 ### convention — 컨벤션·영향범위
 
-프로젝트가 정한 형태를 따르는가를 본다. 네이밍·구조·계층 규칙, 새 에러 코드의 메시지 키 누락, 변경분에 대응하는 테스트 누락(`test-missing`), 바깥 사실을 말하는 주석(`comment-rot`)이 여기다. 함께 보는 것이 영향범위다 — 공유 인프라를 바꿨으면 사용처를 전부 grep 해 한쪽에만 들어간 패턴이 없는지 확인하고, 반복·광범위한 위반은 근거에 "반복 N건" 을 적는다.
+프로젝트가 정한 형태를 따르는가를 본다. 네이밍·구조·계층 규칙, 새 에러 코드의 메시지 키 누락, 변경분에 대응하는 테스트 누락(`test-missing`), 바깥 사실을 말하는 주석(`comment-rot`)이 여기다. 함께 보는 것이 영향범위다 — 공유 인프라를 바꿨으면 사용처를 전부 grep 해 한쪽에만 들어간 패턴이 없는지 확인하고, 반복·광범위한 위반은 근거에 "반복 N건" 을 적는다. 종류: `convention-violation / i18n-key-missing / test-missing / comment-rot`(+ 영향범위).
 
 ### simplicity — 더 적은 코드로 같은 일이 되는가
 
@@ -160,7 +162,7 @@ KINDS 예외표는 "floor 와 다른 종류"만 담는다. 대부분의 finding 
       "kind": "missing-ownership-check",
       "dimension": "security",
       "location": "src/.../UpdateController.kt:40",
-      "evidence": "수정 경로에서 요청자가 그 자원의 소유자인지 확인하지 않는다. 남의 식별자로 수정 가능. (확신: 높음)",
+      "evidence": "수정 경로에서 요청자가 그 자원의 소유자인지 확인하지 않는다. 남의 식별자로 수정 가능. rubric 예외표 미등록 — 차원 floor 채점. (확신: 높음)",
       "weights": ["authz"],
       "force_await": true,
       "in_scope": true

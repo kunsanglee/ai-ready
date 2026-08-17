@@ -154,7 +154,7 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
-| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 확인. PASS 로 넘기지 말 것 |
+| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일(`${TMPDIR:-/tmp}/review-findings-{repo}-{branch-cksum}.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
 | `loop: findings 도 reviewed 도 비었다 — exit 65` | checker 가 `{"findings":[]}` 만 내고 `reviewed` 를 안 채움. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** | 베이스 브랜치와 diff 범위를 먼저 확인한다. PASS 로 넘기지 말 것 |
 | `[ -s "$F" ]` 가 거짓 "checker 실패" | Step 2 와 Step 3 사이에 브랜치를 바꿔 F 재유도가 어긋남 | 리뷰가 도는 동안 그 체크아웃의 브랜치를 바꾸지 않는다 |
 | `loop: 'jq' 필요` | jq 미설치 | `brew install jq` |

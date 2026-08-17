@@ -1,5 +1,7 @@
 # build 트러블슈팅
 
+아래 "해결" 칸의 Step 번호는 `skills/build/SKILL.md` 의 절 번호다.
+
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |

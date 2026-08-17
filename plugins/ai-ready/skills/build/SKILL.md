@@ -141,9 +141,13 @@ fi
 # **회차 스냅숏(scope-cycle-*)과 회차 마커(narrowed-*·confirm-full-*)도 같은 종류다.** 앞 루프의
 # 회차 스냅숏이 남으면 새 루프의 **첫 회차**가 그것을 기준으로 좁히고(첫 회차는 안 좁히는 것이
 # 계약이다), confirm-full 이 남으면 첫 회차가 확인 회차로 읽힌다. 둘 다 조용히 지나간다.
-rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json \
-      "$LOOP_DIR"/scope-open-*.txt "$LOOP_DIR"/scope-cycle-*.txt \
-      "$LOOP_DIR"/narrowed-* "$LOOP_DIR"/confirm-full-*
+# **글롭 확장을 셸에 맡기지 않는다.** zsh 는 매칭 0개인 글롭이 하나라도 있으면 명령 자체를
+# 실행하지 않고 no matches found 로 끝낸다(정상 종료한 루프에는 narrowed-*·confirm-full-* 이
+# 없으므로 매 재실행이 거기 걸린다). 이 스킬의 블록은 오케스트레이터의 Bash 도구가 그대로
+# 실행하고 그 셸이 무엇인지는 호스트가 정하므로, 패턴을 find 에 넘겨 셸과 무관하게 만든다.
+find "$LOOP_DIR" -maxdepth 1 \( -name 'gate.fail' -o -name 'history*.jsonl' \
+  -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' \) -delete
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -436,12 +440,15 @@ GFAIL=$(cat "$LOOP_DIR/gate.fail" 2>/dev/null || echo 0)   # 게이트 실패 �
 ELAPSED_MIN=$(( ( $(date +%s) - $(cat "$LOOP_DIR/started.epoch") ) / 60 ))
 echo "사이클 진입: phase=$PHASE 완료 $ITER 회 + 게이트 실패 $GFAIL 회 / 경과 ${ELAPSED_MIN}분"
 # brake: 반복·시간·천장. 주석 의사코드가 아니라 실행 블록이다 — 매 사이클 실제로 돌아야 강제된다.
-# **확인 회차는 회차 상한을 한 번 넘겨 준다.** 좁힌 회차가 PASS 를 낸 뒤 phase 범위로 한 번 더
+# **확인 회차는 회차 상한을 한 번 넘어설 수 있다.** 좁힌 회차가 PASS 를 낸 뒤 phase 범위로 한 번 더
 # 도는 그 회차인데, 마지막 허용 회차에 PASS 가 나오면 그 한 번을 못 돌아 phase 가 PASS 를 받고도
-# 안 닫힌다. 예외는 confirm-full 마커가 있을 때뿐이고 그 마커는 Step 2-2 가 그 회차에 지우므로
-# 한 번으로 끝난다. 절대 상한과 시간 상한은 그대로 하드 스톱이다.
+# 안 닫힌다. 마커가 있으면 상한을 한 칸 올릴 뿐이라(CONFIRM 은 0 또는 1) 예외는 정확히 한 회차다.
+# **비교를 통째로 건너뛰면 안 된다** — 그 회차의 게이트가 깨지면 마커를 지우는 Step 2-2 에 도달하지
+# 못한 채 마커가 살아남고, gate.fail 이 늘어나는 동안 예외가 매 회차 다시 서서 절대 상한까지 간다.
+# 한 칸만 올리면 게이트 실패로 iter+gfail 이 늘어난 다음 진입에서 brake 가 선다.
+# 회차 상한이 절대 상한과 같으면 이 예외는 서지 않는다 — 절대 상한이 이긴다.
 CONFIRM=0; if [ -f "$LOOP_DIR/confirm-full-$PHASE" ]; then CONFIRM=1; fi
-if { [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] && [ "$CONFIRM" -eq 0 ]; } \
+if [ $((ITER + GFAIL)) -ge $((MAX_ITER + CONFIRM)) ] \
    || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ] || [ "$ELAPSED_MIN" -ge "$BUDGET_MIN" ]; then
   echo "build: brake 도달 (iter=$ITER + 게이트실패 $GFAIL / $MAX_ITER 천장 $ABS_CEIL, 경과 ${ELAPSED_MIN}/${BUDGET_MIN}분) — 평가 없이 종료, 사람 호출" >&2
   # 더 진행하지 말고 Step 2-4 의 brake 분기 → Step 3 으로.
@@ -696,12 +703,12 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 
 1. `V == AWAIT_USER` → **멈춤, 사람 호출.** 비가역·자동화 금지 영역(BLOCKER/force_await). maker 가 손대면 안 된다.
 2. `V == PASS` → **이 회차가 좁힌 범위로 돌았으면(`$LOOP_DIR/narrowed-$PHASE` 가 있으면) 아직 닫지 않는다.** `: > "$LOOP_DIR/confirm-full-$PHASE"` 를 만들고 Step 2-1 로 돌아가 phase 범위로 **확인 회차**를 한 번 돈다 — 좁힌 시야 밖에 남은 결함이 없는지 마지막에 한 번은 전 시야로 본다. 좁히지 않은 회차의 PASS 면 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
-   - **PASS 를 brake 보다 먼저 본다.** 반대 순서면 마지막 허용 회차에 나온 PASS 가 brake 에 먹혀, phase 가 PASS 를 받고도 안 닫힌 채 사람이 불려 온다. 확인 회차는 `confirm-full-$PHASE` 마커 덕에 1회로 제한되고(Step 2-2 가 그 회차에 마커를 지운다), 절대 상한 `ABS_CEIL` 과 시간 상한은 그대로 하드 스톱이다.
+   - **PASS 를 brake 보다 먼저 본다.** 반대 순서면 마지막 허용 회차에 나온 PASS 가 brake 판정에 가려, phase 가 PASS 를 받고도 안 닫힌 채 사람이 불려 온다. 확인 회차는 마커가 회차 상한을 한 칸만 올리는 것이라 1회로 제한되고(게이트 실패로 그 회차를 다시 열면 다음 진입에서 brake 가 선다), 절대 상한 `ABS_CEIL` 과 시간 상한은 그대로 하드 스톱이다. **회차 상한이 절대 상한과 같으면 이 예외는 서지 않는다** — 절대 상한이 이긴다.
 3. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `>= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN`) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다. **`exit_criteria_probes` 가 있으면 조건별 성립 여부를 함께 넘긴다** — 사람이 "한 회차 더" 와 "여기서 닫는다" 를 가르는 재료가 그것이다(아래 블록). **회차 요약의 범위 계측(`out_of_scope`)도 함께 넘긴다** — 조건이 성립했나와 남은 지적이 이번 목표 안인가는 같은 판단의 두 반쪽이다.
 4. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
 5. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 4번과 **전할 말이 다르다.** 4번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다 — 코드가 아니라 phase 목표를 의심하라"** 다. 사람에게 물을 것 둘: 이 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다.
 
-> **PASS 가 아닌 사유로 멈출 때는(1·3·4·5) "전 범위를 본 phase 가 아직 없다" 를 함께 올린다.** 점검 범위 좁히기는 마지막 phase 를 안 좁히는 것으로 대가를 갚는데, **그 자리는 순회를 끝까지 돌아야 온다.** 중간에 멈추면 phase 끼리 부딪히는 결함을 본 회차가 하나도 없이 끝나고, 사람은 "여기서 닫는다" 를 고를 때 그 사실을 모른다. 판정은 `jq -r '[.phases[] | select(.status=="done") | select(.review_scope=="full" or .name==$last)] | length'` 처럼 **닫힌 phase 중 안 좁힌 것이 있었나**로 낸다.
+> **PASS 가 아닌 사유로 멈출 때는(1·3·4·5) "전 범위를 본 phase 가 아직 없다" 를 함께 올린다.** 점검 범위 좁히기는 마지막 phase 를 안 좁히는 것으로 대가를 갚는데, **그 자리는 순회를 끝까지 돌아야 온다.** 중간에 멈추면 phase 끼리 부딪히는 결함을 본 회차가 하나도 없이 끝나고, 사람은 "여기서 닫는다" 를 고를 때 그 사실을 모른다. 판정은 `jq -r --arg last "$LAST_PHASE" '[.phases[] | select(.status=="done") | select(.review_scope=="full" or .name==$last)] | length'` 처럼 **닫힌 phase 중 안 좁힌 것이 있었나**로 낸다.
 6. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall/반복 종류 미도달) → **Step 2-5(maker 스핀)** 로.
 
 > **완료 조건이 전부 성립했는데 조건 밖 지적만 남았으면 — 사람이 그 phase 를 닫을 수 있다.** PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고 **그 phase 의 완료 조건을 안 본다.** 그래서 조건을 다 만족하고도 조건 **밖** CRITICAL 때문에 안 닫히는 상태가 성립한다. 사람이 고를 것은 셋이다. (a) 회차 상한을 올려 한 번 더 돈다. (b) **여기서 닫고 남은 지적을 다음 phase 로 세운다** — `phases.json` 에 phase 를 하나 더하면 회차가 새로 시작된다(회차 상한은 한 목표에 매달리는 횟수라, 목표가 바뀌면 새로 세는 것이 맞다). (c) 목표가 애초에 열거 불가능했다고 보고 `exit_criteria` 를 다시 적는다. **이 판단은 자동으로 못 한다** — 조건 성립은 checker 가 되돌림으로 재지만 "이 지적이 조건 밖인가" 는 사람이 정한다. 2026-08-11 `agent-ts` 의 저장 계층 첫 phase 가 완료 조건 열한 개를 전부 만족하고도 조건 밖 CRITICAL 때문에 회차 상한 여덟을 다 썼고, (b) 로 닫았다.
