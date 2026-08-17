@@ -683,7 +683,7 @@ jq -e --arg p "$PHASE" '[.phases[] | select(.name==$p) | .status] == ["done"]' "
 
 `Agent` 툴로 `loop-maker` 를 **회차마다 새로 한 번** 띄운다. **오케스트레이터는 코드를 쓰지 않는다**(불변 1). 같은 maker 를 `SendMessage` 로 이어가지 않는다 — 한 maker 가 열 회차를 살면 회차마다 읽은 파일·편집·빌드 출력을 전부 지고 간다. **회차 간에 필요한 것은 대화가 아니라 워킹 트리와 반복 표시로 전달된다.**
 
-행동 규칙(배정 범위만·테스트 동반·컴파일 자기 검증·설계 결함 시 보고·`ok`/`blocked` 종료·커밋 금지)은 `loop-maker` 정의가 담당하므로 프롬프트에 반복하지 않는다. **환경변수는 서브에이전트에 전달되지 않으니 아래 값 전부를 프롬프트 텍스트로 넘긴다.**
+행동 규칙은 `loop-maker` 정의가 담당하므로 프롬프트에 반복하지 않는다. **환경변수는 서브에이전트에 전달되지 않으니 아래 값 전부를 프롬프트 텍스트로 넘긴다.**
 
 1. **이 phase 의 step 들**(goal·layer·signature·ac_cmd)과 `design_ref`. **`ac_cmd` 가 곧 자기 검증 명령이다.**
 2. **이번 회차 입력 파일 경로 하나**: 아래가 고르는 것. **둘 다 주지 않는다.**
@@ -691,6 +691,8 @@ jq -e --arg p "$PHASE" '[.phases[] | select(.name==$p) | .status] == ["done"]' "
 4. **이전까지 완료한 phase(status=done)들이 무엇을 구현했는지 1~2줄**(진행 맥락).
 5. **컨벤션 문서 경로**: `$LOOP_CONVENTION_DOCS` 값. 비었으면 "없음".
 6. **빌드 명령**: `$LOOP_BUILD_CMD` 값. 비었으면 "없음".
+7. **테스트 명령**: `$LOOP_TEST_CMD` 값. 비었으면 "없음". 되돌림 확인(정의의 행동 규칙)이 좁혀 돌릴 명령이다 — 안 주면 maker 가 매 회차 다시 알아내거나 게이트와 다른 명령으로 잰다.
+8. **되돌림 확인 기록 경로**: `$LOOP_DIR/maker-revert-$PHASE.jsonl`. maker 가 수정마다 확인 결과를 한 줄씩 덧붙인다. 오케스트레이터는 읽지 않는다 — brake·AWAIT_USER 로 사람을 부를 때 사람이 여는 근거다.
 
 **입력은 두 갈래이고 게이트 큐가 먼저다.**
 
@@ -708,7 +710,7 @@ else MAKER_INPUT="$LOOP_DIR/scored-$PHASE.json"; echo "maker 입력: 채점 큐 
   | map(select(.cycles | length > 1)) | sort_by(-(.cycles | length))
   | .[] | "\(.cycles | length)회차째  회차=\(.cycles | join(","))  \(.key)"
 ' "$HIST" || echo "(반복 없음 — 첫 회차이거나 매번 새 finding)"
-echo "빌드: ${LOOP_BUILD_CMD:-없음} / 컨벤션: ${LOOP_CONVENTION_DOCS:-없음}"
+echo "빌드: ${LOOP_BUILD_CMD:-없음} / 테스트: ${LOOP_TEST_CMD:-없음} / 컨벤션: ${LOOP_CONVENTION_DOCS:-없음} / 되돌림 기록: $LOOP_DIR/maker-revert-$PHASE.jsonl"
 ```
 
 - **`gate-queue.jsonl` 이 비어 있지 않으면 그것.** 게이트가 깨진 사이클이라는 뜻이고, 이때 `scored-{phase}.json` 은 **이번 사이클 것이 아니다** — 게이트가 깨지면 checker 를 부르지 않아 Step 2-3 이 돌지 않았고, 그 파일은 앞 사이클에서 남은 값이다. 그걸 주면 maker 가 없는 문제를 쫓는다. 불변 4의 연장이다.

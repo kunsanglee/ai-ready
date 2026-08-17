@@ -104,9 +104,10 @@ effort: xhigh
 
 ### convention — 컨벤션·영향범위 (대부분 게이트로 빠져 얇음)
 
-기준: `docs/NAMING.md`·`docs/CONVENTIONS.md`·`docs/ARCHITECTURE.md`·`docs/TESTING.md`. 종류 `convention-violation / i18n-key-missing / test-missing`(+ 영향범위). (DDL 안전성은 runtime 차원의 `ddl-safety` 로 분류 — 위 runtime 섹션 참조.)
+기준: `docs/NAMING.md`·`docs/CONVENTIONS.md`·`docs/ARCHITECTURE.md`·`docs/TESTING.md`. 종류 `convention-violation / i18n-key-missing / test-missing / comment-rot`(+ 영향범위). (DDL 안전성은 runtime 차원의 `ddl-safety` 로 분류 — 위 runtime 섹션 참조.)
 - 네이밍, DTO 가 Controller 내부 클래스 아닌 `dto` 패키지 별도 파일인지, `@Service`+`@Transactional` 별도 라인, 컨트롤러 동사 접두어, `@Enumerated` 0건(AttributeConverter 써야).
 - 새 ErrorCode 에 i18n 메시지 키 누락 → `i18n-key-missing`.
+- **바깥 사실을 말하는 주석** → `comment-rot`: 그 파일이 안 바뀌어도 틀려질 수 있는 것(다른 컴포넌트의 동작, 근거가 다른 파일에 있는 개수·주기)을 말하는 주석. 무엇이 예외인지는 rubric 의 `comment-rot` 항목이 정한다. `comment-noise` 와 같이 MINOR 라 통과를 막지 않는다.
 - **테스트 누락** → `test-missing`: 이번 diff 가 도메인/서비스 등 *동작이 있는 프로덕션 코드* 를 작성·수정했는데 그에 대응하는 테스트(`ServiceTestSupport` 통합 테스트·단위 테스트)가 변경에 없으면 보고한다. 기준은 `docs/TESTING.md` — 그 변경에 어떤 테스트가 필요한지 거기서 읽어 판단한다(필요 시점에 lazy 하게 Read). 기존 테스트가 깨진 건 게이트가 잡으니 여기선 "새 변경분에 대응 테스트가 *아예 없다*"만 본다. 설정·문서·테스트 코드 자체·동작 변화 없는 순수 리네이밍은 제외. 한 finding 으로 묶어 근거에 어떤 변경 파일이 무테스트인지 적는다.
 - 영향범위(impact-radius 흡수): 공유 인프라(core-common, BaseEntity, *Aspect, *Converter, EventPublisher/MessagePublisher) 변경 시 모든 사용처 grep + 동일 패턴 누락(한 Query 에 차단필터 넣고 다른 Query 누락 등). 반복·광범위한 위반은 근거에 "반복 N건"을 적어 셸/사람이 MAJOR 로 올리게 한다.
 
@@ -126,7 +127,7 @@ effort: xhigh
 - **과잉 방어(`over-defensive`)**: 타입이 이미 보장하는 null 재검사, 삼키기만 하는 try-catch, 호출부가 하나뿐인데 그 하나가 이미 검증한 값의 재검증. **신뢰 경계의 입력 검증·데이터 손실을 막는 에러 처리는 여기 해당하지 않는다** — 그건 줄이면 안 되는 것이고, 잘못 지적하면 safety 렌즈가 잡을 결함을 이 렌즈가 만들어 낸다.
 - **이미 있는 것의 재구현(`duplicate-of-existing`)**: 표준 라이브러리·이미 설치된 의존성·옆 모듈의 유틸이 하는 일을 새로 짠 것. 근거에 그 기존 것의 경로를 적는다.
 - **제어 흐름(`control-flow-complexity`)**: 이번 변경이 더한 깊은 중첩, 동작을 가르는 불리언 파라미터, 흐름 제어용 가변 상태.
-- **주석 노이즈(`comment-noise`)**: 코드를 그대로 다시 말하는 주석. 이것만 rubric 예외표에서 MINOR 라 통과를 막지 않는다 — 잡되 회차를 태우지 않는 자리다.
+- **주석 노이즈(`comment-noise`)**: 코드를 그대로 다시 말하는 주석. 이 부류(convention 의 `comment-rot` 도 같다)는 rubric 예외표에서 MINOR 라 통과를 막지 않는다 — 잡되 회차를 태우지 않는 자리다.
 
 ## weights (가중 플래그) — 정확히 태깅
 
