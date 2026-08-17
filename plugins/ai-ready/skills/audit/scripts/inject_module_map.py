@@ -138,7 +138,6 @@ def build_full_map_doc(target: Path, modules: list[Path]) -> str:
     lines = ["# 모듈 맵", ""]
     lines.append("> 빌드 매니페스트(`build.gradle.kts` 등) 로 자동 감지된 모듈 카탈로그.")
     lines.append("> 모듈별 1줄 요약은 그 모듈의 `CLAUDE.md` 첫 줄에서 추출. (설명 없음) 표시는 모듈 가이드를 추가하면 자동 채워짐.")
-    lines.append("> 갱신: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"모듈 맵 갱신해줘\" 라고 말하세요.")
     lines.append("")
     lines.append(SECTION_BEGIN)
     lines.append("")
@@ -168,9 +167,10 @@ def build_root_stub(target: Path, modules: list[Path],
     total = len(modules)
     sample = documented[:stub_limit] if stub_limit > 0 else []
 
+    # 자동 생성 표시는 SECTION_BEGIN 마커의 `(auto-generated)` 가 이미 한다 — 루트 문서는 매
+    # 세션 always-loaded 라 같은 말을 산문으로 한 번 더 쓰면 그 분량을 매 세션 낸다.
     lines = [SECTION_HEADER, "", SECTION_BEGIN, ""]
-    lines.append("> 자동 생성됩니다. 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
-    lines.append("> 갱신: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"모듈 맵 갱신해줘\" 라고 말하세요.")
+    lines.append("> 이 영역의 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
     lines.append("")
     lines.append(f"전체 모듈 카탈로그 ({total}개): [`{MODULE_MAP_FILE}`]({MODULE_MAP_FILE})")
     if documented_count and sample:

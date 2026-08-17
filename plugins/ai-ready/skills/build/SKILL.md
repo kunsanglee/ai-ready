@@ -9,27 +9,12 @@ description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 �
 
 사람이 무엇을 만들지 확정해 넘기고 빠지면, 이 스킬이 그것을 phase/step 으로 쪼개 승인을 한 번 받고, 그 뒤 `maker(고침) → 게이트 → checker 렌즈 셋(병렬 점검) → 병합·채점 → 정체·brake 판정` 을 phase 마다 PASS 까지 돌린 다음 다음 phase 로 전진한다. **사람은 승인 한 번에만 필요하다.**
 
-**변경 하나를 수렴시키는 것도 이 스킬이다** — phase 가 하나인 경우일 뿐이다. 종전에 `/loop-run` 이 하던 일이고, 그 스킬은 여기로 흡수됐다(아래 "loop-run 이 흡수된 이유").
-
-> `/review` 와 혼동 금지. `/review` 는 **1회 점검 + 보고서, 코드 안 고침**(사람이 곧 루프). `/build` 는 **코드를 고치며 도는 루프**(사람이 빠짐). 점검 1회만 원하면 `/review`, 수렴까지 맡기면 `/build`.
-
-## loop-run 이 흡수된 이유 (이관 안내)
-
-종전에는 `/loop-run`(변경 하나 수렴)과 `/loop-build`(여러 phase 빌드아웃)가 따로 있었다. 실질 차이는 **maker 수명 하나**였는데, 그 차이가 없어졌다.
-
-- `loop-run` 은 maker 를 **매 회차** 새로 띄웠다. 회차 사이에 필요한 것은 대화가 아니라 **워킹 트리와 반복 표시**로 넘어간다 — 앞 회차가 무엇을 했는지는 `git diff` 에 있고, 같은 결함이 몇 회차째인지는 이력에서 뽑는다.
-- `loop-build` 는 phase 안에서 같은 maker 를 이어갔다. 명분은 "이 파일을 왜 이렇게 고쳤는지" 였는데 그것도 워킹 트리와 `phases.json` 의 step status 로 대체된다. 반면 **컨텍스트 부풀림은 대체 수단이 없고, 한 phase 가 여러 step 을 담고 최대 회차를 도는 이쪽이 더 심했다.**
-
-그래서 **매 회차 새 maker 로 통일**했고, 두 스킬의 차이가 0이 되어 하나로 합쳤다.
-
-**합친 것이 더 중요한 이유가 하나 더 있다.** 아래 "착수 전 스펙 검사"는 무인 완주를 가르는 게이트인데 `loop-build` 에만 있었다. 스킬이 둘이면 `/loop-run` 이 그 게이트를 통째로 우회하는 경로가 된다 — **검사 옆에 우회로가 있으면 그 검사는 검사가 아니라 권고다.** 합치면서 그 우회로가 닫혔다.
-
-`/loop-run` 을 쓰던 자리는 `/build` 로 바꾸면 된다. 달라지는 것은 작업 지시를 자유 산문 파일이 아니라 **phase 하나짜리 `phases.json`** 으로 적는다는 것뿐이고, 그 파일은 이 스킬이 대화 합의에서 써서 사람에게 확인받는다(Step 1).
+**변경 하나를 수렴시키는 것도 이 스킬이다** — phase 가 하나인 경우일 뿐이다.
 
 ## 🔌 plugin / 프로젝트 구조
 
 - 이 스킬은 `ai-ready` plugin 의 일부다. **도구 본체는 유저 레벨**(plugin), **프로젝트별 차이는 런타임 감지**가 채운다 — 별도 어댑터 파일을 만들지 않는다.
-- plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`kindstreak`·`lessons`, 렌즈 결과 병합 `merge_findings`, `lib.sh` 의 `loop_param`, `detect_build.py` 감지기, `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-maker.md`·`agents/loop-checker.md`·`agents/loop-spec-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace). **에이전트 이름은 `loop-` 접두를 유지한다** — 스킬 이름과 달리 에이전트는 사람이 타이핑하지 않고, `maker`·`checker` 같은 일반명은 다른 플러그인과 부딪히기 쉽다.
+- plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`kindstreak`·`lessons`, 렌즈 결과 병합 `merge_findings`, `lib.sh` 의 `loop_param`, `detect_build.py` 감지기, `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-maker.md`·`agents/loop-checker.md`·`agents/loop-spec-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace).
 - 프로젝트 사실(빌드·테스트·린트 명령·티켓 패턴·베이스 브랜치·컨벤션 docs·지식층)은 Step 0 에서 `detect_build.py` 가 매니페스트·브랜치를 *읽어* 감지한다(읽기 전용 — 커밋되는 어댑터 파일은 만들지 않는다).
 - 프로젝트 델타(레포에 커밋, 선택): `.loop/rubric.md`(LOCAL rubric — 그 스택 특유 kind. BASE 와 병합 채점). 없어도 BASE 만으로 돈다. 스택 특유 종류는 사람이 `/lessons` 로 덧붙여 키운다 — 자동 생성하지 않는다.
 - 지식층은 프로젝트의 `docs/ANTIPATTERNS.md`(ai-ready audit/apply 가 만들고 가꾸는 문서). checker 가 판정 기준으로 읽고, `/lessons` 가 잡힌 실수를 거기에 덧붙인다.
@@ -39,7 +24,7 @@ description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 �
 ## 입력
 
 1. **설계 문서 / 작업 지시 경로**: phase/step 분해의 원본. 도메인 설계 문서나 grill 합의 spec. 형식 무관 — 이 세션이 읽어 분해한다. **경로가 없으면**: 직전 대화에 합의가 있으면 그것으로 분해안을 만들어 사람에게 확인받고, 없으면 "무엇을 빌드할지" 요청하고 대기한다 — 분해할 원본 없이 무인 시작하지 않는다(불변 7).
-2. **phase 당 회차(선택)**: 위치 인자 중 **정수** = phase 당 `max_iterations`. 명시 없으면 rubric 기본(5). 명시값도 하드 천장 10 으로 깎인다. 전체 시간 상한도 `budget_minutes`(기본 120)를 **phase 당**으로 해석해 `× phase 수` 로 잡는다 — phase 가 늘수록 자동 확장돼 뒤 phase 가 시간 부족으로 잘리지 않는다. 파싱은 타입으로 가른다 — 정수=회차, 파일경로=spec 이라 순서가 뒤바뀌어도 안전.
+2. **phase 당 회차(선택)**: 위치 인자 중 **정수** = phase 당 `max_iterations`. 명시 없으면 rubric 의 `max_iterations` 기본값. 명시값도 하드 천장 10 으로 깎인다. 전체 시간 상한도 rubric 의 `budget_minutes` 를 **phase 당**으로 해석해 `× phase 수` 로 잡는다 — phase 가 늘수록 자동 확장돼 뒤 phase 가 시간 부족으로 잘리지 않는다. 파싱은 타입으로 가른다 — 정수=회차, 파일경로=spec 이라 순서가 뒤바뀌어도 안전.
 3. **비교 베이스**: `$LOOP_BASE_BRANCH`(Step 0 감지, 기본 `origin/main`). 점검 범위 = `$LOOP_BASE_BRANCH...HEAD + uncommitted`.
 
 작업 지시가 모호하면 루프를 **시작하지 않는다** — checker 의 정합 렌즈가 기준을 못 잡고 maker 도 구현 근거가 없어 헛돈다. Step 1 의 착수 전 검사가 그 확인을 게이트로 만든다.
@@ -63,9 +48,7 @@ description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 �
 - **시그니처 수준** — 무엇을 만들지 인터페이스/시그니처로 특정된다.
 - **실행 가능한 AC** — 완료를 **실행 가능한 커맨드**(테스트·빌드·린트)로 검증할 수 있다. 검증 커맨드를 못 붙이는 step 은 쪼개기가 덜 된 것이다.
 
-**step 이 넷을 다 만족해도 phase 목표가 열거 불가능하면 그 phase 는 수렴하지 않는다.** 목표는 유한한 목록이어야 한다 — "이 다섯 파일의 이 결함들" 처럼 무엇을 다 하면 끝인지 셀 수 있어야 한다. "~하게 만든다"(예: "세웠다고 적은 장치가 실제로 잠기게 한다")는 끝나는 지점이 없는 목표다. 하나를 잠그면 checker 가 다음 안 잠긴 것을 찾고, 그것을 잠그면 또 다음을 찾는다. 사이클이 도는 동안 등급은 오르내리므로 정체 감지도 안 뜬다.
-
-그 실수를 **사후에** 잡는 것이 `kindstreak.sh` 다(Step 2-4 의 `REPEATED_KIND`). 사전 규율이 먼저고, 감지기는 그것이 새어 나갔을 때의 그물이다.
+**step 이 넷을 다 만족해도 phase 목표가 열거 불가능하면 그 phase 는 수렴하지 않는다.** 목표는 "이 다섯 파일의 이 결함들" 처럼 무엇을 다 하면 끝인지 셀 수 있는 유한한 목록이어야 한다. "~하게 만든다" 는 끝나는 지점이 없어, 하나를 고치면 checker 가 다음을 찾고 등급은 오르내려 정체 감지도 안 뜬다.
 
 ## brake (멈춤 장치) — 값은 rubric, 집행은 이 스킬
 
@@ -75,11 +58,11 @@ brake **값** 은 BASE rubric(`$CLAUDE_PLUGIN_ROOT/_loop-engine/rubric.base.md`)
 
 | brake | 출처 | 이 스킬의 집행 |
 |---|---|---|
-| `max_iterations` (기본 5, 사용자 명시 시 그 값) | rubric PARAMS 또는 호출 인자 | 매 사이클 phase 별 `history-{phase}.jsonl` 줄 수 + 게이트 실패 카운터(`gate.fail`)를 합산해 시도를 세고 도달 시 멈춰 사람 호출. 명시값은 천장 10 으로 클램프 |
-| `budget_minutes` (기본 120, **phase 당**) | rubric PARAMS | 시작 epoch 영속 → 매 사이클 벽시계 경과 확인. 전체 상한 = `budget_minutes × phase 수` |
+| `max_iterations` (사용자가 명시하면 그 값) | rubric PARAMS 또는 호출 인자 | 매 사이클 phase 별 `history-{phase}.jsonl` 줄 수 + 게이트 실패 카운터(`gate.fail`)를 합산해 시도를 세고 도달 시 멈춰 사람 호출. 명시값은 천장 10 으로 클램프 |
+| `budget_minutes` (**phase 당**으로 해석) | rubric PARAMS | 시작 epoch 영속 → 매 사이클 벽시계 경과 확인. 전체 상한 = `budget_minutes × phase 수` |
 | `stall_threshold_*` / `regress_consecutive` | rubric PARAMS | `stall.sh` 가 상태 파일로 자가 집행. `STALLED`/`REGRESS_ESCALATE` 면 멈춤 |
 | 하드코딩 천장 `ABS_CEIL=10` | 이 스킬 | rubric 오설정(max_iterations 폭주) 대비 백스톱. 무슨 일이 있어도 10회 초과 금지 |
-| `budget_usd`(기본 500)·`budget_tokens`(5M) | rubric PARAMS | **종료 후 참고 백스톱**. 세션 도중 누적 비용을 정확히 못 읽어 회차별 정밀 차단 불가. 실질 brake 는 회차·시간·정체 |
+| `budget_usd`·`budget_tokens` | rubric PARAMS | **종료 후 참고 백스톱**. 세션 도중 누적 비용을 정확히 못 읽어 회차별 정밀 차단 불가. 실질 brake 는 회차·시간·정체 |
 
 ## 작업 흐름
 
@@ -96,9 +79,17 @@ ENG="$(cd "$SKILL_DIR/../.." && pwd)/_loop-engine"
 [ -f "$ENG/lib.sh" ] || { echo "loop: 채점 엔진을 못 찾았다 ($ENG) — base directory 확인" >&2; exit 65; }
 # 프로젝트 사실을 런타임 감지(읽기 전용 — 파일 안 만든다). detect_build.py 는 매니페스트·브랜치만 읽어 JSON 을 낸다.
 DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
-LOOP_BUILD_CMD="$(printf '%s' "$DET" | jq -r '.build_cmd // ""')"
-LOOP_TEST_CMD="$(printf '%s' "$DET" | jq -r '.test_cmd // ""')"
-LOOP_LINT_CMD="$(printf '%s' "$DET" | jq -r '.lint_cmd // ""')"
+# 사람이 미리 지정한 값이 감지값을 이긴다 — 트러블슈팅 표의 "직접 지정" 우회가 실제로 서는 자리.
+LOOP_BUILD_CMD="${LOOP_BUILD_CMD:-$(printf '%s' "$DET" | jq -r '.build_cmd // ""')}"
+LOOP_TEST_CMD="${LOOP_TEST_CMD:-$(printf '%s' "$DET" | jq -r '.test_cmd // ""')}"
+LOOP_LINT_CMD="${LOOP_LINT_CMD:-$(printf '%s' "$DET" | jq -r '.lint_cmd // ""')}"
+# 게이트 명령이 둘 다 비면 결정론 게이트가 통째로 사라진 채 루프가 돈다 — 컴파일·테스트가 한 번도
+# 안 돈 코드가 렌즈 판정만으로 PASS 까지 갈 수 있다. 없는 것과 못 찾은 것을 가른다: 게이트가 정말
+# 없는 대상(문서 전용 저장소)은 LOOP_NO_GATE=1 로 명시 선언하고 진행하고, 그 외에는 시작하지 않는다.
+if [ -z "$LOOP_BUILD_CMD" ] && [ -z "$LOOP_TEST_CMD" ] && [ "${LOOP_NO_GATE:-0}" != "1" ]; then
+  echo "loop: 게이트 명령 0개 — 감지 실패면 LOOP_BUILD_CMD/LOOP_TEST_CMD 지정, 게이트가 정말 없으면 LOOP_NO_GATE=1 명시 선언. 무인 시작 금지" >&2
+  exit 3
+fi
 LOOP_TICKET_REGEX="$(printf '%s' "$DET" | jq -r '.ticket_regex // "[A-Z]+-[0-9]+"')"
 LOOP_BASE_BRANCH="$(printf '%s' "$DET" | jq -r '.base_branch // "origin/main"')"
 # 베이스 ref 가 실제 존재하는지 확인 — 오감지하면 빈 diff 가 거짓 PASS 로 둔갑한다(checker 가 reviewed 를 채우면 채점은 빈 findings 를 PASS 로 낸다).
@@ -147,7 +138,16 @@ fi
 # **점검 범위 스냅숏도 함께 지운다.** phase 진입이 그것을 한 번만 찍게 되어 있어(재개 대비),
 # 같은 티켓을 새로 시작할 때 옛 스냅숏이 남아 있으면 첫 phase 가 **앞 루프가 만든 것을 이미
 # 본 것으로 치고 조용히 좁힌다.** 초기화 대상에서 빠지면 그 실패는 아무 데도 안 드러난다.
-rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json "$LOOP_DIR"/scope-open-*.txt
+# **회차 스냅숏(scope-cycle-*)과 회차 마커(narrowed-*·confirm-full-*)도 같은 종류다.** 앞 루프의
+# 회차 스냅숏이 남으면 새 루프의 **첫 회차**가 그것을 기준으로 좁히고(첫 회차는 안 좁히는 것이
+# 계약이다), confirm-full 이 남으면 첫 회차가 확인 회차로 읽힌다. 둘 다 조용히 지나간다.
+# **글롭 확장을 셸에 맡기지 않는다.** zsh 는 매칭 0개인 글롭이 하나라도 있으면 명령 자체를
+# 실행하지 않고 no matches found 로 끝낸다(정상 종료한 루프에는 narrowed-*·confirm-full-* 이
+# 없으므로 매 재실행이 거기 걸린다). 이 스킬의 블록은 오케스트레이터의 Bash 도구가 그대로
+# 실행하고 그 셸이 무엇인지는 호스트가 정하므로, 패턴을 find 에 넘겨 셸과 무관하게 만든다.
+find "$LOOP_DIR" -maxdepth 1 \( -name 'gate.fail' -o -name 'history*.jsonl' \
+  -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' \) -delete
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -180,7 +180,7 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
 
 입력을 Read 해서 phase/step 으로 분해한다. 위 "좋은 step 의 원칙"을 따른다. 분해 결과를 `phases.json` 으로 쓰고, **기계 검사와 스펙 완전성 점검을 거친 뒤 사람에게 승인을 받는다.** 이 승인이 무인 실행의 유일한 시작 게이트다.
 
-**변경 하나만 수렴시키는 경우도 여기를 지난다** — phase 가 하나인 `phases.json` 을 쓴다. 사람이 JSON 을 직접 쓸 필요는 없다. 대화의 합의를 이 세션이 옮겨 적고 사람은 그것을 보고 승인한다. 그 한 번이 종전 `/loop-run` 의 브리프 확인 자리를 대신한다.
+**변경 하나만 수렴시키는 경우도 여기를 지난다** — phase 가 하나인 `phases.json` 을 쓴다. 사람이 JSON 을 직접 쓸 필요는 없다. 대화의 합의를 이 세션이 옮겨 적고 사람은 그것을 보고 승인한다.
 
 ```jsonc
 // phases.json — 분해 결과 + 진행 상태. phase·step 각각 4-state: pending → in_progress → done | blocked
@@ -211,14 +211,14 @@ echo "build 시작: ticket=$TICKET stack=$(printf '%s' "$DET" | jq -c '.stack') 
 
 #### 착수 전 스펙 검사 (통과해야 시작한다)
 
-**무엇이 무인 완주를 가르나 — 사람 게이트가 아니라 스펙의 질이다.** 같은 날 같은 저장소에서 돌린 두 phase 가 근거다. 한 phase 는 목표를 "세웠다고 적은 장치가 실제로 잠기게 한다" 로 줬고 **여섯 사이클, 사람이 한 번 끼어들어야 닫혔다** — 목표를 항목으로 나열할 수 없어 하나를 닫으면 checker 가 다음을 찾았다. 다른 phase 는 목표를 **변이 여섯으로 미리 적어** 줬고("관성 분기를 지우면 빨개진다" 같은 것) **네 사이클, 사람이 한 번도 필요 없었다.** 차이는 스펙 하나뿐이었다. 그래서 이 스킬은 사람이 필요한지를 **실행 중에 판정하지 않고 착수 전에 검사한다.**
+**무인 완주를 가르는 것은 사람 게이트가 아니라 스펙의 질이라, 사람이 필요한지를 실행 중이 아니라 착수 전에 검사한다.** 열거 불가능한 목표를 준 phase 는 여섯 사이클에 사람이 한 번 끼어들었고, 같은 목표를 변이 여섯으로 적은 phase 는 네 사이클에 사람이 필요 없었다(2026-08, 같은 저장소 같은 날).
 
-아래 항목은 전부 **선택이 아니다.** 하나라도 없으면 `phases.json` 을 고쳐 다시 온다 — 다른 방식으로 도는 우회로는 없다. 검사 옆에 우회로가 있으면 그 검사는 검사가 아니라 권고가 되고, 이것들이 막으려던 사고는 바로 그 우회로 쪽에서 일어났다.
+아래 항목은 전부 **선택이 아니다.** 하나라도 없으면 `phases.json` 을 고쳐 다시 온다 — 다른 방식으로 도는 우회로는 없다.
 
 1. **완료 조건을 항목으로 나열할 수 있나.** phase 마다 `exit_criteria` 를 배열로 적는다. 각 항목은 **되돌렸을 때 무엇이 빨개지는지** 를 말해야 한다("관성 분기를 지우면 그 검사가 실패한다" 처럼). "~하게 만든다" 같은 서술은 항목이 아니다 — 끝나는 지점이 없어 그 phase 가 수렴하지 않는다.
 2. **되돌릴 수 없는 영역에 닿나.** phase 마다 `irreversible` 에 그 답을 적는다. 닿으면 어느 영역인지 문자열로(그 자리만 사람에게 올린다는 뜻), 안 닿으면 `false`(그 이유로 멈출 일이 없다는 뜻). 무엇이 그 목록인지는 BASE rubric 의 `force_await=always` 종류다.
 3. **부딪힐 판단에 우선순위를 적었나.** 최상위 `tiebreaks` 에 측정으로 안 갈리는 트레이드오프를 미리 순서 지어 둔다. 안 적으면 오케스트레이터가 그 자리에서 멈춰 결국 사람을 부른다.
-4. **이번에 안 볼 표면을 적었나.** phase 마다 `non_goals` 에 답한다. 좁히면 그 표면들을 문자열 배열로(`["수신 층", "성능 튜닝"]`), 안 좁히면 `false`. **모든 phase 에 같은 값을 복사하면 아무것도 안 좁혀진다** — 설계 문서의 "안 만드는 것" 은 작업 **전체**가 안 만드는 것이라 공통으로 깔리고, 거기에 **그 phase 만 안 보는 표면**(다음 phase 가 볼 것)을 더해야 이 칸이 일을 한다. 그 "다음 phase 가 본다" 는 문서에 없는 정보라 여기 분해에서 정해진다. 이 칸이 여는 것이 둘이다. **하나는 바로 선다** — 문서가 "안 한다" 고 적은 것을 구현하면 checker 가 `intent-nongoal-violation` 으로 내고 그 종류는 BLOCKER 라 사람을 부른다. 종류는 계약에 원래 있었는데 **적을 칸이 없어 아무도 그 기준을 받은 적이 없다.** 다른 하나는 계측이다 — 렌즈가 finding 마다 범위 안팎을 표시하고 회차 끝의 `out_of_scope` 가 그 수를 센다. **그 수는 등급을 안 바꾼다.** 회차를 다 쓰고 멈춘 자리에서 사람이 묻는 것이 "이 지적이 이번 목표 안인가" 인데 그 답이 지금까지 아무 데도 안 남았고, 이 칸이 그것을 파일로 남긴다.
+4. **이번에 안 볼 표면을 적었나.** phase 마다 `non_goals` 에 답한다. 좁히면 그 표면들을 문자열 배열로(`["수신 층", "성능 튜닝"]`), 안 좁히면 `false`. **모든 phase 에 같은 값을 복사하면 아무것도 안 좁혀진다** — 설계 문서가 "안 만든다" 고 적은 것은 작업 전체에 공통이라, 거기에 **그 phase 만 안 보는 표면**(다음 phase 가 볼 것)을 더해야 이 칸이 일을 한다. 렌즈가 이 값을 무엇에 쓰는지는 Step 2-2 에 있다.
 
 기계가 보는 것은 **있는지 없는지**뿐이고, 그 검사가 아래 블록이다. 각 항목이 **정말** 되돌림과 빨개짐을 말하는지는 다음 절의 `loop-spec-checker` 와 사람이 본다.
 
@@ -276,12 +276,13 @@ echo "build: 착수 전 스펙 검사 통과"
 - **`gaps` 는 분해 승인 요청과 한 화면에 낸다.** 사람이 어차피 승인하려고 그 화면을 보고 있고, 답을 기다리는 자리를 둘로 나누면 백그라운드 잡에서 오지 않을 답을 기다리게 된다.
 - 답을 반영할 곳은 설계 문서 또는 `phases.json` 이다. 반영했으면 분해가 달라졌을 수 있으므로 **이 절이 아니라 기계 검사부터** 다시 돈다.
 - `gaps` 가 비면 그 사실을 한 줄로 말한다. 점검 자체가 실패하면(결과 파일이 안 생김) 그 사실만 알리고 시작은 막지 않는다 — 이 절은 경고 층이지 게이트가 아니다.
+- **실행 형태 안내(같은 화면, 한 줄).** spec-checker 가 `exit_criteria` 형태 문제를 지적하지 않았으면 — 즉 조건이 전부 "되돌리면 X 가 실패한다" 로 열거돼 있으면 — 승인 화면에 이 한 줄을 얹는다: "완료 조건이 전부 열거·검증 가능한 형태다. 이런 작업은 조건마다 에이전트를 붙이는 병렬 워크플로가 루프보다 빠를 수 있다(실측: 같은 단계를 루프는 회차당 46분 × 4~5회차, 워크플로는 6분 — 2026-08, agent-ts). 루프로 계속할지 고른다." 강제하지 않는다 — 루프가 값을 하는 자리는 완료 시점의 모양을 아직 모를 때이고, 그 판단은 사람 몫이다.
 
 > Bash 도구 호출은 호출마다 새 셸이라 env 가 안 남는다. 그래서 회차·시작시각뿐 아니라 **brake 값·감지 명령까지 전부 파일로 영속** 한다. 이후 모든 Step 의 셸 블록은 맨 위의 재유도 프리앰블(브랜치별 포인터 `.loop/run/.active-{브랜치}` → `set -a` 로 `params.env` source)로 시작한다 — 변수 carry-over 를 가정하지 않는다. `set -a` 가 핵심이다: 그냥 source 하면 값만 복원되고 export 속성이 빠져, 채점 자식 프로세스가 `LOOP_RUBRIC_LOCAL` 을 못 읽어 LOCAL rubric 이 조용히 무시된다.
 
 ### Step 1-1. 순회를 서브에이전트에 내린다 (위임 계약)
 
-**왜 내리나.** 순회를 이 세션이 돌면 사이클마다 오가는 것(채점 결과, maker 지시, 게이트 출력)이 전부 사람이 보고 있는 그 대화에 쌓인다. 한 phase 를 여섯 사이클 돌리면 그만큼 무거워진다. 순환 제어를 한 층 아래로 내리면 그 잡음이 위로 안 올라온다 — **아래층 출력은 띄운 쪽에게 가기 때문이다**(실측: 3,900자 출력을 내는 하위 에이전트를 그 깊이에서 돌렸더니 중간 에이전트만 전문을 받았고 최상위에는 네 줄 요약만 왔다).
+**왜 내리나.** 순회를 이 세션이 돌면 사이클 잡음(채점 결과·maker 지시·게이트 출력)이 전부 사람이 보고 있는 그 대화에 쌓인다. 순환 제어를 한 층 아래로 내리면 **아래층 출력은 띄운 쪽에게 가므로** 그 잡음이 위로 안 올라온다(실측: 3,900자 출력을 중간 에이전트만 전문으로 받았고 최상위에는 네 줄 요약이 왔다).
 
 **위임 오케스트레이터의 계약.** `Agent` 로 **이름 붙인 백그라운드** 오케스트레이터를 하나 띄우고, Step 2 의 phase 순회를 통째로 그 안에서 돌린다. 프롬프트에 담는 것은 그 층이 스스로 재유도할 수 없는 것뿐이다: 이 스킬 문서의 경로와 "Step 2 를 네가 돈다" 는 지시, 프로젝트 루트, 설계 문서 경로, 그리고 `phases.json` 의 `tiebreaks` 값(그 층이 판단에 쓸 순서). **담지 않는 것**: checker findings 전문, maker 보고, 게이트 출력, 설계 문서 본문 — 전부 그 층이 파일로 직접 읽는 것들이고, 프롬프트에 실으면 메인 창에 먼저 쌓여 위임의 목적이 사라진다.
 
@@ -304,9 +305,9 @@ build 시작 — phase N개, 진행은 .loop/run/{ticket}/phases.json 에서 볼
 
 **컨텍스트 위생은 그 층에도 그대로 걸린다**(아래 "오케스트레이터는 내용을 보유하지 않는다"). 그리고 **메인에 올리는 보고는 phase 단위 요약** 이지 사이클 잡음이 아니다 — 사이클마다 보고하면 잡음이 한 층만 늦게 같은 창에 쌓인다.
 
-**아래층 스폰의 제약.** 위임 오케스트레이터가 maker·checker 를 띄울 때는 `run_in_background` 와 `name` 을 쓸 수 없다 — 그 깊이에서는 동기 서브에이전트만 뜬다. **checker 렌즈 셋은 한 메시지에 `Agent` 호출 셋을 담아 함께 띄우면 동기여도 병렬로 돈다.** 그 층은 팀 명부에도 화면에도 안 보이므로, 진행을 사람이 보려면 `.loop/run/{ticket}/` 의 이력 파일을 읽는다 — 화면에 안 뜬다는 것이 안 돈다는 뜻이 아니다.
+**아래층 스폰의 제약.** 위임 오케스트레이터가 maker·checker 를 띄울 때는 `run_in_background` 와 `name` 을 쓸 수 없다 — 그 깊이에서는 동기 서브에이전트만 뜬다. **checker 렌즈 셋은 한 메시지에 `Agent` 호출 셋을 담아 함께 띄우면 동기여도 병렬로 돈다.** 그 층은 팀 명부에도 화면에도 안 보이므로, 진행을 사람이 보려면 `.loop/run/{ticket}/` 의 이력 파일을 읽는다.
 
-**호스트가 이름 붙인 백그라운드 서브에이전트를 못 띄우면 이 세션이 Step 2 를 돈다.** 위임은 잡음이 어느 창에 쌓이는가의 문제라, 그 수단이 없는 호스트에서 스킬 자체를 못 쓰게 만들 이유가 없다. **다만 착수 전 스펙 검사는 그대로 통과해야 한다** — 그 검사는 위임 여부와 무관한 시작 조건이고, 없앤 것은 "검사에 걸렸을 때 다른 모드로 도는 길" 이지 "직접 도는 것" 자체가 아니었다. 이 퇴로로 들어왔으면 사이클 잡음이 사람 창에 쌓이므로, 한 phase 가 길어지면 세션을 나눌지 사람에게 묻는다.
+**호스트가 이름 붙인 백그라운드 서브에이전트를 못 띄우면 이 세션이 Step 2 를 돈다.** 위임은 잡음이 어느 창에 쌓이는가의 문제라, 그 수단이 없는 호스트에서 스킬 자체를 못 쓰게 만들 이유가 없다. **다만 착수 전 스펙 검사는 그대로 통과해야 한다** — 그 검사는 위임 여부와 무관한 시작 조건이다. 이 퇴로로 들어왔으면 사이클 잡음이 사람 창에 쌓이므로, 한 phase 가 길어지면 세션을 나눌지 사람에게 묻는다.
 
 ### Step 2. phase 순회 (바깥 루프)
 
@@ -439,9 +440,18 @@ GFAIL=$(cat "$LOOP_DIR/gate.fail" 2>/dev/null || echo 0)   # 게이트 실패 �
 ELAPSED_MIN=$(( ( $(date +%s) - $(cat "$LOOP_DIR/started.epoch") ) / 60 ))
 echo "사이클 진입: phase=$PHASE 완료 $ITER 회 + 게이트 실패 $GFAIL 회 / 경과 ${ELAPSED_MIN}분"
 # brake: 반복·시간·천장. 주석 의사코드가 아니라 실행 블록이다 — 매 사이클 실제로 돌아야 강제된다.
-if [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ] || [ "$ELAPSED_MIN" -ge "$BUDGET_MIN" ]; then
+# **확인 회차는 회차 상한을 한 번 넘어설 수 있다.** 좁힌 회차가 PASS 를 낸 뒤 phase 범위로 한 번 더
+# 도는 그 회차인데, 마지막 허용 회차에 PASS 가 나오면 그 한 번을 못 돌아 phase 가 PASS 를 받고도
+# 안 닫힌다. 마커가 있으면 상한을 한 칸 올릴 뿐이라(CONFIRM 은 0 또는 1) 예외는 정확히 한 회차다.
+# **비교를 통째로 건너뛰면 안 된다** — 그 회차의 게이트가 깨지면 마커를 지우는 Step 2-2 에 도달하지
+# 못한 채 마커가 살아남고, gate.fail 이 늘어나는 동안 예외가 매 회차 다시 서서 절대 상한까지 간다.
+# 한 칸만 올리면 게이트 실패로 iter+gfail 이 늘어난 다음 진입에서 brake 가 선다.
+# 회차 상한이 절대 상한과 같으면 이 예외는 서지 않는다 — 절대 상한이 이긴다.
+CONFIRM=0; if [ -f "$LOOP_DIR/confirm-full-$PHASE" ]; then CONFIRM=1; fi
+if [ $((ITER + GFAIL)) -ge $((MAX_ITER + CONFIRM)) ] \
+   || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ] || [ "$ELAPSED_MIN" -ge "$BUDGET_MIN" ]; then
   echo "build: brake 도달 (iter=$ITER + 게이트실패 $GFAIL / $MAX_ITER 천장 $ABS_CEIL, 경과 ${ELAPSED_MIN}/${BUDGET_MIN}분) — 평가 없이 종료, 사람 호출" >&2
-  # 더 진행하지 말고 Step 2-4 분기 2(brake) → Step 3 으로.
+  # 더 진행하지 말고 Step 2-4 의 brake 분기 → Step 3 으로.
 fi
 # 점검 대상이 실제로 있나 — 베이스 오감지·빈 작업이면 finding 0 이 거짓 PASS 로 둔갑한다. **여기가 결정론 1차 방어**고, 채점의 reviewed 게이트는 checker 가 그 뒤에 반쯤 죽는 경우를 받는다.
 CHANGED=$(git diff --name-only "$LOOP_BASE_BRANCH"...HEAD 2>/dev/null | wc -l | tr -d ' ')
@@ -504,19 +514,17 @@ fi
 
 - 공통: 설계 문서 경로와 이 phase 의 `design_ref`·step 목록, **이 phase 의 `exit_criteria` 항목 전부**, **이 phase 의 `non_goals`**, 비교 베이스 `$LOOP_BASE_BRANCH`, 컨벤션 문서 `$LOOP_CONVENTION_DOCS`·지식층 `$LOOP_KNOWLEDGE_LAYER`(비었으면 "없음" 명시 — checker 가 "컨벤션 문서 없음, 신뢰도 제한" 경로를 정직하게 타게), 종류 어휘 rubric 두 경로(BASE `$ENG/rubric.base.md`, LOCAL `$LOOP_RUBRIC_LOCAL` 있으면).
 - 렌즈마다: **렌즈 이름과 담당 차원**, 그리고 **그 렌즈 전용 출력 경로**.
-- 그리고 **점검 범위** — 아래 블록이 낸 값을 그대로 옮긴다. 파일 목록이 나왔으면 "지적은 이 파일들 안에서 낸다, 나머지는 배경으로만 읽는다" 를 함께 적고, "전 범위" 가 나왔으면 그대로 적는다.
+- 그리고 **점검 범위** — 아래 블록이 낸 값을 그대로 옮긴다. 파일 목록이 나왔으면 "지적은 이 파일들 안에서 낸다, 나머지는 배경으로만 읽는다" 를 함께 적고, "전 범위" 가 나왔으면 그대로 적는다. 블록이 **"회차 범위"** 를 냈으면 그것이 위의 점검 범위를 대신한다(마지막에 찍힌 범위가 이긴다).
 
-**점검 범위를 왜 좁히나 — 안 좁히면 마지막 phase 의 렌즈가 첫 phase 를 처음부터 다시 읽는다.** 비교 베이스는 Step 0 에서 한 번 정해지고 순회 내내 그대로라, 렌즈가 보는 양은 phase 가 진행될수록 자라기만 한다. 실측에서 회차 하나가 76분이었고 게이트는 그중 14초였다 — 나머지는 렌즈가 **누적된** 변경을 읽는 시간이다. 여덟째 회차의 렌즈도 첫 회차와 같은 2,600줄을 여덟 번째로 읽었다. `review_scope.py` 가 phase 진입 스냅숏과 지금을 견줘 **이 phase 가 실제로 만든 파일**만 뽑는다. 경로 목록이 아니라 내용 해시로 재는 것이 요점이다 — 목록으로 재면 **앞 phase 가 만든 파일을 이번 phase 가 고친 경우**가 빠지고, 빠져도 아무 검사가 실패하지 않는다(`_loop-engine/test_review_scope.py` 가 그 성질을 든다).
+**점검 범위를 좁히지 않으면 마지막 phase 의 렌즈가 첫 phase 를 처음부터 다시 읽는다.** 비교 베이스가 순회 내내 고정이라 렌즈가 읽는 양이 계속 자란다(실측: 회차 76분 중 게이트는 14초, 여덟째 회차도 같은 2,600줄을 읽었다). `review_scope.py` 가 phase 진입 스냅숏과 지금을 내용 해시로 견줘 이 phase 가 실제로 만든 파일만 뽑는다 — 경로 목록으로 재면 앞 phase 의 파일을 이번에 고친 경우가 빠진다(`_loop-engine/test_review_scope.py`).
 
 **좁히기가 공짜가 아니라서 전 범위를 보는 자리를 하나 남긴다.** 좁히면 phase 끼리 부딪히는 결함이 안 보인다 — 첫 phase 의 코드와 다섯째 phase 의 코드가 맞물려 깨지는 자리가 그렇다. 그래서 **마지막 phase 는 자동으로 안 좁히고**, 중간 phase 도 필요하면 `review_scope: "full"` 로 그렇게 만든다. 되돌림 확인처럼 전 범위를 다시 도는 phase 가 그 자리로 적당하다.
 
-**그 보장은 순회를 끝까지 도는 것에 달려 있다.** brake·`AWAIT_USER`·`STALLED` 로 마지막 phase 이전에 멈추면 전 범위를 본 자리가 **한 번도 안 돈다.** 그 상태에서 사람이 "여기서 닫는다" 를 고르려면 그 사실을 알아야 하므로, 멈춰서 사람을 부를 때 **전 범위로 돈 phase 가 있었는지 한 줄로 함께 올린다**(`phases.json` 의 `done` 인 phase 중 마지막이거나 `review_scope: "full"` 인 것이 있었나). 그리고 **phase 가 하나뿐인 분해에서는 그 하나가 곧 마지막이라 이 기능이 아예 안 걸린다** — 변경 하나를 수렴시키는 경우가 그렇고, 그때는 좁힐 앞 phase 도 없으니 손해가 없다.
-
-**`exit_criteria` 를 왜 checker 에 넘기나 — 안 넘기면 아무도 안 재기 때문이다.** 착수 전 검사는 그 항목이 *있는지* 만 보고, PASS 판정은 `BLOCKER 0 AND CRITICAL 0` 이라 그 phase 의 완료 조건과 무관하다. 그 사이에 "관성 분기를 지우면 그 검사가 실패한다" 를 적어 두고 실제로 그런지 재는 자리가 없었다. 항목을 프롬프트에 실으면 점검자가 그것을 **정합 판정의 기준**으로 삼아, 조건이 성립하지 않으면 `intent-requirement-missing` 으로 낸다(그 dimension floor 가 MAJOR 라 `RETRY_SOFT` 가 되어 다음 회차로 돌아간다). 평가 *계산기* 는 고정이고 **평가 대상 기준을 phase 가 가져오는 것**이 이 구조가 작업마다 달라지는 방식이다 — 계산기까지 매번 새로 지으면 같은 코드가 회차마다 다른 등급을 받아 정체 감지가 무너지고, 루프가 코드 대신 기준을 낮춰 통과할 수 있다.
+**`exit_criteria` 를 checker 에 넘기지 않으면 그 조건을 아무도 안 잰다.** 착수 전 검사는 항목이 있는지만 보고, PASS 판정은 `BLOCKER 0 AND CRITICAL 0` 이라 완료 조건과 무관하다. 항목을 프롬프트에 실으면 점검자가 그것을 **정합 판정의 기준**으로 삼아, 조건이 성립하지 않으면 `intent-requirement-missing` 으로 낸다(그 dimension floor 가 MAJOR 라 `RETRY_SOFT` 가 되어 다음 회차로 돌아간다). **판정 계산기는 고정이고 기준만 phase 가 가져온다** — 계산기까지 매번 새로 지으면 루프가 코드 대신 기준을 낮춰 통과할 수 있다.
 
 **그리고 성립 여부를 파일로 받는다.** `exit_criteria` 를 받은 checker 는 출력에 `exit_criteria_probes` 를 함께 낸다(계약은 `agents/loop-checker.md`) — 조건마다 무엇을 되돌려 무엇이 빨개졌는지, 어떤 명령으로 쟀는지가 들어간다. **이 필드는 채점에 안 들어가고 병합본에도 안 실린다. 렌즈별 결과 파일이 정본이다.** 그런데도 표준으로 두는 이유는 아래 분기에서 사람이 phase 를 닫을지 정할 때 **그것이 유일한 근거**이기 때문이다. 요구해야 생기는 것은 계약이 아니다.
 
-**`non_goals` 도 같은 이유로 넘긴다 — 안 넘기면 그 칸이 아무 일도 안 한다.** 넘기면 렌즈가 그것을 두 가지로 쓴다. 첫째, 그 표면을 실제로 구현한 것이 보이면 `intent-nongoal-violation`(BLOCKER)으로 낸다. 둘째, finding 마다 `in_scope` 로 이번 목표 안팎을 표시한다. **표시는 등급을 안 바꾼다** — `decide.sh` 가 `out_of_scope` 로 세기만 하고 verdict 는 등급만으로 정해진다(계약은 `_loop-engine/decide.sh` 헤더). 세는 이유는 아래 "완료 조건이 전부 성립했는데" 분기에서 사람이 답해야 하는 물음이 정확히 그것이고, 지금까지 그 답이 파일에 없었기 때문이다. 확신이 안 서는 finding 은 범위 **안**으로 기울이는 것이 계약이다 — 안 쟀거나 애매한 것이 통과 방향으로 떨어지지 않게 하는 이 엔진의 규율과 같은 방향이다.
+**`non_goals` 도 같은 이유로 넘긴다 — 안 넘기면 그 칸이 아무 일도 안 한다.** 렌즈가 둘로 쓴다. 그 표면을 실제로 구현한 것이 보이면 `intent-nongoal-violation`(BLOCKER)으로 내고, finding 마다 `in_scope` 로 이번 목표 안팎을 표시한다. **표시는 등급을 안 바꾼다** — `decide.sh` 가 `out_of_scope` 로 세기만 하고 verdict 는 등급만으로 정해진다(계약은 `_loop-engine/decide.sh` 헤더). 세는 것은 아래 "완료 조건이 전부 성립했는데" 분기에서 사람이 답할 물음의 재료다. 확신이 안 서는 finding 은 범위 **안**으로 기울이는 것이 계약이다.
 
 **maker 가 보고한 것을 checker 프롬프트에 절대 넣지 마라**(불변 1). 한 줄짜리 `ok` 도 옮기지 않는다.
 
@@ -554,6 +562,9 @@ echo "이번 phase 의 non_goals: $NON_GOALS"
 # `review_scope: "full"` 로 그렇게 만들 수 있다.
 LAST_PHASE="$(jq -r '.phases[-1].name' "$PHASES")"
 WANT="$(jq -r --arg p "$PHASE" '[.phases[] | select(.name==$p) | .review_scope // "phase"] | .[0]' "$PHASES")"
+# 아래 분기가 실제로 좁혔는지를 들고 다닌다. 뒤의 회차 좁히기가 이 값을 보고 서므로, 넓게 가기로
+# 한 결정(마지막 phase·review_scope=full·진입 스냅숏 없음·산출 거부)이 뒤에서 안 뒤집힌다.
+PHASE_NARROWED=0
 if [ "$PHASE" = "$LAST_PHASE" ] || [ "$WANT" = "full" ]; then
   echo "점검 범위: 전 범위 — $LOOP_BASE_BRANCH...HEAD 전부 (이유: $([ "$PHASE" = "$LAST_PHASE" ] && echo '마지막 phase' || echo 'review_scope=full'))"
 elif [ ! -f "$LOOP_DIR/scope-open-$PHASE.txt" ]; then
@@ -577,16 +588,55 @@ else
     # 같은 값이라, 여기서는 안전한 쪽인 전 범위로 떨어진다. Step 2-6 이 트리 미변경을 따로 잡는다.
     echo "점검 범위: 이 phase 가 바꾼 파일 0건 — 좁히지 않고 전 범위를 넘긴다"
   else
+    PHASE_NARROWED=1
     echo "점검 범위: 아래 파일들 — 지적은 이 안에서 내고 나머지는 배경으로만 읽는다"
     printf '%s\n' "$SCOPE" | sed 's/^/  /'
   fi
 fi
+# 회차 좁히기 — 같은 phase 안에서 회차마다 같은 것을 다시 읽지 않는다. 위 점검 범위가 "이 phase 가
+# 만든 것"이라면, 2회차부터 실제로 달라진 것은 직전 회차에 maker 가 고친 파일뿐이다. 그래서
+# 직전 렌즈 실행 이후 바뀐 파일에 **직전 회차 지적이 가리킨 파일을 합쳐** 넘긴다. 합치는 쪽이
+# 요점이다 — 빼면 maker 가 안 고친 지적이 렌즈 시야에서 사라져, 고쳐진 것과 안 읽은 것이 같은
+# 값이 된다(그 지적은 다음 판정에서 없던 일이 된다).
+# 실패는 전부 넓은 쪽으로 떨어진다: 위 점검 범위가 이미 전 범위이거나(마지막 phase·full·스냅숏
+# 없음·산출 거부) 회차 스냅숏이 없거나(첫 회차) 산출이 거부하거나 합집합이 비면 위 점검 범위
+# 그대로 간다. 그리고 **좁힌 회차의 PASS 는 그대로 닫지 않는다** — Step 2-4 의 PASS 분기가
+# phase 범위로 확인 회차를 한 번 돈다(좁힌 시야 밖에 남은 결함을 마지막에 한 번은 본다).
+CYCLE_SNAP="$LOOP_DIR/scope-cycle-$PHASE.txt"
+rm -f "$LOOP_DIR/narrowed-$PHASE"
+if [ -f "$LOOP_DIR/confirm-full-$PHASE" ]; then
+  rm -f "$LOOP_DIR/confirm-full-$PHASE"
+  echo "회차 범위: 좁히지 않는다 — 좁힌 회차의 PASS 확인 회차(위 점검 범위 그대로)"
+elif [ "$PHASE_NARROWED" -ne 1 ]; then
+  echo "회차 범위: 좁히지 않는다 — 위 점검 범위가 이미 전 범위다"
+elif [ -f "$CYCLE_SNAP" ] \
+  && CYC="$(python3 "$ENG/review_scope.py" since --base "$LOOP_BASE_BRANCH" --snapshot "$CYCLE_SNAP" --root "$PROJECT_ROOT")"; then
+  PREV_FILES=""
+  if [ -s "$LOOP_DIR/scored-$PHASE.json" ]; then
+    # 직전 지적의 파일 — location 은 `경로:줄(:열)` 또는 `경로:시작-끝` 이라 그 꼬리를 뗀다
+    # (score.sh 와 같은 규칙). 줄 범위를 못 떼면 그 경로가 파일로 존재하지 않아 범위에서 빠진다.
+    PREV_FILES="$(jq -r '(.findings // [])[] | (.location // "") | sub("(:[0-9]+(-[0-9]+)?)+$"; "")' \
+      "$LOOP_DIR/scored-$PHASE.json" | awk 'NF' | sort -u)"
+  fi
+  CYC_SCOPE="$(printf '%s\n%s\n' "$CYC" "$PREV_FILES" | awk 'NF' | sort -u)"
+  if [ -n "$CYC_SCOPE" ]; then
+    : > "$LOOP_DIR/narrowed-$PHASE"
+    echo "회차 범위: 아래 파일들 — 위 점검 범위 대신 이것을 렌즈에 넘긴다(직전 회차 변경 + 직전 지적 파일)"
+    printf '%s\n' "$CYC_SCOPE" | sed 's/^/  /'
+  else
+    echo "회차 범위: 산출 0건 — 좁히지 않는다(위 점검 범위 그대로)"
+  fi
+else
+  echo "회차 범위: 첫 회차이거나 산출 거부 — 좁히지 않는다(위 점검 범위 그대로)"
+fi
+# 다음 회차의 기준점 — 렌즈를 띄우기 직전 상태를 찍는다(재개 멱등: 매 회차 덮는 것이 맞다).
+python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" --out "$CYCLE_SNAP" --root "$PROJECT_ROOT"
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 ```
 
 > 모델: checker 는 frontmatter 에 모델을 고정하지 않는다 — 기본은 호출한 세션의 모델을 상속한다. 특정 모델로 돌리려면 `Agent` 호출에 `model` 파라미터를 지정한다.
 >
-> effort: checker 는 frontmatter 에 `effort: xhigh` 를 **고정한다** — 모델과 달리 세션을 상속하지 않는다. 적발률이 곧 탐색량인 자리라, 세션 등급을 내려도 판정부는 따라 내려가면 안 되기 때문이다. `Agent` 호출로는 재정의할 수 없다. 계약은 `core/effort-ladder.md`.
+> effort: checker 는 frontmatter 에 `effort: xhigh` 를 **고정한다** — 모델과 달리 세션을 상속하지 않는다. 적발률이 곧 탐색량인 자리라, 세션 등급을 내려도 판정부는 따라 내려가면 안 되기 때문이다. 구현을 맡는 `loop-maker` 를 세션 아래로 두는 것(`model: opus`·`effort: high`)이 이 비대칭의 반대쪽이다. `Agent` 호출로는 재정의할 수 없다. 계약은 `core/effort-ladder.md`.
 
 #### Step 2-3. 렌즈 결과 병합 + 결정론 채점
 
@@ -652,17 +702,16 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 아래 **위에서부터** 먼저 걸리는 것을 따른다.
 
 1. `V == AWAIT_USER` → **멈춤, 사람 호출.** 비가역·자동화 금지 영역(BLOCKER/force_await). maker 가 손대면 안 된다.
-2. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `>= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN`) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다. **`exit_criteria_probes` 가 있으면 조건별 성립 여부를 함께 넘긴다** — 사람이 "한 회차 더" 와 "여기서 닫는다" 를 가르는 재료가 그것이다(아래 블록). **회차 요약의 범위 계측(`out_of_scope`)도 함께 넘긴다** — 조건이 성립했나와 남은 지적이 이번 목표 안인가는 같은 판단의 두 반쪽이다.
-3. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
-4. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 3번과 **전할 말이 다르다.** 3번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다 — 코드가 아니라 phase 목표를 의심하라"** 다. 사람에게 물을 것 둘: 이 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다.
-5. `V == PASS` → 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
+2. `V == PASS` → **이 회차가 좁힌 범위로 돌았으면(`$LOOP_DIR/narrowed-$PHASE` 가 있으면) 아직 닫지 않는다.** `: > "$LOOP_DIR/confirm-full-$PHASE"` 를 만들고 Step 2-1 로 돌아가 phase 범위로 **확인 회차**를 한 번 돈다 — 좁힌 시야 밖에 남은 결함이 없는지 마지막에 한 번은 전 시야로 본다. 좁히지 않은 회차의 PASS 면 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
+   - **PASS 를 brake 보다 먼저 본다.** 반대 순서면 마지막 허용 회차에 나온 PASS 가 brake 판정에 가려, phase 가 PASS 를 받고도 안 닫힌 채 사람이 불려 온다. 확인 회차는 마커가 회차 상한을 한 칸만 올리는 것이라 1회로 제한되고(게이트 실패로 그 회차를 다시 열면 다음 진입에서 brake 가 선다), 절대 상한 `ABS_CEIL` 과 시간 상한은 그대로 하드 스톱이다. **회차 상한이 절대 상한과 같으면 이 예외는 서지 않는다** — 절대 상한이 이긴다.
+3. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `>= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN`) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다. **`exit_criteria_probes` 가 있으면 조건별 성립 여부를 함께 넘긴다** — 사람이 "한 회차 더" 와 "여기서 닫는다" 를 가르는 재료가 그것이다(아래 블록). **회차 요약의 범위 계측(`out_of_scope`)도 함께 넘긴다** — 조건이 성립했나와 남은 지적이 이번 목표 안인가는 같은 판단의 두 반쪽이다.
+4. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
+5. `KS == REPEATED_KIND` → **멈춤, 사람 호출.** 다만 4번과 **전할 말이 다르다.** 4번은 "코드가 안 고쳐진다" 이고 이건 **"같은 종류가 N 사이클 연속으로 이 phase 를 지배했다 — 코드가 아니라 phase 목표를 의심하라"** 다. 사람에게 물을 것 둘: 이 목표가 **열거 가능한가**, **끝나는 지점이 정의됐는가**. 코드를 한 번 더 고치는 것으로는 닫히지 않는다.
 
-> **1~4 로 멈출 때는 "전 범위를 본 phase 가 아직 없다" 를 함께 올린다.** 점검 범위 좁히기는 마지막 phase 를 안 좁히는 것으로 대가를 갚는데, **그 자리는 순회를 끝까지 돌아야 온다.** 중간에 멈추면 phase 끼리 부딪히는 결함을 본 회차가 하나도 없이 끝나고, 사람은 "여기서 닫는다" 를 고를 때 그 사실을 모른다. 판정은 `jq -r '[.phases[] | select(.status=="done") | select(.review_scope=="full" or .name==$last)] | length'` 처럼 **닫힌 phase 중 안 좁힌 것이 있었나**로 낸다.
+> **PASS 가 아닌 사유로 멈출 때는(1·3·4·5) "전 범위를 본 phase 가 아직 없다" 를 함께 올린다.** 점검 범위 좁히기는 마지막 phase 를 안 좁히는 것으로 대가를 갚는데, **그 자리는 순회를 끝까지 돌아야 온다.** 중간에 멈추면 phase 끼리 부딪히는 결함을 본 회차가 하나도 없이 끝나고, 사람은 "여기서 닫는다" 를 고를 때 그 사실을 모른다. 판정은 `jq -r --arg last "$LAST_PHASE" '[.phases[] | select(.status=="done") | select(.review_scope=="full" or .name==$last)] | length'` 처럼 **닫힌 phase 중 안 좁힌 것이 있었나**로 낸다.
 6. `V == RETRY` 또는 `V == RETRY_SOFT` (그리고 위 brake/stall/반복 종류 미도달) → **Step 2-5(maker 스핀)** 로.
 
-> **완료 조건이 전부 성립했는데 조건 밖 지적만 남았으면 — 사람이 그 phase 를 닫을 수 있다.** PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고 **그 phase 의 완료 조건을 안 본다.** 그래서 조건을 다 만족하고도 조건 **밖** CRITICAL 때문에 안 닫히는 상태가 성립한다. 사람이 고를 것은 셋이다. (a) 회차 상한을 올려 한 번 더 돈다. (b) **여기서 닫고 남은 지적을 다음 phase 로 세운다** — `phases.json` 에 phase 를 하나 더하면 회차가 새로 시작된다. 회차 상한은 "한 목표에 몇 번까지 매달릴 것인가" 라, 목표가 바뀌면 새로 세는 것이 맞다(편법이 아니다). (c) 목표가 애초에 열거 불가능했다고 보고 `exit_criteria` 를 다시 적는다. **이 판단은 자동으로 못 한다** — 조건 성립은 checker 가 되돌림으로 재지만 "이 지적이 조건 밖인가" 는 사람이 정한다. 2026-08-11 `agent-ts` 의 저장 계층 첫 phase 가 완료 조건 열한 개를 전부 만족하고도 조건 밖 CRITICAL 때문에 회차 상한 여덟을 다 썼고, (b) 로 닫았다.
->
-> **판단은 여전히 사람이 하되, 재료는 이제 파일에 있다.** phase 가 `non_goals` 에 안 볼 표면을 적었으면 렌즈가 finding 마다 안팎을 표시하고 회차 요약의 `out_of_scope` 가 그 수를 센다. **그 수는 등급을 안 내린다.** 세는 것과 판정하는 것을 갈라 둔 이유는 근거가 아직 한 저장소 한 루프뿐이어서다 — 재는 장치를 먼저 두고, 수치가 쌓인 뒤에 강등을 얹을지 정한다. 읽을 때 조건이 하나 있다: **`미표시` 가 총 건수와 같은 회차의 수치는 근거가 아니다.** 그건 범위 밖이 없다는 뜻이 아니라 렌즈가 표시를 안 달았다는 뜻이다.
+> **완료 조건이 전부 성립했는데 조건 밖 지적만 남았으면 — 사람이 그 phase 를 닫을 수 있다.** PASS 는 `BLOCKER 0 AND CRITICAL 0` 이고 **그 phase 의 완료 조건을 안 본다.** 그래서 조건을 다 만족하고도 조건 **밖** CRITICAL 때문에 안 닫히는 상태가 성립한다. 사람이 고를 것은 셋이다. (a) 회차 상한을 올려 한 번 더 돈다. (b) **여기서 닫고 남은 지적을 다음 phase 로 세운다** — `phases.json` 에 phase 를 하나 더하면 회차가 새로 시작된다(회차 상한은 한 목표에 매달리는 횟수라, 목표가 바뀌면 새로 세는 것이 맞다). (c) 목표가 애초에 열거 불가능했다고 보고 `exit_criteria` 를 다시 적는다. **이 판단은 자동으로 못 한다** — 조건 성립은 checker 가 되돌림으로 재지만 "이 지적이 조건 밖인가" 는 사람이 정한다. 2026-08-11 `agent-ts` 의 저장 계층 첫 phase 가 완료 조건 열한 개를 전부 만족하고도 조건 밖 CRITICAL 때문에 회차 상한 여덟을 다 썼고, (b) 로 닫았다.
 >
 > **설계 drift 는 무인이 판단하지 않는다(사람 게이트).** 실제 구현이 최초 설계(`design_ref`)와 달라져야 한다고 maker 가 보고하거나, checker 가 "코드가 설계와 다른데 코드 쪽이 맞아 보인다"를 잡으면 — 코드를 설계에 맞추는 걸로 끝내지 않고 **`AWAIT_USER` 로 멈춰 사람에게 설계 재결정을 맡긴다.** 이 스킬은 "설계대로 구현"이 목표이지 "설계를 고쳐 구현"이 아니다.
 
@@ -719,7 +768,7 @@ echo "빌드: ${LOOP_BUILD_CMD:-없음} / 테스트: ${LOOP_TEST_CMD:-없음} / 
 - **테스트 동반 강제는 rubric 이 지탱한다.** KINDS 표의 `test-missing`(convention, CRITICAL)이 BASE 에 등록돼 있어 LOCAL rubric 없이도 작동한다.
 - **`blocked` 로 끝났으면 다음 maker 를 띄우지 않는다.** 사유를 사람에게 넘긴다(`AWAIT_USER`).
 
-> 모델·effort: `loop-maker` 는 frontmatter 에 `model: opus`·`effort: high` 를 기본으로 둔다 — 구현은 생산 작업이라 두 축 모두 세션 아래로 내리고, 판정은 `effort: xhigh` 로 고정된 checker 가 맡는 비대칭이 전제다. 회차 난도에 따라 `Agent` 호출의 `model` 파라미터로 상향·하향할 수 있지만 `effort` 는 호출로 못 바꾼다. 계약은 `core/effort-ladder.md`.
+> 모델·effort: `loop-maker` 는 frontmatter 에 `model: opus`·`effort: high` 를 기본으로 둔다. 회차 난도에 따라 `Agent` 호출의 `model` 파라미터로 상향·하향할 수 있지만 `effort` 는 호출로 못 바꾼다. 계약은 `core/effort-ladder.md`.
 
 #### Step 2-6. 트리가 실제로 바뀠는지 확인 (게이트 전)
 
@@ -736,15 +785,13 @@ PREV="$(cat "$LOOP_DIR/tree.snapshot" 2>/dev/null || echo none)"
 printf '%s\n' "$NOW" > "$LOOP_DIR/tree.snapshot"
 if [ "$NOW" = "$PREV" ]; then
   echo "build: maker 스핀 후 워킹 트리가 그대로다 — 회차가 아니라 정체 신호. 게이트를 돌리지 말고 사람 호출" >&2
-  # Step 2-4 분기 3(정체)과 같이 처리한다. 같은 결과를 N번 내지 않는 것이 이 루프의 전제다.
+  # Step 2-4 의 정체 분기와 같이 처리한다. 같은 결과를 N번 내지 않는 것이 이 루프의 전제다.
 fi
 ```
 
 **Step 2-5 진입 직전에도 같은 명령으로 스냅숏을 갱신한다.** 그러면 비교 대상이 "이번 maker 가 손대기 전" 이 된다.
 
 통과하면 **Step 2-1** 로 돌아가 다음 사이클을 연다(게이트부터 다시).
-
-> **오케스트레이터는 코드를 쓰지 않는다.** 순환 제어(phase 순회·게이트 실행·checker 스핀·병합·채점·분기)만 한다. 실제 편집은 전부 maker 서브에이전트 안에서 일어나 오케스트레이터 컨텍스트에 안 쌓인다. 이게 여러 phase 롱런을 버티게 하는 핵심이다.
 
 > **오케스트레이터는 내용을 보유하지 않는다(컨텍스트 위생).** 롱런 완주는 오케스트레이터 창이 얼마나 가볍게 유지되느냐에 달려 있다. 규칙 다섯: (1) checker findings·scored JSON 의 evidence 전문을 cat/Read 하지 않는다 — 채점은 경로째 셸에 넘기고, 창에는 counts 와 등급·종류·위치 한 줄 목록만 남긴다. (2) maker 완료 보고는 `ok` 한 줄로 받는다(요약이 필요하면 명시로 요구하되 상한 5줄). (3) SendMessage 는 짧게 — 도구 결과가 보낸 전문을 에코한다. (4) phases.json·설계 문서를 다시 Read 하지 않는다 — 상태 갱신·조회는 jq 로. (5) git 확인은 `--stat`·`--name-only` 수준까지만.
 
@@ -784,7 +831,7 @@ echo "build: 런타임 상태 폐기 — $LOOP_DIR"
 
 사람 멈춤으로 중단됐다 재개할 때는 `phases.json` 을 jq 로 조회해(`jq -r '.phases[] | select(.status != "done") | .name' "$PHASES" | head -1` — 전문 Read 금지) `status=done` phase 를 건너뛰고 첫 `pending`/`blocked` phase 부터 Step 2 를 다시 연다. done phase 는 다시 개발하지 않는다(멱등). 재개 시 Step 0 의 초기화(history 비우기·stall 삭제·epoch 갱신)는 다시 타지 않는다.
 
-**재개도 순회를 직접 돌지 않는다.** Step 1(분해·승인)은 건너뛰지만 **Step 1-1 은 건너뛰지 않는다** — 오케스트레이터를 새로 띄우고 그 안에서 Step 2 를 연다. 이 세션이 이어서 도는 것은 없앤 직접 모드가 재개라는 문으로 돌아오는 것이고, 중단된 롱런일수록 남은 사이클이 많아 잡음이 가장 크게 쌓이는 자리다.
+**재개도 순회를 직접 돌지 않는다.** Step 1(분해·승인)은 건너뛰지만 **Step 1-1 은 건너뛰지 않는다** — 오케스트레이터를 새로 띄우고 그 안에서 Step 2 를 연다. 중단된 롱런일수록 남은 사이클이 많아, 이 세션이 이어서 돌면 잡음이 가장 크게 쌓이는 자리다.
 
 ## 백그라운드 세션 실행
 
@@ -794,32 +841,7 @@ echo "build: 런타임 상태 폐기 — $LOOP_DIR"
 
 ## 트러블슈팅
 
-| 증상 | 원인 | 해결 |
-|---|---|---|
-| `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
-| 빌드/테스트 명령이 비어 게이트 스킵 | `detect_build.py` 가 빌드 시스템 미인식 | 매니페스트 확인. 비표준이면 셋업에서 `LOOP_BUILD_CMD`/`LOOP_TEST_CMD` 를 직접 지정 |
-| `merge_findings: 렌즈 결과가 3 개여야 하는데 2 개 왔다` | 렌즈 하나가 안 떴거나 죽었다 | 그 축만 다시 띄운다. **남은 둘로 채점하지 않는다** — 안 돈 축은 점검된 적이 없다 |
-| `merge_findings: 렌즈 '<이름>' 의 결과 파일이 비었거나 없다` | 그 축 checker 가 출력 경로에 못 씀 | 그 렌즈 프롬프트에 출력 경로를 넘겼는지 확인. 경로는 스핀 전 블록이 echo 한 값 |
-| `merge_findings: 렌즈마다 비교 베이스가 다르다` | 렌즈들에게 다른 base 를 넘겼다 | 공통 값은 세 프롬프트에 같은 문자열로. 서로 다른 diff 를 본 결과는 합칠 수 없다 |
-| `score.sh: 입력 형식 오류 — exit 65` | 병합 결과가 계약 위반 | 병합 전 렌즈 파일들을 본다. `[ -s ]`·형식 검사는 merge 가 먼저 잡는다 |
-| `loop: findings 도 reviewed 도 비었다 — exit 65` | 렌즈 전부가 빈 결과 + `reviewed` 미기입. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** | 베이스 브랜치와 diff 범위를 먼저 확인한다. PASS 로 넘기지 말 것 |
-| 한 렌즈만 매번 0건 | 그 축 프롬프트가 잘못됐거나 담당 차원이 안 넘어감 | Step 2-3 의 "렌즈별 적발" 줄로 확인. **빈 결과를 깨끗함의 증거로 읽지 않는다** |
-| 회차가 갈수록 느려진다 | 비교 베이스가 순회 내내 고정이라 렌즈가 읽는 양이 자란다 | Step 2-2 의 "점검 범위" 줄을 본다. 매번 "전 범위" 로 나오면 phase 진입 스냅숏이 안 만들어진 것이다 |
-| 점검 범위가 매번 전 범위로 나온다 | 그 phase 가 마지막이거나 `review_scope: "full"` 이거나, 진입 스냅숏이 없다(이 기능 이전에 시작된 phase) | Step 2-2 의 "점검 범위" 줄이 이유를 함께 찍는다. **좁히기 실패는 느려질 뿐 헐거워지지 않는다** — 급하지 않다 |
-| `review_scope` 를 `false` 로 적었는데 좁혀진다 | jq 의 `//` 가 false 를 빈 값으로 봐서 기본값 `"phase"` 로 떨어진다. 옆 `non_goals` 는 `false` 가 "안 좁힘" 이라 관용이 반대다 | 착수 전 검사가 이제 `false` 를 거부한다. 안 좁히려면 `"full"` 이다 |
-| 좁혔더니 앞 phase 코드와 맞물린 결함을 놓쳤다 | 전 범위를 보는 phase 가 실질적으로 없었다 | 마지막 phase 는 자동으로 안 좁힌다. **다만 거기까지 못 갔으면 한 번도 안 돈 것이다** — brake·AWAIT_USER 로 멈췄다면 `done` 인 phase 중 전 범위로 돈 것이 있었는지 본다 |
-| 정체 감지가 매번 INIT | 사이클 간 `stall-{phase}.json` 이 사라짐 | `--state "$STATE"` 경로가 사이클 간 동일한지 확인. Step 0 에서만 초기화 |
-| 회차가 안 늘어남 | `history-{phase}.jsonl` append 누락 | Step 2-3 의 append 가 매 사이클 1줄 추가하는지 확인(줄 수 = 회차) |
-| 무한 같은 finding | maker 가 안 고치고 재진입 | Step 2-6 트리 확인이 잡는다. 그게 정체로 뜨면 못 고치는 finding 이므로 AWAIT_USER |
-| `build: 착수 전 스펙 검사 실패` | Step 1 에서 `phases.json` 에 필수 자리 하나가 없다(메시지가 이름을 지목한다) | 그 자리를 채우고 다시 시작한다. **우회 경로는 없다** |
-| `build: phases.json 에 착수 전 스펙 검사 자리가 없다` | 같은 판정이 **순회 입구(1a)** 에서 났다. 흔한 원인은 옛 버전이 만든 진행 중 분해 | **사람이** 그 자리만 채우고 재개한다(안 좁혔으면 `false`). **Step 1 로 돌아가지 않는다** — 거기는 분해를 새로 쓰는 단계라 `status=done` 진행도가 날아간다 |
-| `build: phases.json 에서 phase '<이름>' 를 하나로 못 집었다` | `PHASE` 가 비었거나 오타이거나, 같은 이름의 phase 가 둘 이상 | 재개가 `PHASE` 를 물려받았는지 먼저 본다(빈 값이면 그쪽이다). 이름이 겹치면 하나로 만든다 — 이력·결과 파일이 이름으로 갈린다 |
-| `build: phases.json 스키마 위반` | name·steps·ac_cmd·status 중 하나가 계약 밖 | 위 (1b) 조건을 보고 고친다. 필수 자리 누락은 (1a)가 따로 이름을 지목한다 |
-| maker 가 매 회차 같은 접근을 반복 | 반복 표시를 프롬프트에 안 넣었다 | Step 2-5 의 `jq` 출력을 프롬프트에 그대로 넣는다. 이게 회차 간 유일한 기억이다 |
-| maker 스핀 후 트리 그대로 | 자기 검증에서 컴파일이 깨져 아무것도 못 고쳤거나, `blocked` 인데 스핀을 계속함 | Step 2-6 이 잡는다. maker 의 종료 문자열이 `blocked` 였는지 확인 |
-| 게이트 큐가 `gate-output-unparsed` 한 건뿐 | `gate_parse.py` 가 그 도구의 오류 형식을 모름 | 그 항목의 꼬리로 고치되, 반복되면 파서에 패턴 추가 후보로 보고. **큐가 비는 것보다 이게 낫다** |
-| 모든 finding 이 CRITICAL | checker 가 dimension 오타 | `score.sh` 가 모르는 dimension 을 보수적으로 CRITICAL 처리. 렌즈가 담당 차원을 정확히 받았는지 확인 |
-| simplicity 지적으로 회차만 탄다 | 등가 대안 없는 지적이 반복 | 그 렌즈 프롬프트가 quality 렌즈 규율(등가 대안 필수·diff 증분만)을 담았는지 확인. 정체하면 사람 승인으로 통과 |
+실패 증상별 진단은 `references/troubleshooting.md`.
 
 ## Non-Goals
 

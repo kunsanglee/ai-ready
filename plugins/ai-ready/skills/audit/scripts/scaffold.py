@@ -212,40 +212,6 @@ def detect_layered_pattern(module_dir: Path) -> list[str]:
     return hints
 
 
-def list_dependencies(module_dir: Path) -> list[str]:
-    """Best-effort extraction of dependencies from build files."""
-    deps = []
-    gradle = module_dir / "build.gradle.kts"
-    if not gradle.exists():
-        gradle = module_dir / "build.gradle"
-    if gradle.exists():
-        try:
-            text = gradle.read_text(encoding="utf-8", errors="replace")
-            # Match project(":foo") references for inter-module dependencies
-            for m in re.finditer(r'project\(["\']:([\w\-:]+)["\']\)', text):
-                dep = m.group(1).replace(":", "/")
-                if dep not in deps:
-                    deps.append(dep)
-        except OSError:
-            pass
-    pkg = module_dir / "package.json"
-    if pkg.exists():
-        try:
-            import json
-            data = json.loads(pkg.read_text(encoding="utf-8", errors="replace"))
-            for key in ("dependencies", "devDependencies"):
-                for dep_name in (data.get(key) or {}):
-                    if dep_name.startswith("@") and "/" in dep_name:
-                        # likely internal scope
-                        if dep_name not in deps:
-                            deps.append(dep_name)
-        except (ValueError, OSError):
-            pass
-    return deps
-
-
-# --- Auto-fill helpers (T-10) ---------------------------------------------
-
 def module_summary_from_root_claude_md(target: Path, module_path: str) -> str | None:
     """루트 CLAUDE.md 의 module map 줄에서 모듈 1줄 설명을 cherry-pick.
 
@@ -329,10 +295,10 @@ def git_fix_subjects(target: Path, module_path: str, days: int = 180, top: int =
 
 # --- Template -------------------------------------------------------------
 
+# 이 골격에 "사용 시점" 절과 의존성·검토일 절이 없는 것은 의도다. 사용 시점을 TODO 로 찍으면
+# 채우기 전 키워드가 채점 게이트에 걸려 거짓 점수가 되고, 의존성은 빌드 매니페스트가·검토
+# 이력은 git 이 정본이라 문서에 복사하면 낡는 순간 거짓이 된다.
 TEMPLATE = """# CLAUDE.md — `{module_path}`
-
-> AI 에이전트를 위한 모듈 가이드. 50줄 이내로 유지하세요.
-> **TODO**로 표시된 곳은 사람이 채워야 하는 자리표시자입니다.
 
 ## 스택
 - {stack_hint}
@@ -346,9 +312,6 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 ## 절대 금지 (이 모듈 고유 안티패턴)
 {antipattern_block}
 
-## 의존성
-{deps_block}
-
 ## 핫 파일 (최근 90일 변경 빈도 Top 5)
 {hot_files_block}
 
@@ -356,9 +319,6 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 - TODO: 팀이 암묵적으로 따르지만 코드엔 없는 규칙 하나.
 - TODO: AI가 자주 놓치는 필드/값 네이밍 불일치.
 - TODO: 알아둘 가치가 있는 과거 의사결정 (ADR이 있으면 링크).
-
-## 최종 검토일
-- {today} (자동 생성 초안 — 사람 검토 필요)
 """
 
 
@@ -393,17 +353,6 @@ def render_how_block(layer_hints: list[str]) -> str:
     for h in layer_hints:
         out.append(f"  - {h}")
     out.append("- TODO: 진입 → 서비스 → 출구의 일반적인 end-to-end 흐름을 적으세요.")
-    return "\n".join(out)
-
-
-def render_deps_block(deps: list[str]) -> str:
-    if not deps:
-        return "- TODO: 이 모듈이 의존하는 내부 모듈을 적으세요 (또는 'leaf 모듈 — 의존 없음')."
-    out = []
-    for d in deps[:8]:
-        out.append(f"- `{d}`")
-    if len(deps) > 8:
-        out.append(f"- … 외 {len(deps) - 8}개 (빌드 파일 참조)")
     return "\n".join(out)
 
 
@@ -500,9 +449,7 @@ PACKAGE_CATALOG_TEMPLATE = """# PACKAGES.md — 패키지 카탈로그
 
 > **읽기 트리거**: 패키지 진입 / 새 도메인 추가 / 책임 경계 확인 / 트랜잭션·이벤트 흐름 파악.
 >
-> 단일 모듈 프로젝트의 *패키지가 곧 논리 모듈* 이다. 본 문서는 패키지 단위 CLAUDE.md 를 분산 배치하는 대신 한 곳에 모은 카탈로그.
->
-> **TODO** 로 시작하는 줄은 사람이 채워야 하는 자리표시자입니다. ai-ready scaffold 가 자동 감지한 단서로 1차 채워뒀습니다.
+> 이 프로젝트는 *패키지가 곧 논리 모듈* 이다. **TODO** 로 시작하는 줄은 사람이 채운다.
 
 베이스 패키지: `{base_package}` ({total} 개 패키지 감지)
 
@@ -598,9 +545,6 @@ def run(target: Path, out_dir: Path, top_n: int):
         print(f"  → 검토 후 docs/PACKAGES.md 로 복사하세요.")
         return EXIT_OK
     selected = select_top_modules(target, modules, top_n)
-    # datetime.now() 는 비멱등 — 같은 입력을 재생성할 때마다 '최종 검토일' 이 바뀌어 무의미한
-    # diff 가 난다. 스캐폴드는 '초안' 이라 검토일은 사람이 검토 후 채우는 placeholder 로 둔다.
-    today = "TODO: 검토일 기입"
     written = []
     for m in selected:
         module_dir = target / m
@@ -611,7 +555,6 @@ def run(target: Path, out_dir: Path, top_n: int):
             continue
         stack = detect_stack_hint(module_dir)
         layers = detect_layered_pattern(module_dir)
-        deps = list_dependencies(module_dir)
         file_count = sum(1 for p in module_dir.rglob("*")
                          if p.is_file() and p.suffix in CODE_EXTS
                          and not any(part in EXCLUDE_DIRS for part in p.parts))
@@ -626,9 +569,7 @@ def run(target: Path, out_dir: Path, top_n: int):
             design_pointer_block=render_design_pointer_block(target, str(m)),
             how_block=render_how_block(layers),
             antipattern_block=render_antipattern_block(fix_subjects),
-            deps_block=render_deps_block(deps),
             hot_files_block=render_hot_files_block(hot_files),
-            today=today,
         )
         out_path = out_dir / m / "CLAUDE.md"
         out_path.parent.mkdir(parents=True, exist_ok=True)
