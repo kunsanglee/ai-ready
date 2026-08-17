@@ -15,7 +15,7 @@ For a target codebase you point it at, this skill creates an `.ai-ready/` direct
 2. **`audit-report.md`** — human-readable report with ROI-prioritized action list
 3. **`README.md`** — auto-generated guide for `.ai-ready/` consumers (artifact map, plugin install, score interpretation, re-run instructions)
 4. **`dashboard.html`** — self-contained HTML dashboard with score gauge, category bars, and trend sparkline (open in browser)
-5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete.
+5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete. If the archive can't be written (the `history/` slot is taken by a file, permissions), the run prints a warning to stderr and omits the `archive:` line from its summary instead of claiming a file it didn't write; scoring itself still succeeds and the exit code stays 0 (v1.5.3).
 6. **`scaffolds/...`** — drafts for the missing docs (see "Layout-aware scaffolds" below)
 7. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history (clustered hotspots)
 8. **`hooks/freshness_check.sh`** (+ `hooks/freshness_check.py`) — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`; the `.py` runner is copied alongside so the hook works without `CLAUDE_PLUGIN_ROOT`
@@ -197,7 +197,7 @@ See `RUBRIC.md` for the full criteria and detection rules. Summary:
 ## Detection Heuristics (Quick Reference)
 
 The audit script looks at:
-- Presence and line counts of `CLAUDE.md` (root + per module)
+- Presence and size of `CLAUDE.md` / `AGENTS.md` (root + per module). The root doc's always-loaded cost is measured in bytes; when both root files exist, both are measured and the worse one sets the score (v1.5.3)
 - Presence of `ANTIPATTERNS.md`, `ARCHITECTURE.md`, `ADR/`, `docs/decisions/`
 - Hooks in `.git/hooks/`, `.husky/`, `.claude/hooks/`, `.claude/settings.json`
 - CI configs: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`
@@ -210,7 +210,7 @@ The audit script looks at:
 - Heuristics-based scoring; expect ±5 points of noise. Use the trend, not the absolute number.
 - Anti-pattern extraction depends on commit message hygiene. Repos with vague messages produce thin output.
 - Module detection prefers conventional layouts (Gradle multi-module, npm monorepo, Python `src/` layout, Go modules, Cargo workspaces). Single-module source roots come from the stack adapters above; a stack with no adapter is reported and exits non-zero rather than being skipped silently.
-- The "standard layout" rule (`controller`/`service`/`domain`/`repository`) is a JVM web convention. On other stacks it is reported as *not measured* and the catalog alone earns the points — it is never advice to restructure a non-JVM repo into that shape.
+- The "standard layout" rule (`controller`/`service`/`domain`/`repository`) is a JVM web convention. On other stacks it is reported as *not measured* and the catalog alone earns the points — full marks since v1.5.3, where it previously capped at 4 of 5 and left a permanent "add controller/service/domain/repository" action on node/python/go/rust repos. It is never advice to restructure a non-JVM repo into that shape. A JVM repo with no controller-bearing package still scores 4: there the layout is measurable in principle and simply absent.
 - HTML dashboard is intentionally dependency-free (vanilla CSS + inline SVG) — pretty enough but not interactive.
 - **Scores the cartography (map) layer only — not code health (sanitize)**: this audit measures whether the docs/map exist and self-maintain, not whether the code underneath is healthy (test coverage, dead code, code smells). A repo can score high on the map while the terrain is still a maze — a high score on unhealthy code is a *false signal*. Treat sanitize (tests / dead-code removal / consistent conventions) as a prerequisite you ensure separately; the map only helps once the terrain is sound.
 - **Does not measure token/cost**: the audit's "Outcome Metrics" category checks whether usage is *tracked*, not the cost itself. There is no session-log parser or cache-hit dashboard here — use `ccusage` / RTK `gain` for that.

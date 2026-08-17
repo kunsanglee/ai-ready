@@ -10,6 +10,8 @@ from the plugin root, or:
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -174,6 +176,58 @@ class TestAuditEndToEndOnEmptyRepo(unittest.TestCase):
             result = audit.run(target, out_dir)
             self.assertEqual(result["claude_doc_count"], 0,
                              "scaffolds 의 CLAUDE.md 는 점수에 카운트되면 안 됨")
+
+
+class TestHistoryArchiveFailure(unittest.TestCase):
+    """보관에 실패하면 조용히 넘어가지 않는다 (v1.5.3).
+
+    실측: `.ai-ready/history` 자리에 일반 파일을 두면 감사는 exit 0 으로 끝나면서
+    "archive: .../history/" 를 찍었는데 실제로는 아무것도 보관되지 않았다. dashboard 의
+    추이 차트는 그 파일들로 그려지므로 빠진 것을 사용자가 알 수 있어야 한다.
+    """
+
+    @staticmethod
+    def _blocked_repo(root: Path) -> Path:
+        out_dir = root / ".ai-ready"
+        out_dir.mkdir()
+        (out_dir / "history").write_text("history 자리를 막은 일반 파일\n", encoding="utf-8")
+        return out_dir
+
+    def test_run_warns_and_keeps_scoring(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out_dir = self._blocked_repo(root)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                result = audit.run(root, out_dir)
+            self.assertEqual(result["max_score"], 100)
+            self.assertTrue((out_dir / "audit.json").exists(), "보관 실패가 채점 산출물까지 막으면 안 됨")
+            self.assertTrue((out_dir / "history").is_file(), "막힌 자리를 덮어쓰지 않는다")
+            self.assertIn("history 보관 실패", err.getvalue())
+
+    def test_cli_omits_archive_line_when_nothing_was_archived(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out_dir = self._blocked_repo(root)
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "audit.py"),
+                 "--target", str(root), "--out", str(out_dir)],
+                capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, "보관은 부가 기능이라 감사를 실패로 만들지 않는다")
+            self.assertNotIn("archive:", proc.stdout)
+            self.assertIn("history 보관 실패", proc.stderr)
+
+    def test_cli_reports_the_archived_file_on_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out_dir = root / ".ai-ready"
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "audit.py"),
+                 "--target", str(root), "--out", str(out_dir)],
+                capture_output=True, text=True)
+            archived = list((out_dir / "history").glob("*.json"))
+            self.assertEqual(len(archived), 1)
+            self.assertIn(str(archived[0]), proc.stdout)
 
 
 class TestConfigAwareScoring(unittest.TestCase):
@@ -493,12 +547,19 @@ class TestRootDocSizeRule(unittest.TestCase):
     한국어 마크다운은 한 줄이 표 한 행이거나 문단 하나라 줄 수가 비용을 대변하지 못한다.
     실측 사례로 46줄짜리 루트 문서가 12,029바이트(한 불릿이 2,002자)였는데 옛 200줄 규칙에서
     만점을 받으며 계속 부풀었다. 그 구멍이 다시 열리지 않게 고정한다.
+
+    v1.5.3 부터는 *무엇을* 재는지도 함께 고정한다 — 루트에 CLAUDE.md 와 AGENTS.md 가 함께
+    있으면 둘 다 재고, 수집 순서는 파일시스템이 아니라 이름 순이다.
     """
 
     def _rule(self, root_text: str) -> dict:
+        return self._rule_for({"CLAUDE.md": root_text})
+
+    def _rule_for(self, docs: dict[str, str]) -> dict:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            (root / "CLAUDE.md").write_text(root_text, encoding="utf-8")
+            for name, text in docs.items():
+                (root / name).write_text(text, encoding="utf-8")
             result = audit.run(root, root / ".ai-ready")
             for cat in result["categories"]:
                 for rule in cat["rules"]:
@@ -540,6 +601,43 @@ class TestRootDocSizeRule(unittest.TestCase):
     def test_action_hint_registered_for_renamed_rule(self):
         # 규칙 이름을 바꾸면 ACTION_HINTS 키가 어긋나 리포트에서 개선 안내가 사라진다.
         self.assertIn(audit.ROOT_DOC_SIZE_RULE, audit.ACTION_HINTS)
+
+    def test_worse_of_two_root_docs_decides_the_score(self):
+        # 루트에 CLAUDE.md 와 AGENTS.md 가 함께 있으면 종전에는 파일시스템 순서가 잡은 한 쪽만
+        # 쟀다(실측: 순서를 뒤집으면 같은 레포가 0점과 5점 사이를 오갔다). Claude 세션은 앞의
+        # 것, Codex 세션은 뒤의 것만 상주 적재하므로 나쁜 쪽이 규칙 점수다.
+        rule = self._rule_for({"AGENTS.md": self._doc_of_bytes(2_000),
+                               "CLAUDE.md": self._doc_of_bytes(20_000)})
+        self.assertEqual(rule["points"], 0)
+        joined = " ".join(rule["evidence"])
+        self.assertIn("AGENTS.md", joined)
+        self.assertIn("CLAUDE.md", joined)
+
+    def test_root_doc_collection_order_ignores_readdir_order(self):
+        # 루트 문서를 하나만 집는 규칙들(존재·경로 참조)은 수집 순서를 그대로 따른다.
+        # 실제 파일시스템의 readdir 순서는 고를 수 없으므로 walk 결과를 뒤집어 확인한다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "AGENTS.md").write_text("# a\n", encoding="utf-8")
+            (root / "CLAUDE.md").write_text("# c\n", encoding="utf-8")
+            real_walk = audit.os.walk
+
+            def reversed_walk(*args, **kwargs):
+                for dirpath, dirnames, filenames in real_walk(*args, **kwargs):
+                    yield dirpath, dirnames, sorted(filenames, reverse=True)
+
+            audit.os.walk = reversed_walk
+            try:
+                names = [p.name for p in audit.scan_target(root)["claude_docs"]]
+            finally:
+                audit.os.walk = real_walk
+            self.assertEqual(names, ["AGENTS.md", "CLAUDE.md"])
+
+    def test_both_root_docs_in_band_still_score_full(self):
+        rule = self._rule_for({"AGENTS.md": self._doc_of_bytes(2_000),
+                               "CLAUDE.md": self._doc_of_bytes(3_000)})
+        self.assertEqual(rule["points"], 5)
+        self.assertEqual(len(rule["evidence"]), 2)
 
 
 class TestLazyLoadSelfEvident(unittest.TestCase):
@@ -913,6 +1011,90 @@ class TestRound2Gates(unittest.TestCase):
             self.assertIn("갱신되지 않음", readme2)
 
 
+class TestSingleModuleCatalogScoring(unittest.TestCase):
+    """단일 모듈의 카탈로그 채점 두 자리를 고정한다 (v1.5.3).
+
+    (1) 표준 레이아웃(controller/service/domain/repository)은 JVM 웹 관례라 다른 스택에서는
+    측정하지 않는데, 미측정을 4점으로 묶어 두어 node/python/go/rust 단일 모듈이 만점에
+    닿지 못했다. 문서(SKILL.md·ACTION_HINTS·규칙 노트)는 셋 다 카탈로그만으로 만점을
+    약속하므로 코드를 문서에 맞춘다.
+    (2) 반대 방향으로는, 루트 문서가 카탈로그 이름만 적어도 만점을 받던 자리를 막는다 —
+    "docs/PACKAGES.md 를 만들 예정" 한 줄로 4/4 였다.
+    """
+
+    LAYOUT_RULE = "논리 모듈 맵 + 표준 레이아웃 일관성 (단일 모듈)"
+    CATALOG_REF_RULE = "루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조"
+    PACKAGES = ("auth", "billing", "search")
+    CATALOG = "# 패키지 카탈로그\n\n" + "".join(
+        f"### `{p}`\n\n진입점은 {p}/index.ts 이고 외부 IO 는 여기서만 일어납니다.\n"
+        f"함정: 다른 패키지에서 {p} 의 내부 모듈을 직접 import 하지 않습니다.\n\n"
+        for p in PACKAGES)
+
+    def _node_repo(self, root: Path, catalog: bool = True) -> None:
+        (root / "package.json").write_text('{"name": "x", "version": "1.0.0"}\n', encoding="utf-8")
+        for pkg in self.PACKAGES:
+            (root / "src" / pkg).mkdir(parents=True)
+            (root / "src" / pkg / "index.ts").write_text(f"export const {pkg} = 1;\n",
+                                                         encoding="utf-8")
+        if catalog:
+            (root / "docs").mkdir()
+            (root / "docs" / "PACKAGES.md").write_text(self.CATALOG, encoding="utf-8")
+        (root / "CLAUDE.md").write_text(
+            "# proj\n\n패키지별 상세는 [`docs/PACKAGES.md`](docs/PACKAGES.md) 를 본다.\n"
+            + "루트는 지도만 담고 상세는 카탈로그에 둔다는 규약입니다.\n" * 10, encoding="utf-8")
+
+    def _rule(self, root: Path, name: str) -> dict:
+        result = audit.run(root, root / ".ai-ready" / "out")
+        return next(r for c in result["categories"] for r in c["rules"] if r["name"] == name)
+
+    def test_non_jvm_single_module_reaches_full_marks(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._node_repo(root)
+            rule = self._rule(root, self.LAYOUT_RULE)
+            self.assertEqual(rule["points"], 5,
+                             "카탈로그만으로 만점이라 문서가 약속한 자리")
+            self.assertIn("카탈로그만으로 충분합니다", rule["note"])
+
+    def test_jvm_without_controller_domains_stays_partial(self):
+        # JVM 은 레이아웃이 적용되는 스택이라 측정할 것이 남아 있다 — 만점 약속의 범위 밖.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "build.gradle.kts").write_text("plugins { }\n", encoding="utf-8")
+            pkg_root = root / "src" / "main" / "kotlin" / "com" / "example"
+            for pkg in self.PACKAGES:
+                (pkg_root / pkg).mkdir(parents=True)
+                (pkg_root / pkg / "Service.kt").write_text(f"class {pkg.title()}Service\n",
+                                                           encoding="utf-8")
+            (root / "docs").mkdir()
+            (root / "docs" / "PACKAGES.md").write_text(self.CATALOG, encoding="utf-8")
+            rule = self._rule(root, self.LAYOUT_RULE)
+            self.assertEqual(rule["points"], 4)
+            self.assertIn("Controller", rule["note"])
+
+    def test_catalog_reference_needs_the_file_to_exist(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._node_repo(root, catalog=False)
+            rule = self._rule(root, self.CATALOG_REF_RULE)
+            self.assertLess(rule["points"], 4,
+                            "없는 카탈로그를 언급만 해도 만점을 받는다")
+
+    def test_real_catalog_reference_still_scores_full(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._node_repo(root)
+            self.assertEqual(self._rule(root, self.CATALOG_REF_RULE)["points"], 4)
+
+    def test_stub_catalog_does_not_count_as_a_reference(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._node_repo(root, catalog=False)
+            (root / "docs").mkdir()
+            (root / "docs" / "PACKAGES.md").write_text(STUB, encoding="utf-8")
+            self.assertLess(self._rule(root, self.CATALOG_REF_RULE)["points"], 4)
+
+
 class TestRuleNameReferences(unittest.TestCase):
     """스크립트가 규칙을 번호가 아니라 이름으로 가리키는지 (v0.9.0).
 
@@ -976,6 +1158,35 @@ class TestRuleNameReferences(unittest.TestCase):
                     offenders.append(f"{path.name}:{i}")
         self.assertEqual(offenders, [],
                          "규칙을 번호로 가리키면 규칙이 늘거나 줄 때 조용히 밀린다")
+
+    def test_apply_mapping_table_covers_exactly_the_rules(self):
+        """apply 매핑 표의 첫 칸 = audit 이 내는 규칙 이름 집합.
+
+        apply 는 audit.json 의 `rule.name` 정확한 문자열로 표 첫 칸을 찾는다(SKILL.md
+        "아래 표의 첫 칸은 그 문자열 그대로"). 규칙 이름 둘은 조절 상수(바이트 상하한,
+        줄 수 상하한)를 이름에 f-string 으로 넣어 이미 두 번 바뀌었는데, 표가 안 따라오면
+        그 규칙만 매핑에서 빠지고 apply 는 아무 말 없이 건너뛴다. 부분집합이 아니라
+        동일성으로 본다 — 남은 행도 오타이거나 지워진 규칙이라 표를 낡게 한다.
+        """
+        apply_skill = PLUGIN_ROOT / "skills" / "apply" / "SKILL.md"
+        header = "| Rule name (audit.json 기준)"
+        table = set()
+        inside = False
+        for line in apply_skill.read_text(encoding="utf-8").splitlines():
+            if line.startswith(header):
+                inside = True
+                continue
+            if not inside:
+                continue
+            if not line.startswith("|"):
+                break
+            cell = line.split("|")[1].strip()
+            if set(cell) <= set("-: "):  # 헤더 아래 구분선
+                continue
+            table.add(cell)
+        self.assertTrue(table, f"매핑 표를 못 찾음 — 헤더({header!r})가 바뀌었나")
+        self.assertEqual(table, self._all_rule_names(),
+                         "apply 매핑 표 첫 칸과 audit 규칙 이름이 어긋난다")
 
 
 class TestScaffoldDesignPointer(unittest.TestCase):

@@ -67,8 +67,16 @@ _STOPWORDS_KO = {
 }
 _MIN_KEYWORD_CLUSTER_SIZE = 3
 
+# scaffold.py 와 같은 명명. 3 은 이 스크립트에서 이미 덮어쓰기 가드가 쓰고 있고
+# SKILL.md 도 그 값으로 문서화해서, git 실패는 다음 번호를 쓴다.
+EXIT_OK = 0
+EXIT_NOT_A_DIR = 2         # --target 이 디렉토리가 아니다
+EXIT_GUARD_REFUSED = 3     # 사람이 인수한 문서라 덮지 않는다
+EXIT_GIT_UNAVAILABLE = 4   # 대상이 git 저장소가 아니거나 git 을 실행하지 못했다
 
-def run_git(target: Path, args: list[str], timeout: int = 60) -> str:
+
+def run_git(target: Path, args: list[str], timeout: int = 60) -> tuple[bool, str]:
+    """(성공 여부, stdout). 실패를 빈 문자열로 삼키면 히스토리가 없는 것과 구분되지 않는다."""
     try:
         result = subprocess.run(
             ["git", "-C", str(target), *args],
@@ -77,25 +85,33 @@ def run_git(target: Path, args: list[str], timeout: int = 60) -> str:
     except (OSError, subprocess.SubprocessError):
         # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
         # gen_index 의 git 래퍼와 동일 폭으로 통일(PermissionError 미처리 크래시 차단).
-        return ""
+        return False, ""
     if result.returncode != 0:
-        return ""
-    return result.stdout
+        return False, ""
+    return True, result.stdout
 
 
 SUBJECT_DELIM = "§§§"  # H-4 fix: subject에 들어갈 가능성이 거의 없는 unique delimiter
 
 
-def parse_fix_commits(target: Path, days: int) -> list[dict]:
-    """fix류 커밋의 subject와 변경 파일 목록을 반환.
+def parse_fix_commits(target: Path, days: int) -> list[dict] | None:
+    """fix류 커밋의 subject와 변경 파일 목록을 반환. git log 를 못 읽으면 None.
+
+    커밋이 하나도 없는 저장소에서 `git log` 는 exit 128 로 끝난다. 그건 오류가 아니라
+    정당한 "히스토리 없음" 이라 빈 목록으로 계속 간다.
 
     H-4 fix: `|` 대신 unique delimiter(`§§§`)를 사용해 subject에 `|`가 있어도 안전.
     """
-    out = run_git(
+    ok, out = run_git(
         target,
         ["log", f"--since={days}.days.ago",
          f"--pretty=format:%H{SUBJECT_DELIM}%s", "--name-only"],
     )
+    if not ok:
+        listed, head = run_git(target, ["rev-list", "-n", "1", "--all"])
+        if listed and not head.strip():
+            return []
+        return None
     commits = []
     current = None
     for line in out.splitlines():
@@ -343,14 +359,33 @@ def textwrap_dedent(s: str) -> str:
 
 # --- Main -----------------------------------------------------------------
 
-def run(target: Path, out_path: Path, days: int):
+def run(target: Path, out_path: Path, days: int) -> int:
+    # 산출물이 "최근 N일 git 히스토리에서 추출한 시드" 라고 말하므로, git 을 한 번도
+    # 실행하지 못한 채로는 쓰지 않는다. 조용히 빈 문서를 내면 커밋이 없는 저장소와
+    # 구분되지 않는다. scaffold.py 가 어댑터 미매칭을 비 0 으로 알리는 것과 같은 원칙.
+    inside_work_tree, _ = run_git(target, ["rev-parse", "--is-inside-work-tree"])
+    if not inside_work_tree:
+        print(f"오류: git 히스토리를 읽을 수 없습니다: {target}\n"
+              f"      `git -C <target> rev-parse --is-inside-work-tree` 가 실패했습니다 "
+              f"(git 저장소가 아니거나 git 을 실행할 수 없음).",
+              file=sys.stderr)
+        return EXIT_GIT_UNAVAILABLE
+
     commits = parse_fix_commits(target, days)
+    if commits is None:
+        print(f"오류: git log 를 읽지 못했습니다: {target}\n"
+              f"      대상은 git 저장소인데 `git log --since={days}.days.ago` 가 실패했습니다 "
+              f"(타임아웃이거나 git 오류).",
+              file=sys.stderr)
+        return EXIT_GIT_UNAVAILABLE
+
     markers = find_markers(target)
     modules = detect_modules(target)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(render(commits, markers, modules, days), encoding="utf-8")
     print(f"분석 완료: fix류 커밋 {len(commits)}개, 코드 마커 {len(markers)}개, 모듈 {len(modules)}개")
     print(f"생성: {out_path}")
+    return EXIT_OK
 
 
 def main():
@@ -364,14 +399,14 @@ def main():
     out_path = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(EXIT_NOT_A_DIR)
     # 사람이 인수한 문서는 덮지 않는다. 이 스크립트가 유독 이 가드가 필요한 이유는,
     # 산출물이 **초안이고 사람이 골라 옮기는 것**이 설계이기 때문이다. 관례상 `--out` 은
     # `.ai-ready/scaffolds/` 를 가리키지만 그것은 관례일 뿐이라, 누가 `docs/ANTIPATTERNS.md`
     # 를 넘기면 손으로 추린 항목이 git 히스토리 덤프로 조용히 덮인다.
     if not guard_overwrite(out_path, args.force):
-        sys.exit(3)
-    run(target, out_path, args.days)
+        sys.exit(EXIT_GUARD_REFUSED)
+    sys.exit(run(target, out_path, args.days))
 
 
 if __name__ == "__main__":
