@@ -204,5 +204,34 @@ class TestCommentKindsStayNonBlocking(unittest.TestCase):
                               f"comment-rot 설명에 예외 '{phrase}' 가 없다 — 오탐이 그대로 남는다")
 
 
+class TestMakerSelfVerifyContract(unittest.TestCase):
+    """1.5.1 의 maker 계약(주석 최소·되돌림 확인)이 정의와 위임 지시 양쪽에 있는지 본다.
+
+    계약이 산문 두 곳에 나뉘어 있다 — 정의(`agents/loop-maker.md`)는 행동을, 스킬
+    (`skills/build/SKILL.md` Step 2-5)은 그 행동에 필요한 입력(테스트 명령·기록 경로)을
+    적는다. 한쪽만 고쳐지면 maker 가 명령 없이 확인하거나 기록 없이 확인한다.
+    """
+
+    def test_maker_definition_states_the_contract(self):
+        text = (AGENTS / "loop-maker.md").read_text(encoding="utf-8")
+        for anchor, why in (
+            ("주석은 코드가 말하지 못하는 것만", "주석 계약이 빠졌다"),
+            ("mktemp -d", "사본 규약이 빠졌다 — 고정 경로는 병렬 에이전트의 사본과 섞인다"),
+            ("되돌리면 실패하는 검사", "확인이 안 되는 수정의 처방이 빠졌다"),
+            ("comment-rot", "주석 지적 대응 계약이 빠졌다"),
+            ("기록 경로", "확인 흔적 계약이 빠졌다 — 보고 한 줄은 강제가 안 된다"),
+        ):
+            with self.subTest(anchor=anchor):
+                self.assertIn(anchor, text, why)
+
+    def test_build_skill_passes_the_inputs(self):
+        text = (TREE / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("maker-revert-$PHASE.jsonl", text,
+                      "되돌림 기록 경로를 maker 프롬프트 값으로 안 넘긴다")
+        self.assertRegex(text, r"테스트 명령.*LOOP_TEST_CMD",
+                         "테스트 명령을 maker 프롬프트 값으로 안 적는다 — 게이트만 알면 "
+                         "maker 가 매 회차 다시 알아내거나 게이트와 다른 명령으로 잰다")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -214,5 +214,40 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertFalse((scripts / "install_hook.py").exists())
 
 
+class TestMakerContractParity(unittest.TestCase):
+    """maker 의 되돌림 확인 계약(1.5.1)이 적힌 곳 전부를 위치로 잠근다.
+
+    codex 안에서는 checker 와 같은 모양으로 두 곳이다 — `references/maker-role.md`(역할
+    계약)가 행동을, `build/SKILL.md`(위임 지시)가 입력(테스트 명령·기록 경로)을 적는다.
+    그리고 같은 계약이 Claude 트리(`plugins/ai-ready/agents/loop-maker.md`)에도 한국어로
+    있는데, drift-test 의 바이트 동일 비교는 `_loop-engine` 만 봐서 산문 계약은 한쪽만
+    고쳐져도 아무것도 실패하지 않는다. 그래서 트리 안 두 곳과 트리 사이를 함께 본다.
+    """
+
+    def test_maker_contract_is_stated_in_both_places(self):
+        skill = (PLUGIN / "skills" / "build" / "SKILL.md").read_text(encoding="utf-8")
+        role = (PLUGIN / "skills" / "build" / "references" / "maker-role.md").read_text(encoding="utf-8")
+        for anchor, why in (
+            ("mktemp -d", "사본 규약이 빠졌다"),
+            ("comment-rot", "주석 지적 대응 계약이 빠졌다"),
+            ("record path", "확인 흔적 계약이 빠졌다 — 보고 한 줄은 강제가 안 된다"),
+        ):
+            with self.subTest(anchor=anchor):
+                self.assertIn(anchor, role, f"maker-role.md: {why}")
+        self.assertIn("maker-revert-<phase>.jsonl", skill,
+                      "SKILL.md 위임 지시가 되돌림 기록 경로를 안 넘긴다")
+        self.assertIn("The test command", skill,
+                      "SKILL.md 위임 지시가 테스트 명령을 안 넘긴다 — maker 가 "
+                      "게이트와 다른 명령으로 재게 된다")
+
+    def test_maker_contract_matches_claude_tree(self):
+        role = (PLUGIN / "skills" / "build" / "references" / "maker-role.md").read_text(encoding="utf-8")
+        claude = (ROOT.parent / "plugins" / "ai-ready" / "agents" / "loop-maker.md").read_text(encoding="utf-8")
+        for anchor in ("mktemp -d", "comment-rot"):
+            with self.subTest(anchor=anchor):
+                self.assertIn(anchor, role, f"codex 계약에 {anchor} 가 없다")
+                self.assertIn(anchor, claude, f"Claude 계약에 {anchor} 가 없다")
+
+
 if __name__ == "__main__":
     unittest.main()
