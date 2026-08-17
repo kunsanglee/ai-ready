@@ -262,9 +262,9 @@ def _render_auto_block(rows: list[tuple[str, str]]) -> str:
     lines = []
     lines.append(AUTO_BEGIN)
     lines.append("")
-    lines.append("> 자동 생성됩니다. 본 영역 (`lazy-load:auto-begin` ~ `lazy-load:auto-end`) 의 수동 편집은 다음 갱신 시 덮어쓰여집니다.")
-    lines.append("> 갱신: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"lazy-load 인덱스 갱신해줘\" 라고 말하세요.")
-    lines.append(">")
+    # 자동 생성 표시는 AUTO_BEGIN 마커의 `(auto-generated)` 가 이미 한다 — 루트 문서는 매 세션
+    # always-loaded 라 같은 말을 산문으로 한 번 더 쓰면 그 분량을 매 세션 낸다. 아래 두 줄은
+    # 읽는 에이전트의 행동을 바꾸므로 남긴다.
     lines.append("> **읽기 강제 시점**: 작업 영역이 트리거에 해당하면 사용자 추가 지시 없이도 즉시 read.")
     lines.append("> **모듈 단위**: 모듈 CLAUDE.md 는 그 모듈 파일을 Read/Edit 할 때 Claude Code 가 자동 로드.")
     lines.append("")
@@ -294,11 +294,7 @@ def _render_empty_user_block() -> str:
     lines.append(USER_BEGIN)
     lines.append("")
     lines.append("> 본 영역 (`lazy-load:user-begin` ~ `lazy-load:user-end`) 의 행은 사용자 수동 편집용 — `ai-ready:apply` 가 *절대 덮어쓰지 않음*.")
-    lines.append("> 자동 감지에서 누락된 트리거를 여기에 추가하세요. 예:")
-    lines.append("> ")
-    lines.append("> ```")
-    lines.append("> | 트리거 설명 | [`docs/custom.md`](docs/custom.md) |")
-    lines.append("> ```")
+    lines.append("> 자동 감지에서 누락된 트리거를 여기에 추가하세요 — 표 한 줄 형식: `| 트리거 설명 | [문서 이름](docs/custom.md) |`")
     lines.append("")
     lines.append(USER_END)
     return "\n".join(lines)

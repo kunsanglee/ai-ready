@@ -97,10 +97,9 @@ def render(kind: str, source_target: Path, results: list[tuple[Path, list[str]]]
     title = TITLE_FOR_KIND.get(kind, kind.title())
     lines = [f"# {title}", ""]
     # 휘발성 메타(추출일자 · 대상 워크트리명) 제거 — 브랜치마다 달라져 머지 충돌을 내던 줄.
+    # 머리의 자동 추출 서명이 덮어쓰기 가드의 앵커이자 "초안" 이라는 표시다 — 같은 말을
+    # 인용구로 한 번 더 쓰지 않는다.
     lines.append("_자동 추출 (`ai-ready:apply`) — 재추출 시 전체를 덮어씁니다._")
-    lines.append("")
-    lines.append(f"> CLAUDE.md / AGENTS.md에 흩어진 `{kind}` 관련 섹션을 모은 초안입니다.")
-    lines.append("> 검토·정제 후 원본 문서에서 해당 섹션을 제거하고 이 파일을 참조하도록 하세요.")
     lines.append("")
     total = sum(len(s) for _, s in results)
     if total == 0:

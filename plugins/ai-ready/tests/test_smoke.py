@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -96,6 +97,41 @@ class TestExtractAntipatternsCluster(unittest.TestCase):
         # stopword 는 클러스터 결과에 없어야 함
         self.assertNotIn("fix", words)
         self.assertNotIn("feat", words)
+
+
+class TestAntipatternExitContractIsDocumented(unittest.TestCase):
+    """`extract_antipatterns.py` 가 내는 3 과 4 는 호출자가 다르게 다뤄야 하는 결과다.
+
+    3 은 "사람이 인수한 문서라 안 덮었다"(대상 문서는 그대로), 4 는 "git 을 못 읽었다"(아무것도
+    안 썼다) 다. 4 는 어느 문서에도 없었고, 그러면 오케스트레이터가 비0 을 뭉뚱그려 실패로
+    보고하거나 "뽑을 것이 없었다" 로 삼킨다. 값과 문장을 같은 자리에서 함께 잠근다.
+    """
+
+    AUDIT_SKILL = PLUGIN_ROOT / "skills" / "audit" / "SKILL.md"
+    APPLY_SKILL = PLUGIN_ROOT / "skills" / "apply" / "SKILL.md"
+
+    def test_documented_values_match_the_script(self):
+        self.assertEqual(extract_antipatterns.EXIT_GUARD_REFUSED, 3)
+        self.assertEqual(extract_antipatterns.EXIT_GIT_UNAVAILABLE, 4)
+
+    def test_audit_skill_states_both_meanings(self):
+        text = self.AUDIT_SKILL.read_text(encoding="utf-8")
+        # `exits \`3\`` 만으로는 못 고른다 — scaffold.py 의 3·4 를 적은 문단이 따로 있고, 거기
+        # 3 은 "맞는 스택 어댑터가 없다" 라 뜻이 다르다. 그래서 가드 문단 제목으로 집는다.
+        paras = [p for p in text.split("\n\n") if p.startswith("**Overwrite guard.**")]
+        self.assertEqual(len(paras), 1, "덮어쓰기 가드 문단을 특정 못 했다 — 앵커가 낡았다")
+        para = paras[0]
+        self.assertIn("exits `3`", para)
+        self.assertIn("signature", para, "3 이 무엇을 거부하는 값인지 안 적는다")
+        self.assertRegex(para, r"`4`.{0,80}git",
+                         "git 을 못 읽었을 때의 4 를 안 적는다 — 호출자가 빈 결과와 구분 못 한다")
+
+    def test_apply_skill_states_the_git_exit(self):
+        text = self.APPLY_SKILL.read_text(encoding="utf-8")
+        lines = [ln for ln in text.splitlines() if "exit 4" in ln]
+        self.assertEqual(len(lines), 1, "apply 안전 원칙에 git exit 4 줄이 없다")
+        self.assertIn("git", lines[0])
+        self.assertIn("exit 3", lines[0], "3 과의 차이를 같은 줄에서 말해야 뜻이 갈리지 않는다")
 
 
 class TestScaffoldSummaryExtraction(unittest.TestCase):
@@ -214,6 +250,54 @@ class TestHistoryArchiveFailure(unittest.TestCase):
                  "--target", str(root), "--out", str(out_dir)],
                 capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, "보관은 부가 기능이라 감사를 실패로 만들지 않는다")
+            self.assertNotIn("archive:", proc.stdout)
+            self.assertIn("history 보관 실패", proc.stderr)
+
+    def test_partial_file_is_removed_when_the_write_dies_midway(self):
+        # 디스크가 차면(ENOSPC) 파일은 만들어진 뒤 쓰다가 죽어 0바이트 껍데기가 남는다. 보관
+        # 성공 여부를 main 이 파일 존재로 다시 계산하므로, 그 껍데기를 남기면 같은 실행이
+        # "보관 실패" 경고와 `archive:` 줄을 함께 낸다 — 두 곳이 서로 다른 답을 하는 상태다.
+        real_write_text = Path.write_text
+
+        def dies_midway(self, *args, **kwargs):
+            if self.parent.name == "history":
+                self.touch()
+                raise OSError(28, "No space left on device")
+            return real_write_text(self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out_dir = root / ".ai-ready"
+            err = io.StringIO()
+            Path.write_text = dies_midway
+            try:
+                with contextlib.redirect_stderr(err):
+                    result = audit.run(root, out_dir)
+            finally:
+                Path.write_text = real_write_text
+            self.assertIn("history 보관 실패", err.getvalue())
+            self.assertFalse(audit.history_path_for(out_dir, result["timestamp"]).exists(),
+                             "쓰다 만 파일이 남으면 main 의 존재 검사가 보관 성공으로 읽는다")
+
+    def test_cli_omits_archive_line_when_a_directory_sits_in_the_file_slot(self):
+        # 앞 사례와 달리 여기서는 지울 수 있는 것이 없다 — 그 자리를 디렉토리가 차지하고 있어
+        # 존재 검사만으로는 여전히 참이다. 그래서 main 은 파일인지까지 본다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out_dir = root / ".ai-ready"
+            history = out_dir / "history"
+            history.mkdir(parents=True)
+            # 파일명은 실행 시각으로 정해지므로 그 시각의 이름을 미리 만들 수 없다. 대신 초 단위
+            # 이름 후보를 앞뒤로 깔아 어느 초에 돌아도 한 자리는 막히게 한다.
+            now = datetime.now(timezone.utc)
+            for delta in range(-5, 6):
+                ts = (now + timedelta(seconds=delta)).isoformat(timespec="seconds")
+                audit.history_path_for(out_dir, ts).mkdir()
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "audit.py"),
+                 "--target", str(root), "--out", str(out_dir)],
+                capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0)
             self.assertNotIn("archive:", proc.stdout)
             self.assertIn("history 보관 실패", proc.stderr)
 
@@ -614,8 +698,9 @@ class TestRootDocSizeRule(unittest.TestCase):
         self.assertIn("CLAUDE.md", joined)
 
     def test_root_doc_collection_order_ignores_readdir_order(self):
-        # 루트 문서를 하나만 집는 규칙들(존재·경로 참조)은 수집 순서를 그대로 따른다.
-        # 실제 파일시스템의 readdir 순서는 고를 수 없으므로 walk 결과를 뒤집어 확인한다.
+        # 루트 문서를 하나만 집는 규칙(존재)은 수집 순서를 그대로 따르므로, 그 순서가 파일시스템에
+        # 달리면 같은 레포가 실행마다 다른 근거를 낸다. 실제 readdir 순서는 고를 수 없어 walk
+        # 결과를 뒤집어 확인한다.
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "AGENTS.md").write_text("# a\n", encoding="utf-8")
@@ -638,6 +723,63 @@ class TestRootDocSizeRule(unittest.TestCase):
                                "CLAUDE.md": self._doc_of_bytes(3_000)})
         self.assertEqual(rule["points"], 5)
         self.assertEqual(len(rule["evidence"]), 2)
+
+
+class TestRootDocReferenceUnion(unittest.TestCase):
+    """참조를 세는 규칙은 루트 문서 하나가 아니라 전부를 읽는다.
+
+    실측: 모듈 지도를 갖춘 3.5KB `CLAUDE.md` 옆에 한 줄짜리 `AGENTS.md` 를 두는 것만으로
+    이 규칙이 4점에서 0점이 됐다. 이름 순으로 앞서는 `AGENTS.md` 의 본문만 읽었기 때문이다.
+    지도를 어느 파일에 적었든 그 호스트의 세션은 지도를 받으므로 두 본문을 합쳐서 센다.
+    """
+
+    REF_RULE = "루트 문서가 3개 이상의 모듈 경로/문서 참조"
+    MAP = ("# proj\n\n"
+           "- [`core/CLAUDE.md`](core/CLAUDE.md) — 도메인 규칙\n"
+           "- [`app/CLAUDE.md`](app/CLAUDE.md) — 진입점\n"
+           "- [`docs/INDEX.md`](docs/INDEX.md) — 문서 목록\n")
+
+    @staticmethod
+    def _filler(title: str) -> str:
+        return f"# {title}\n\n" + "".join(
+            f"- 이 문서는 {title} 의 진입점·흐름·함정을 담습니다. 항목 {i}.\n" for i in range(12))
+
+    def _repo(self, root: Path, docs: dict[str, str]) -> None:
+        for mod in ("core", "app"):
+            (root / mod).mkdir()
+            (root / mod / "build.gradle.kts").write_text("plugins {}", encoding="utf-8")
+            (root / mod / "CLAUDE.md").write_text(self._filler(mod), encoding="utf-8")
+        (root / "docs").mkdir()
+        (root / "docs" / "INDEX.md").write_text(self._filler("docs"), encoding="utf-8")
+        for name, text in docs.items():
+            (root / name).write_text(text, encoding="utf-8")
+
+    def _rule(self, docs: dict[str, str]) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._repo(root, docs)
+            result = audit.run(root, root / ".ai-ready")
+            return next(r for c in result["categories"] for r in c["rules"]
+                        if r["name"] == self.REF_RULE)
+
+    def test_map_in_the_only_root_doc_scores_full(self):
+        self.assertEqual(self._rule({"CLAUDE.md": self.MAP})["points"], 4)
+
+    def test_stub_sibling_does_not_erase_the_map(self):
+        rule = self._rule({"CLAUDE.md": self.MAP, "AGENTS.md": "# proj\n"})
+        self.assertEqual(rule["points"], 4,
+                         "이름 순으로 앞서는 빈 AGENTS.md 가 지도를 가리면 안 된다")
+
+    def test_map_split_across_both_root_docs_still_counts(self):
+        # 한쪽에 둘, 다른 쪽에 하나를 적어도 세션이 받는 지도는 셋이다.
+        rule = self._rule({
+            "CLAUDE.md": "# proj\n\n- [`core/CLAUDE.md`](core/CLAUDE.md)\n- [`app/CLAUDE.md`](app/CLAUDE.md)\n",
+            "AGENTS.md": "# proj\n\n- [`docs/INDEX.md`](docs/INDEX.md)\n"})
+        self.assertEqual(rule["points"], 4)
+
+    def test_no_map_anywhere_still_scores_zero(self):
+        # 합치기가 없는 참조를 만들어 내면 안 된다 — 반대 방향 대조군.
+        self.assertEqual(self._rule({"CLAUDE.md": "# proj\n", "AGENTS.md": "# proj\n"})["points"], 0)
 
 
 class TestLazyLoadSelfEvident(unittest.TestCase):
@@ -1016,8 +1158,8 @@ class TestSingleModuleCatalogScoring(unittest.TestCase):
 
     (1) 표준 레이아웃(controller/service/domain/repository)은 JVM 웹 관례라 다른 스택에서는
     측정하지 않는데, 미측정을 4점으로 묶어 두어 node/python/go/rust 단일 모듈이 만점에
-    닿지 못했다. 문서(SKILL.md·ACTION_HINTS·규칙 노트)는 셋 다 카탈로그만으로 만점을
-    약속하므로 코드를 문서에 맞춘다.
+    닿지 못했다. 문서(skills/audit/SKILL.md·ACTION_HINTS·규칙 노트)는 셋 다 카탈로그만으로
+    만점을 약속하므로 코드를 문서에 맞춘다.
     (2) 반대 방향으로는, 루트 문서가 카탈로그 이름만 적어도 만점을 받던 자리를 막는다 —
     "docs/PACKAGES.md 를 만들 예정" 한 줄로 4/4 였다.
     """

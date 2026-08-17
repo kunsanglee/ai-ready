@@ -5,25 +5,14 @@ description: 무인 검증 loop 의 1회 점검 입구. 현재 브랜치 변경(
 
 # review — 1회 점검 보고서
 
-> 무인 검증 loop 의 사람 입구(human-in-the-loop). 호출: `/review [--html]`. 코드를 고치며 수렴까지 맡기면 `/build`, 종료 후 교훈 수확은 `/lessons`.
-
-무인 검증 loop 의 **사람 입구**다. 무인 루프와 **같은 checker(`loop-checker`) + 같은 결정론 채점 셸**을 사람이 한 번 돌려, 등급순 보고서를 받는다. 다른 것은 checker 를 몇 명 띄우느냐 하나다 — `/build` 는 축이 갈린 렌즈 셋(contract·safety·quality)을 서로 모르게 병렬로 띄우고, 여기서는 **한 명이 여섯 차원을 다 본다**(렌즈 지정 없이 부르면 checker 가 그렇게 돈다). 루프가 아니다 — checker 1회 → 채점 → 보고서로 끝난다. 무엇을 고칠지는 사람이 정한다.
+무인 루프와 **같은 checker(`loop-checker`) + 같은 결정론 채점 셸**을 사람이 한 번 돌려 등급순 보고서를 받는다. 다른 것은 checker 를 몇 명 띄우느냐 하나다. `/build` 는 축이 갈린 렌즈 셋(contract·safety·quality)을 서로 모르게 병렬로 띄우고, 여기서는 **한 명이 여섯 차원을 다 본다**(렌즈 지정 없이 부르면 checker 가 그렇게 돈다). checker 1회, 채점, 보고서로 끝나고 무엇을 고칠지는 사람이 정한다.
 
 ## 🔌 plugin / 프로젝트 구조
 
-- 이 스킬은 `ai-ready` plugin 의 일부다(과거 별도 loop-engine plugin 이었으나 v0.6.0 에서 통합). checker·채점 셸·BASE rubric 은 plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위), 프로젝트 특유 LOCAL rubric 은 `$CLAUDE_PROJECT_DIR/.loop/rubric.md`(있으면 병합).
-- 의존: `agents/loop-checker.md`(점검, `ai-ready:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh` + `detect_build.py` 감지기), `_loop-engine/rubric.base.md`(BASE 루브릭). 전부 plugin 번들이라 별도 셋업 불필요. review 는 게이트를 안 돌려 빌드 명령이 불필요하고, 베이스 브랜치·컨벤션 문서·지식층을 런타임 감지한다. 프로젝트에 `.loop/rubric.md` 가 있으면 LOCAL 로 병합해 점검 기준을 그 스택에 맞춘다(없으면 BASE 만).
-- 환경변수·외부 인증 없음(전부 로컬 git + 셸).
-
-## `/code-review` 와 차이
-
-| | `/review` | `/code-review` |
-|---|---|---|
-| 점검자 | `loop-checker` 1회(여섯 차원 전부) | 5개 전문 에이전트 병렬 |
-| severity | 결정론 셸(rubric) — 같은 코드 = 같은 등급 | 각 에이전트가 매김 |
-| 쓰임 | 무인 loop 와 동일 판정을 사람이 미리 봄 | 폭넓은 다관점 진단 |
-
-둘은 보완재다. 무인 loop 에 올릴 코드를 그 loop 의 판정 기준으로 미리 보고 싶으면 `/review`, 다관점 깊이 진단이면 `/code-review`.
+- 의존(plugin 번들): `agents/loop-checker.md`(점검, `ai-ready:` namespace), `_loop-engine/`(채점 셸 `score.sh`·`decide.sh` + `detect_build.py` 감지기), `_loop-engine/rubric.base.md`(BASE 루브릭). 별도 셋업은 없다.
+- 프로젝트에 `$CLAUDE_PROJECT_DIR/.loop/rubric.md` 가 있으면 LOCAL rubric 으로 병합해 점검 기준을 그 스택에 맞춘다(없으면 BASE 만).
+- 환경변수·외부 인증 없음(전부 로컬 git + 셸). 베이스 브랜치·컨벤션 문서·지식층은 런타임 감지한다.
+- 게이트(컴파일·테스트)는 돌리지 않는다 — 코드를 고치지 않으니 확인할 수정이 없고, 판정은 rubric 채점만으로 선다. 빌드 명령 감지가 없는 것은 누락이 아니다.
 
 ## 호출 예시
 
@@ -80,9 +69,9 @@ echo "review 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}
 - 종류 어휘 rubric 경로 둘 다: BASE 와 LOCAL(있으면) — 같은 "review 값:" 줄에 있다.
 - findings 출력 경로(아래 `$F`).
 
-> 모델·effort: checker 는 모델을 frontmatter 에 고정하지 않아 호출한 세션을 상속하고(v0.8.4, 이 `Agent` 호출의 `model` 파라미터로 재정의 가능), effort 는 `xhigh` 로 **고정한다**(v0.9.6, 호출로 재정의 불가 — 도구에 파라미터가 없다). 1회 점검이라 아낄 자리가 아니고, 세션 등급을 내려도 판정 기준은 무인 루프와 같아야 한다. 계약은 `core/effort-ladder.md`.
+> 모델은 호출한 세션을 상속하고(이 `Agent` 호출의 `model` 파라미터로 재정의 가능), effort 는 checker 정의가 `xhigh` 로 고정해 호출로 못 바꾼다. 세션 등급을 내려도 판정 기준은 무인 루프와 같아야 한다.
 
-**그 코드를 이 세션이 썼다면 그 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** review 에는 maker 가 없다 — `/build` 와 달리 코드를 쓴 쪽이 이 세션이거나 사람이고, 그래서 자기 변호가 checker 에 새어들 자리가 오히려 여기다. checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다(분리 강제). checker 는 자기 도구(Read/Grep/Glob/Bash)로 diff 와 컨벤션 문서를 직접 읽는다.
+**그 코드를 이 세션이 썼다면 그 합리화·구현 변명을 checker 프롬프트에 넣지 마라.** review 에는 maker 가 없어 코드를 쓴 쪽이 이 세션이거나 사람이고, 그래서 자기 변호가 checker 에 새어들 자리가 오히려 여기다. checker 는 diff·문서·ANTIPATTERNS 만 보고 독립적으로 판단한다.
 
 **checker 결과는 파일로 회수한다.** 스핀 전에 findings 출력 경로를 결정적 위치로 잡고 `: > "$F"` 로 비운 뒤, 그 절대경로를 checker 프롬프트에 "findings 출력 경로"로 넘긴다:
 
@@ -95,7 +84,7 @@ F="${TMPDIR:-/tmp}/review-findings-$(basename "$PROJECT_ROOT")-$(git rev-parse -
 : > "$F"
 ```
 
-checker 는 `{base, reviewed:[...], findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 랜덤 `mktemp` 는 쓰지 않는다(Bash 호출마다 셸이 새로 떠 변수가 Step 3 채점에 안 남는다) — 위 경로는 브랜치에서 결정적으로 재유도된다. 완료되면 그 파일을 Step 3 채점에 넣는다.
+checker 는 `{base, reviewed:[...], findings:[...]}` 를 그 파일에 쓴다(인라인 ```json 블록도 남기지만 그건 가독성용 사본 — 백그라운드 세션은 최종 메시지 인라인 회수가 안 돼 파일이 정본). 완료되면 그 파일을 Step 3 채점에 넣는다.
 
 ### Step 3. 결정론 채점 (score → decide)
 
@@ -127,8 +116,7 @@ rm -f "$F"   # 채점이 성공한 뒤에만 지운다
 ```
 
 - `$SCORED` = `{base, reviewed, findings:[{..., severity, await, base, kind_known}]}`.
-- `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, out_of_scope, await}`. `out_of_scope` 는 `/build` 의 phase 범위 계측이라 여기서는 안 쓴다 — `/review` 는 phase 가 없어 `non_goals` 를 안 넘기고, 그러면 렌즈가 `in_scope` 를 생략해 전부 `unmarked` 로 잡힌다. 등급에는 영향이 없다.
-- 셸이 `exit 65` 로 죽으면(빈/형식오류 입력) checker 가 findings 파일을 못 썼거나 형식이 깨진 것이다(위 `[ -s "$F" ]` 가드가 먼저 잡는 경우 포함) — 조용히 PASS 로 넘기지 말고 사용자에게 "checker 출력 파싱 실패"로 보고하고 멈춘다.
+- `$VERDICT` = `{verdict, counts:{BLOCKER,CRITICAL,MAJOR,MINOR}, out_of_scope, await}`. `out_of_scope` 는 `/build` 의 phase 범위 계측이라 여기서는 안 쓴다(등급에도 영향이 없다).
 
 verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 처리), `RETRY`(CRITICAL≥1 — 무인 loop 면 maker 를 다시 스핀할 감), `RETRY_SOFT`(MAJOR≥1 — 정체 시 사람 승인으로 통과 가능), `PASS`(MINOR 만/깨끗).
 
@@ -157,8 +145,6 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 - AWAIT_USER 면: 자동화 금지 영역(운영 DB·돈·인가·대량발송·삭제)에 닿음 — 반드시 사람 판단.
 ```
 
-이 스킬은 **지적만 한다 — 코드를 고치지 않는다.** 사용자가 보고서를 보고 무엇을 고칠지 정한다.
-
 ### Step 4-Alt. HTML 출력 (`--html` 일 때만)
 
 `/code-review` 의 HTML 모드 규약을 그대로 따른다: 외부 의존성 없는 자체완결 단일 HTML 1개(CDN✗, inline `<style>`+`<script>`만), 경로 `/tmp/review-{branch-slug}-{HHMMSS}.html`, 상단 verdict·counts 요약 카드, finding 카드(severity 색상 바 BLOCKER=red·CRITICAL=red·MAJOR=orange·MINOR=yellow, 파일경로 monospace, 복사 버튼), 인용 라인 외 코드 본문 복사 금지(라인+경로만). 산출 후 절대경로 + `file://` 안내.
@@ -168,14 +154,8 @@ verdict 의미(rubric): `AWAIT_USER`(BLOCKER 또는 force_await — 사람만 �
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | `loop: base rubric 없음` | plugin 번들 `rubric.base.md` 부재(설치 손상) | plugin 재설치, 또는 `LOOP_RUBRIC_BASE` 로 pin |
-| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일(`${TMPDIR:-/tmp}/review-findings-{repo}-{branch-cksum}.json`)을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 + 스핀 전 `: > "$F"` 로 비웠는지 확인. `[ -s "$F" ]` 가드가 먼저 잡는다. 멈추고 보고 — PASS 로 넘기지 말 것 |
-| `loop: findings 도 reviewed 도 비었다 — exit 65` | checker 가 `{"findings":[]}` 만 내고 `reviewed` 를 안 채움. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** — 그러면 점검 없이 통과가 된다 | 베이스 브랜치와 diff 범위를 먼저 확인한다. 정말 깨끗하면 checker 가 검토한 파일을 `reviewed` 에 담아야 한다. PASS 로 넘기지 말 것 |
+| `score.sh: 입력 형식 오류 — ... exit 65` | checker 가 findings 파일을 못 썼거나 형식오류 | checker 프롬프트에 findings 출력 경로를 넘겼는지 확인. PASS 로 넘기지 말 것 |
+| `loop: findings 도 reviewed 도 비었다 — exit 65` | checker 가 `{"findings":[]}` 만 내고 `reviewed` 를 안 채움. 흔한 진짜 원인은 **베이스 브랜치 해석이 어긋나 diff 가 통째로 빈 것** | 베이스 브랜치와 diff 범위를 먼저 확인한다. PASS 로 넘기지 말 것 |
 | `[ -s "$F" ]` 가 거짓 "checker 실패" | Step 2 와 Step 3 사이에 브랜치를 바꿔 F 재유도가 어긋남 | 리뷰가 도는 동안 그 체크아웃의 브랜치를 바꾸지 않는다 |
 | `loop: 'jq' 필요` | jq 미설치 | `brew install jq` |
 | 모든 finding 이 CRITICAL 로 뜸 | checker 가 dimension 을 6값 밖으로 오타 | score.sh 가 모르는 dimension 을 보수적으로 CRITICAL 처리. checker 출력의 dimension 값 점검 |
-
-## Non-Goals
-
-- 루프·재시도·코드 수정 — 이 입구는 1회 점검+보고. 코드를 고치며 도는 무인 반복은 `/build` 가 한다.
-- lesson → ANTIPATTERNS 반영 — 별 스킬(`/lessons`)이 사람 승인 게이트로 처리.
-- severity 를 LLM 이 매기는 것 — 결정론 셸이 매긴다(같은 코드 = 같은 등급).

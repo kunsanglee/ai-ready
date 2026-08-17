@@ -192,10 +192,7 @@ def render(target: Path, edges: list[tuple[str, str]]) -> str:
     lines.append("")
     for n in nodes:
         lines.append(f"- `{n}`")
-    lines.append("")
-    lines.append("---")
-    lines.append("")
-    lines.append("_재생성: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"ARCHITECTURE.md 재생성해줘\" 라고 말하세요._")
+    # 꼬리에 재생성 안내를 두지 않는다 — 머리의 자동 생성 서명이 같은 말을 이미 한다.
     return "\n".join(lines) + "\n"
 
 

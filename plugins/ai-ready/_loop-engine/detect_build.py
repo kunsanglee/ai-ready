@@ -175,11 +175,12 @@ def detect_build_system(target: Path) -> dict[str, str]:
         pm = _npm_pm(target)
         scripts = _npm_scripts(target)
         run = lambda s: f"{pm} run {s}"  # noqa: E731
-        # 컴파일 게이트의 목적은 타입·문법 오류를 결정론으로 잡는 것 — build 스크립트가 없으면
-        # 그 목적을 대신하는 스크립트를 순서대로 집는다. 실측 사고: 스크립트 이름이 typecheck 라
-        # 빈 값이 나갔고, 빈 값을 게이트가 스킵해 타입 검사가 통째로 건너뛰어졌다.
+        # 실측 사고: 스크립트 이름이 typecheck 라 빈 값이 나갔고, 빈 값을 게이트가 스킵해 타입
+        # 검사가 통째로 건너뛰어졌다. `check` 는 목록에 없다 — `prettier --check` 처럼 포맷·린트가
+        # 흔히 쓰는 이름이라 컴파일 게이트 자리에 다른 것이 앉는다. 하나도 못 집으면 게이트 0개가
+        # 되고, 그때는 build 스킬이 시작을 거부하며 사람이 LOOP_BUILD_CMD 로 지정한다.
         build_cmd = ""
-        for name in ("build", "typecheck", "tsc", "compile", "check"):
+        for name in ("build", "typecheck", "tsc", "compile"):
             if name in scripts:
                 build_cmd = run(name)
                 break

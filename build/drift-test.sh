@@ -38,10 +38,13 @@ done
 # 위 블록과 달리 이쪽은 core 원본이 없다. claude 트리가 원본이고 codex 트리가 손으로 맞춰 온
 # 사본이라, 한쪽만 고치면 같은 저장소를 두 호스트가 다르게 채점하게 된다.
 #
-# 제외 셋은 의도적으로 다른 파일들이다. audit.py 는 어댑터 분기(훅 복사부·출력 문구)를 담고,
 # freshness_check.py 와 install_hook.py 는 codex audit 번들에 일부러 없다
 # (codex/tests 의 test_audit_bundle_has_no_hook_installer 가 install_hook.py 부재를 단언한다).
-# 이 셋을 빼지 않으면 의도한 차이를 드리프트로 잘못 잡는다.
+# 이 둘을 빼지 않으면 의도한 차이를 드리프트로 잘못 잡는다.
+#
+# audit.py 는 파일째로 빼지 않는다. 호스트마다 다른 곳은 훅 복사와 그 산출물 안내 두 자리뿐인데
+# 파일을 통째로 빼면 채점 로직 전체가 검사 밖이 된다 — 실측: 한쪽 트리에서만 점수 밴드를
+# 뒤집어도 모든 검사가 통과했다. 아래 audit.py 블록이 그 자리를 마커 단위로 좁혀 잠근다.
 AUDIT_SRC="plugins/ai-ready/skills/audit/scripts"
 AUDIT_DEST="codex/plugins/ai-ready/skills/audit/scripts"
 if diff -rq --exclude='__pycache__' --exclude='*.pyc' \
@@ -53,6 +56,32 @@ else
   sed 's/^/    /' /tmp/drift.$$.txt >&2
   rm -f /tmp/drift.$$.txt
   echo "                claude 트리가 원본이다. 거기서 고치고 codex 사본에 옮겨라." >&2
+  exit 1
+fi
+rm -f /tmp/drift.$$.txt
+
+# audit.py: 호스트별로 갈리는 구간만 `HOST-ADAPTER:BEGIN`~`:END` 로 표시돼 있다. 양쪽에서 그
+# 구간을 지운 나머지를 비교하므로, 마커 밖의 한 글자 변이는 잡히고 마커 안의 차이는 허용된다.
+# 마커가 한쪽에만 있거나 짝이 안 맞으면 지워지는 범위가 서로 달라져 여기서 드러난다.
+AUDIT_PY_SRC="$AUDIT_SRC/audit.py"
+AUDIT_PY_DEST="$AUDIT_DEST/audit.py"
+strip_adapter() { sed '/HOST-ADAPTER:BEGIN/,/HOST-ADAPTER:END/d' "$1"; }
+for f in "$AUDIT_PY_SRC" "$AUDIT_PY_DEST"; do
+  begins="$(grep -c 'HOST-ADAPTER:BEGIN' "$f" || true)"
+  ends="$(grep -c 'HOST-ADAPTER:END' "$f" || true)"
+  if [ "$begins" != "$ends" ] || [ "$begins" = "0" ]; then
+    echo "[audit-py] 마커가 짝이 안 맞는다($f: BEGIN ${begins}개 / END ${ends}개) —" >&2
+    echo "           마커가 없으면 지우는 범위가 어긋나 비교가 뜻을 잃는다." >&2
+    exit 1
+  fi
+done
+if diff <(strip_adapter "$AUDIT_PY_SRC") <(strip_adapter "$AUDIT_PY_DEST") >/tmp/drift.$$.txt 2>&1; then
+  echo "[audit-py] OK — 어댑터 구간을 뺀 나머지가 두 트리 동일"
+else
+  echo "[audit-py] DRIFT 발견 — 어댑터 구간 밖에서 $AUDIT_PY_SRC 와 $AUDIT_PY_DEST 가 다르다:" >&2
+  sed 's/^/    /' /tmp/drift.$$.txt >&2
+  rm -f /tmp/drift.$$.txt
+  echo "           claude 트리가 원본이다. 호스트마다 달라야 하는 코드면 마커로 감싸라." >&2
   exit 1
 fi
 rm -f /tmp/drift.$$.txt

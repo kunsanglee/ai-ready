@@ -67,8 +67,9 @@ _STOPWORDS_KO = {
 }
 _MIN_KEYWORD_CLUSTER_SIZE = 3
 
-# scaffold.py 와 같은 명명. 3 은 이 스크립트에서 이미 덮어쓰기 가드가 쓰고 있고
-# SKILL.md 도 그 값으로 문서화해서, git 실패는 다음 번호를 쓴다.
+# 번호 계열(0·2·3·4)만 scaffold.py 를 따르고 각 값의 뜻은 스크립트마다 다르다 — scaffold.py 의
+# 4 는 "소스 루트에 코드가 없다" 이고 여기의 4 는 "git 을 못 읽었다" 다. 3 은 이 스크립트에서
+# 이미 덮어쓰기 가드가 쓰고 skills/audit/SKILL.md 도 그 값으로 문서화해서, git 실패는 다음 번호다.
 EXIT_OK = 0
 EXIT_NOT_A_DIR = 2         # --target 이 디렉토리가 아니다
 EXIT_GUARD_REFUSED = 3     # 사람이 인수한 문서라 덮지 않는다
@@ -254,13 +255,14 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
     else:
         lines.append(f"커밋 메시지에 **{_MIN_KEYWORD_CLUSTER_SIZE}회 이상** 등장한 키워드 — 같은 종류의 실수가 반복될 가능성을 시사합니다.")
         lines.append("")
+        # 검토 지시는 항목마다가 아니라 섹션 머리에 한 번 — 항목이 열 개면 같은 문장을 열 번 읽는다.
+        lines.append("> **검토 포인트**: 한 키워드의 변경들이 같은 클래스의 결함이면 안티패턴 1건으로 "
+                     "정리하세요 (`절대 금지 — X. 이유 — Y. 대신 — Z` 형식).")
+        lines.append("")
         for word, count, sample_commits in clusters[:10]:
             lines.append(f"### `{word}` — {count}회 반복")
             for c in sample_commits[:5]:
                 lines.append(f"- `{c['sha'][:7]}` {c['subject']}")
-            lines.append("")
-            lines.append(f"  > **검토 포인트**: `{word}` 관련 변경이 {count}회 반복됐습니다. 같은 클래스의 결함이라면 "
-                         f"안티패턴 1건으로 정리하세요 (`절대 금지 — X. 이유 — Y. 대신 — Z` 형식).")
             lines.append("")
 
     # 2. 반복 수정 위치 (파일 단위)
@@ -280,14 +282,14 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
     else:
         lines.append(f"**{MIN_OCCURRENCES}회 이상** fix/revert 커밋에 등장한 파일 — 안티패턴이나 숨은 복잡도를 품고 있을 가능성이 높습니다.")
         lines.append("")
+        lines.append(f"> **검토 포인트**: 파일마다 {days}일치 커밋 메시지에서 공통 패턴을 찾아 "
+                     f"`절대 금지 — X. 이유 — Y. 대신 — Z` 형식의 안티패턴 1건으로 정리하세요.")
+        lines.append("")
         for f, n in recurring[:25]:
             lines.append(f"### `{f}` — fix 커밋 {n}회")
             sample = file_to_commits[f][:5]
             for c in sample:
                 lines.append(f"- `{c['sha'][:7]}` {c['subject']}")
-            lines.append("")
-            lines.append(f"  > **검토 포인트**: 이 파일은 {days}일 동안 {n}번 수정됐습니다. 위 커밋 메시지에서 공통 패턴을 찾아 "
-                         f"`절대 금지 — X. 이유 — Y. 대신 — Z` 형식의 안티패턴 1건으로 정리하세요.")
             lines.append("")
 
     # 3. Revert 커밋
@@ -342,12 +344,12 @@ def render(commits: list[dict], markers: list[dict], modules: set[str], days: in
     lines.append("## 6. 이 초안을 실제 ANTIPATTERNS.md로 정리하는 법")
     lines.append("")
     lines.append(textwrap_dedent("""\
-        반복 수정 위치마다 다음 형식의 한 줄 항목을 작성하세요:
+        각 항목은 한 줄로 씁니다:
 
         > **절대 금지**: \\<잘못된 행동>. **이유**: \\<관찰된 실패 양상>. **대신**: \\<올바른 행동>.
 
-        그런 다음 모듈이나 주제별로 그룹화합니다. 양보다 질 — 고품질 10~30개를 목표로 합니다.
-        정제 후 이 파일을 저장소 루트로 옮기고 루트 CLAUDE.md에서 참조하도록 하세요.
+        모듈이나 주제별로 그룹화하고 양보다 질로 10~30개를 목표로 합니다. 정제 후 이 파일을
+        저장소 루트로 옮기고 루트 CLAUDE.md에서 참조하도록 하세요.
     """).rstrip())
     return "\n".join(lines)
 
