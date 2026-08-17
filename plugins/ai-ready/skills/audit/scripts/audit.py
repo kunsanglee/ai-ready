@@ -591,16 +591,23 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
         r.award(3, [str(root_doc.relative_to(target))])
     rules.append(r)
 
+    # 아래 참조 규칙(1.2)은 루트 문서 **전부**의 본문을 합쳐서 센다. 한 파일만 읽으면, 루트에
+    # CLAUDE.md 와 AGENTS.md 가 함께 있을 때 이름 순으로 앞서는 쪽만 보게 된다 — 3,512바이트
+    # CLAUDE.md 옆에 한 줄짜리 AGENTS.md 를 두는 것만으로 이 규칙이 4점에서 0점이 됐다.
+    # 어느 파일에 지도를 적었든 그 호스트의 세션은 지도를 받는다. 존재 규칙(1.1)과 상주 분량
+    # 규칙(2.1)은 이 합치기와 무관하다 — 분량은 파일마다 따로 재야 비용이 맞는다.
+    root_docs = [d for d in claude_docs if d.parent == target]
+    root_text = "\n".join(doc_text.get(d, "") for d in root_docs)
+
     # 1.2 루트 문서가 3개 이상의 모듈/패키지 경로 참조
     # T-7: 한글 모듈명 매칭(가-힣) + thin-index 패턴 인식 (docs/wiki/doc 디렉토리도 가산)
     DOC_DIRS = {"docs", "wiki", "doc", "guides", ".ai-ready"}
     if single_module:
         # 단일 모듈: 루트 문서가 *패키지 카탈로그 문서* 또는 *3개 이상의 패키지 경로* 를 참조하는가
         r = Rule("루트 문서가 패키지 카탈로그 또는 3개 이상의 패키지 경로 참조", 4)
-        if root_doc:
-            text = doc_text.get(root_doc, "")
-            # 카탈로그 이름을 적은 것만으로는 세지 않는다 — 파일이 실재하고 스텁이 아니어야 한다.
-            # 경로 갈래가 이미 _reference_target_counts 로 죽은 참조를 거르는 것과 같은 기준이다.
+        if root_docs:
+            text = root_text
+            # 경로 갈래가 _reference_target_counts 로 죽은 참조를 거르는 것과 같은 기준이다.
             refs_catalog = (catalog_doc is not None and _has_min_content(catalog_doc)
                             and any(c in text for c in PACKAGE_CATALOG_CANDIDATES))
             path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
@@ -620,8 +627,8 @@ def score_navigation(target: Path, scan: dict, doc_text: dict) -> dict:
     else:
         # 멀티 모듈: 모듈 첫 segment 필터 + thin-index 패턴 인식
         r = Rule("루트 문서가 3개 이상의 모듈 경로/문서 참조", 4)
-        if root_doc:
-            text = doc_text.get(root_doc, "")
+        if root_docs:
+            text = root_text
             path_hits = re.findall(r"[`\[]([\w가-힣\-./]+/[\w가-힣\-./]+)[`\]]", text)
             module_first_segs = {str(m).split("/")[0] for m in modules if m != Path(".")}
             valid_paths, dead_refs = set(), set()
@@ -966,8 +973,9 @@ def score_dependency_tracking(target: Path, scan: dict) -> dict:
             if layout_total == 0:
                 # C4: 레이아웃을 측정하지 못한 것이지 "60% 미만"이 아니다. 0점 침묵 대신
                 # 미측정임을 명시하고, 왜 측정이 성립하지 않는지를 스택 이름으로 말한다.
-                # 레이아웃 개념이 없는 스택은 카탈로그가 만점 조건 전부다(SKILL.md·ACTION_HINTS
-                # 와 같은 약속). JVM 인데 Controller 도메인이 없는 쪽은 측정할 것이 남아 4점.
+                # 레이아웃 개념이 없는 스택은 카탈로그가 만점 조건 전부다(skills/audit/SKILL.md·
+                # ACTION_HINTS 와 같은 약속). JVM 인데 Controller 도메인이 없는 쪽은 측정할 것이
+                # 남아 4점.
                 if layout_applies:
                     r.award(4, evidence,
                             note="카탈로그 OK / 표준 레이아웃 미측정 "
@@ -1704,13 +1712,24 @@ def _archive_history(out_dir: Path, audit: dict) -> Path | None:
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
     except OSError as e:
+        # 쓰다 만 파일이 남으면 main 의 존재 검사가 참이 되어 경고와 `archive:` 줄이 함께 나간다.
+        # 성공 판정이 두 곳에서 따로 계산되지 않게, 실패한 자리를 지워 존재 검사와 뜻을 맞춘다.
+        # 지우는 것마저 실패하면 그건 원래 실패에 덧붙는 잡음이라 삼킨다.
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
         print(f"경고: history 보관 실패({e}) — 이번 실행은 dashboard 추이 차트에 빠집니다",
               file=sys.stderr)
         return None
     return path
 
 
+# 두 호스트 사본이 **의도적으로** 갈리는 자리는 아래 HOST-ADAPTER 마커 한 쌍으로 감싼다.
+# build/drift-test.sh 가 마커 구간을 지운 나머지를 바이트 비교하므로, 마커 밖을 한쪽만 고치면
+# 거기서 잡히고 마커 안은 호스트마다 달라도 된다. 감싸는 구간을 넓힐수록 검사 밖이 넓어진다.
 def _copy_freshness_hook(out_dir: Path) -> Path | None:
+    # HOST-ADAPTER:BEGIN
     """T-4: 플러그인의 freshness_check.sh + freshness_check.py 를 .ai-ready/hooks/ 에 실제 복사.
 
     install_hook.py 가 등록할 때 `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`
@@ -1741,6 +1760,7 @@ def _copy_freshness_hook(out_dir: Path) -> Path | None:
     except OSError as e:
         print(f"경고: freshness 훅 복사 실패({e}) — 훅이 부분 설치 상태일 수 있음", file=sys.stderr)
         return None
+    # HOST-ADAPTER:END
 
 
 def run(target: Path, out_dir: Path) -> dict:
@@ -1809,10 +1829,13 @@ def main():
     print(f"  생성: {out_dir / 'audit-report.md'}")
     print(f"  생성: {out_dir / 'README.md'}")
     archived = history_path_for(out_dir, audit["timestamp"])
-    if archived.exists():
+    # 파일인지까지 본다 — 그 자리를 디렉토리가 차지하면 보관은 실패했는데 존재만으로는 참이다.
+    if archived.is_file():
         print(f"  archive: {archived}")
+    # HOST-ADAPTER:BEGIN
     if (out_dir / 'hooks' / 'freshness_check.sh').exists():
         print(f"  생성: {out_dir / 'hooks' / 'freshness_check.sh'}")
+    # HOST-ADAPTER:END
 
 
 if __name__ == "__main__":

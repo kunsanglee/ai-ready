@@ -275,9 +275,7 @@ def render(target: Path, collected: dict[str, list[tuple[Path, str]]]) -> str:
                 lines.append(f"- [`{path}`]({path}) — {summary}")
             lines.append("")
 
-    lines.append("---")
-    lines.append("")
-    lines.append("_재생성: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"INDEX 재생성해줘\" 라고 말하세요._")
+    # 꼬리에 재생성 안내를 두지 않는다 — 머리의 자동 생성 서명이 같은 말을 이미 한다.
     return "\n".join(lines)
 
 
@@ -436,9 +434,7 @@ def render_with_config(target: Path, cfg: dict, all_docs: list[dict]) -> str:
                 lines.append(f"- [`{new_path}`]({new_path}) → ADR-{old_num:04d}")
             lines.append("")
 
-    lines.append("---")
-    lines.append("")
-    lines.append("_재생성: Claude Code 에서 `ai-ready:apply` 스킬을 호출하거나 \"INDEX 재생성해줘\" 라고 말하세요._")
+    # 꼬리에 재생성 안내를 두지 않는다 — 머리의 자동 생성 서명이 같은 말을 이미 한다.
     return "\n".join(lines)
 
 

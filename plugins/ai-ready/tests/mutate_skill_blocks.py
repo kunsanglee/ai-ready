@@ -93,6 +93,67 @@ set -a; . "$LOOP_DIR/params.env"; set +a
         "병렬화가 만든 구멍 — 개수를 안 세면 축 하나가 안 돌아도 남은 결과가 멀쩡해 보여 통과한다.",
     ),
     (
+        "초기화가 회차 스냅숏·마커를 남김",
+        "skills/build/SKILL.md",
+        '''      "$LOOP_DIR"/scope-open-*.txt "$LOOP_DIR"/scope-cycle-*.txt \\
+      "$LOOP_DIR"/narrowed-* "$LOOP_DIR"/confirm-full-*''',
+        '''      "$LOOP_DIR"/scope-open-*.txt''',
+        ["TestLoopRunSetup.test_setup_clears_cycle_scope_state"],
+        "앞 루프의 회차 스냅숏이 남으면 새 루프의 첫 회차가 그것을 기준으로 좁힌다 — "
+        "첫 회차는 안 좁히는 것이 계약이고, 어긋나도 아무 소리가 안 난다.",
+    ),
+    (
+        "게이트 0개인데 시작을 허용",
+        "skills/build/SKILL.md",
+        'if [ -z "$LOOP_BUILD_CMD" ] && [ -z "$LOOP_TEST_CMD" ] && [ "${LOOP_NO_GATE:-0}" != "1" ]; then',
+        'if false; then',
+        ["TestLoopRunSetup.test_no_gate_commands_refuse_to_start"],
+        "빌드·테스트가 둘 다 비면 결정론 게이트가 통째로 없다 — 컴파일도 테스트도 한 번 안 돈 "
+        "코드가 렌즈 판정만으로 PASS 까지 간다.",
+    ),
+    (
+        "회차 좁히기가 넓게 가기로 한 결정을 덮음",
+        "skills/build/SKILL.md",
+        '''elif [ "$PHASE_NARROWED" -ne 1 ]; then
+  echo "회차 범위: 좁히지 않는다 — 위 점검 범위가 이미 전 범위다"
+''',
+        "",
+        ["TestCheckerAndScoring.test_narrowing_does_not_override_a_decision_to_go_wide"],
+        "렌즈는 마지막에 찍힌 범위를 받는다 — 무조건 도는 회차 좁히기가 마지막 phase·"
+        "review_scope=full·진입 스냅숏 없는 재개를 전부 덮어, 넓게 보기로 한 자리가 사라진다.",
+    ),
+    (
+        "지적 위치에서 줄 범위를 못 뗌",
+        "skills/build/SKILL.md",
+        'sub("(:[0-9]+(-[0-9]+)?)+$"; "")',
+        'sub("(:[0-9]+)+$"; "")',
+        ["TestCheckerAndScoring."
+         "test_second_cycle_narrows_to_recent_change_plus_previous_findings"],
+        "`a.kt:10-40` 이 그대로 남으면 그 문자열은 파일로 존재하지 않아, 그 지적이 다음 회차 "
+        "범위에서 통째로 빠진다 — 안 고친 지적이 시야에서 사라지는 그 실패다.",
+    ),
+    (
+        "확인 회차가 회차 상한에 먹힘",
+        "skills/build/SKILL.md",
+        '''if { [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] && [ "$CONFIRM" -eq 0 ]; } \\
+   || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ]''',
+        '''if [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ]''',
+        ["TestGateLayer.test_confirmation_cycle_runs_past_the_iteration_ceiling"],
+        "마지막 허용 회차에 나온 PASS 가 brake 에 먹혀, phase 가 PASS 를 받고도 안 닫힌 채 "
+        "사람이 불려 온다.",
+    ),
+    (
+        "확인 회차가 마커를 안 지움",
+        "skills/build/SKILL.md",
+        '''  rm -f "$LOOP_DIR/confirm-full-$PHASE"
+''',
+        "",
+        ["TestCheckerAndScoring."
+         "test_confirmation_cycle_does_not_narrow_and_consumes_the_marker"],
+        "마커가 남으면 이후 모든 회차가 확인 회차가 되어 회차 좁히기가 통째로 죽는다 — "
+        "느려질 뿐이라 아무도 눈치채지 못한다.",
+    ),
+    (
         "시험되지 않는 새 블록 추가",
         "skills/build/SKILL.md",
         "## Non-Goals",

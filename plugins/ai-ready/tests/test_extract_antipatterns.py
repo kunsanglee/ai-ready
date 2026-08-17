@@ -111,7 +111,7 @@ class TestRepoWithHistory(unittest.TestCase):
             self.assertIn("결제 정산 반올림", text)
 
     def test_run_git_reports_success_separately_from_output(self):
-        """빈 문자열은 "결과가 없다" 와 "실행이 실패했다" 를 뭉갠다. 그 구분이 게이트의
+        """빈 문자열은 "결과가 없다" 와 "실행이 실패했다" 를 구분하지 못한다. 그 구분이 게이트의
         전제다."""
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

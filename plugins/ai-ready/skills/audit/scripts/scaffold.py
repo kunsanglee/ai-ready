@@ -331,9 +331,6 @@ def git_fix_subjects(target: Path, module_path: str, days: int = 180, top: int =
 
 TEMPLATE = """# CLAUDE.md — `{module_path}`
 
-> AI 에이전트를 위한 모듈 가이드. 50줄 이내로 유지하세요.
-> **TODO**로 표시된 곳은 사람이 채워야 하는 자리표시자입니다.
-
 ## 스택
 - {stack_hint}
 
@@ -358,7 +355,7 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 - TODO: 알아둘 가치가 있는 과거 의사결정 (ADR이 있으면 링크).
 
 ## 최종 검토일
-- {today} (자동 생성 초안 — 사람 검토 필요)
+- {today}
 """
 
 
@@ -500,9 +497,7 @@ PACKAGE_CATALOG_TEMPLATE = """# PACKAGES.md — 패키지 카탈로그
 
 > **읽기 트리거**: 패키지 진입 / 새 도메인 추가 / 책임 경계 확인 / 트랜잭션·이벤트 흐름 파악.
 >
-> 단일 모듈 프로젝트의 *패키지가 곧 논리 모듈* 이다. 본 문서는 패키지 단위 CLAUDE.md 를 분산 배치하는 대신 한 곳에 모은 카탈로그.
->
-> **TODO** 로 시작하는 줄은 사람이 채워야 하는 자리표시자입니다. ai-ready scaffold 가 자동 감지한 단서로 1차 채워뒀습니다.
+> 이 프로젝트는 *패키지가 곧 논리 모듈* 이다. **TODO** 로 시작하는 줄은 사람이 채운다.
 
 베이스 패키지: `{base_package}` ({total} 개 패키지 감지)
 

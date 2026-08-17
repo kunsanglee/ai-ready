@@ -44,6 +44,12 @@ TREE = Path(os.environ.get("AI_READY_TREE") or Path(__file__).resolve().parents[
 SKILLS = TREE / "skills"
 ENGINE = TREE / "_loop-engine"
 
+# codex 거울. 그쪽 스킬은 셸 블록이 없고 전부 산문 계약이라 실행으로 잴 것이 없다 — 대신 이 트리가
+# 실행으로 잠근 계약이 거울에도 문장으로 서 있는지만 본다. 레포 상대 위치라 AI_READY_TREE 로 다른
+# 트리를 겨눈 실행에서는 여기 없다(변이 하네스가 그렇게 돈다).
+CODEX_BUILD = (Path(__file__).resolve().parents[3]
+               / "codex" / "plugins" / "ai-ready" / "skills" / "build" / "SKILL.md")
+
 # ── 블록 추출 ────────────────────────────────────────────────────────────────
 # 들여쓴 펜스도 받는다 — 게이트 실패 카운터 블록은 불릿 안에 2칸 들여쓰여 있고,
 # 들여쓰기를 무시하는 정규식은 그 블록을 조용히 빠뜨린다(그게 여덟 번째 블록이다).
@@ -443,6 +449,47 @@ class TestLoopRunSetup(BlockCase):
         self.assertFalse(stale.exists(), "앞 루프의 phase 이력이 남았다 — 회차가 이어져 세진다")
         self.assertFalse((self.loop_dir / "stall-foundation.json").exists(),
                          "앞 루프의 정체 상태가 남았다 — 거짓 STALLED 를 낸다")
+
+    def test_setup_clears_cycle_scope_state(self):
+        """회차 스냅숏과 회차 마커도 앞 루프의 잔재다.
+
+        진입 스냅숏(`scope-open-*`)만 지우면 회차 스냅숏(`scope-cycle-*`)이 살아남아, 새 루프의
+        **첫 회차**가 앞 루프 마지막 회차를 기준으로 좁힌다 — 첫 회차는 안 좁히는 것이 계약이다.
+        `confirm-full-*` 이 남으면 첫 회차가 확인 회차로 읽힌다. 둘 다 소리 없이 지나간다.
+        """
+        self.setup_loop()
+        stale = {
+            "scope-cycle-foundation.txt": "deadbeef\told.txt\0",
+            "narrowed-foundation": "",
+            "confirm-full-foundation": "",
+        }
+        for name, body in stale.items():
+            (self.loop_dir / name).write_text(body)
+        self.setup_loop()
+        for name in stale:
+            self.assertFalse((self.loop_dir / name).exists(),
+                             f"앞 루프의 '{name}' 가 남았다 — 새 루프 첫 회차가 그것을 기준으로 돈다")
+
+    def test_no_gate_commands_refuse_to_start(self):
+        """빌드·테스트가 둘 다 비면 결정론 게이트가 통째로 없다 — 렌즈 판정만으로 PASS 까지 간다.
+
+        한쪽만 비는 것은 그 게이트만 스킵하면 되지만, 둘 다 비는 것은 컴파일도 테스트도 한 번
+        안 돈 코드가 통과할 수 있다는 뜻이라 시작 자체를 막는다.
+        """
+        self.sh("git rm -q build.gradle.kts gradlew")
+        r = self.run_block("b-setup")
+        self.assertEqual(r.rc, 3, repr(r))
+        self.assertIn("게이트 명령 0개", r.err)
+        self.assertFalse(self.pointer.exists(), "exit 3 인데 포인터가 남았다")
+
+    def test_no_gate_declared_explicitly_starts(self):
+        """대조군 — 게이트가 정말 없는 대상은 명시 선언으로 진행한다. 없는 것과 못 찾은 것을
+        가르는 것이 위 거부의 요점이라, 이 길이 막히면 문서 전용 저장소에서 스킬을 못 쓴다."""
+        self.sh("git rm -q build.gradle.kts gradlew")
+        r = self.run_block("b-setup", env=self.env(LOOP_NO_GATE="1"))
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertEqual(self.param("LOOP_BUILD_CMD"), "")
+        self.assertEqual(self.param("LOOP_TEST_CMD"), "")
 
     def test_setup_clears_review_scope_snapshot(self):
         """같은 티켓을 새로 시작할 때 옛 스냅숏이 남으면 첫 phase 가 **앞 루프가 만든 것을 이미
@@ -1048,6 +1095,36 @@ class TestGateLayer(BlockCase):
         self.assertIn("brake 도달", r.err, repr(r))
         self.assertIn("완료 1 회 + 게이트 실패 1 회", r.out)
 
+    def enter_at_iteration_ceiling(self, *, max_iter: str, cycles: int) -> None:
+        self.setup_loop(MAX_ITER=max_iter)
+        self.setup_phases()
+        self.run_block("b-budget")
+        self.enter_phase("foundation")
+        (self.loop_dir / "history-foundation.jsonl").write_text(
+            "".join('{"iteration":%d}\n' % i for i in range(1, cycles + 1)))
+
+    def test_confirmation_cycle_runs_past_the_iteration_ceiling(self):
+        """좁힌 회차의 PASS 뒤 확인 회차는 회차 상한을 한 번 넘겨 준다.
+
+        안 넘겨 주면 마지막 허용 회차에 나온 PASS 가 brake 에 먹혀, phase 가 PASS 를 받고도 안
+        닫힌 채 사람이 불려 온다. 그 사람이 할 수 있는 일은 상한을 올려 같은 회차를 다시 돌리는
+        것뿐이라, 무인 완주가 PASS 한 자리에서 끊긴다.
+        """
+        self.enter_at_iteration_ceiling(max_iter="2", cycles=2)
+        control = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        self.assertIn("brake 도달", control.err, f"대조군이 이미 안 문다\n{control}")
+        (self.loop_dir / "confirm-full-foundation").touch()
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        self.assertNotIn("brake 도달", r.err,
+                         f"확인 회차가 brake 에 먹혔다 — PASS 한 phase 가 안 닫힌다\n{r}")
+
+    def test_absolute_ceiling_stops_even_the_confirmation_cycle(self):
+        """예외는 회차 상한 하나뿐이다 — 절대 상한은 무슨 일이 있어도 하드 스톱이다."""
+        self.enter_at_iteration_ceiling(max_iter="10", cycles=10)
+        (self.loop_dir / "confirm-full-foundation").touch()
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        self.assertIn("brake 도달", r.err, f"확인 회차가 절대 상한까지 넘겼다\n{r}")
+
     def test_empty_change_set_is_not_a_pass(self):
         """베이스 오감지·빈 작업에서 finding 0 이 거짓 PASS 로 둔갑하는 것을 막는 경고."""
         self.setup_loop()
@@ -1119,6 +1196,113 @@ class TestCheckerAndScoring(BlockCase):
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("전 범위", r.out, "마지막 phase 인데 좁혔다")
         self.assertIn("마지막 phase", r.out, "좁히지 않은 이유가 창에 안 나왔다")
+
+    # -- 회차 좁히기 --------------------------------------------------------
+    # phase 범위가 앞 phase 의 누적을 잘라 낸다면, 회차 범위는 그 phase 안에서 회차마다 같은 것을
+    # 다시 읽지 않게 자른다. 잘못 자르면 조용히 헐거워지므로 두 방향을 다 든다: 실제로 좁히는지와,
+    # **넓게 가기로 한 결정을 덮지 않는지**.
+
+    CYCLE_SCOPE_LINE = "회차 범위: 아래 파일들"
+
+    def cycle_scope(self, out: str) -> list[str]:
+        """창 출력에서 회차 범위 목록만 뽑는다.
+
+        바로 위 점검 범위 목록도 같은 들여쓰기라, 줄만 보고 세면 둘이 섞인다 — 회차 범위 줄을
+        찾고 그 뒤부터 읽는다.
+        """
+        lines = out.splitlines()
+        head = [i for i, ln in enumerate(lines) if ln.startswith(self.CYCLE_SCOPE_LINE)]
+        self.assertEqual(len(head), 1, f"회차 범위 목록 줄이 하나가 아니다\n{out}")
+        picked = []
+        for ln in lines[head[0] + 1:]:
+            if not ln.startswith("  "):
+                break
+            picked.append(ln.strip())
+        return picked
+
+    def second_cycle(self, findings: list[dict]) -> Run:
+        """렌즈 블록을 두 번 돌린다 — 첫 회차가 기준점을 찍고, 둘째 회차가 그것으로 좁힌다."""
+        (self.work / "made-first-cycle.txt").write_text("x\n")
+        first = self.run_block("b-lens")
+        self.assertEqual(first.rc, 0, repr(first))
+        self.assertNotIn(self.CYCLE_SCOPE_LINE, first.out,
+                         f"첫 회차인데 좁혔다 — 기준점이 아직 없다\n{first}")
+        self.assertFalse((self.loop_dir / "narrowed-foundation").exists())
+        (self.work / "made-second-cycle.txt").write_text("y\n")
+        (self.loop_dir / f"scored-{self.param('PHASE')}.json").write_text(
+            json.dumps({"findings": findings}, ensure_ascii=False))
+        return self.run_block("b-lens")
+
+    def test_second_cycle_narrows_to_recent_change_plus_previous_findings(self):
+        """2회차가 넘기는 것은 **직전 렌즈 실행 이후 바뀐 파일 + 직전 지적이 가리킨 파일**이다.
+
+        합집합인 것이 요점이다 — 지적 파일을 빼면 maker 가 안 고친 지적이 렌즈 시야에서 사라져,
+        고쳐진 것과 안 읽은 것이 같은 값이 된다.
+
+        **지적 위치의 줄 꼬리를 떼는 것도 여기서 든다.** `a.kt:10-40` 같은 줄 범위를 못 떼면 그
+        문자열이 파일로 존재하지 않아 그 지적이 범위에서 통째로 빠진다.
+        """
+        self.prepare()
+        r = self.second_cycle([{"location": "src/Main.kt:10-40"},
+                               {"location": "docs/design.md:3:7"}])
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertEqual(
+            sorted(self.cycle_scope(r.out)),
+            ["docs/design.md", "made-second-cycle.txt", "src/Main.kt"], repr(r))
+        self.assertTrue((self.loop_dir / "narrowed-foundation").is_file(),
+                        "좁혔는데 표시가 안 남았다 — PASS 뒤 확인 회차가 안 돈다")
+
+    def test_narrowing_does_not_override_a_decision_to_go_wide(self):
+        """앞 블록이 전 범위로 가기로 했으면 회차 좁히기가 그것을 덮으면 안 된다.
+
+        렌즈 프롬프트는 **마지막에 찍힌 범위**를 받으므로, 무조건 도는 회차 좁히기는 마지막
+        phase·`review_scope: "full"`·진입 스냅숏 없는 재개를 전부 덮는다. 셋 다 "여기서는 넓게
+        본다" 를 이유까지 적어 고른 자리라, 덮이면 그 보장이 조용히 사라진다.
+        """
+        cases = {
+            "마지막 phase": lambda: self.enter_phase("wiring"),
+            "review_scope=full": self.enter_full_scope_phase,
+            "진입 스냅숏 없는 재개": self.enter_phase_already_iterated,
+        }
+        for label, enter in cases.items():
+            with self.subTest(wide=label):
+                self.setUp()
+                self.setup_loop()
+                self.setup_phases()
+                self.run_block("b-budget")
+                enter()
+                r = self.second_cycle([{"location": "src/Main.kt:10-40"}])
+                self.assertEqual(r.rc, 0, repr(r))
+                self.assertIn("회차 범위: 좁히지 않는다 — 위 점검 범위가 이미 전 범위다", r.out,
+                              f"[{label}] 넓게 가기로 한 결정을 회차 좁히기가 덮었다\n{r}")
+                self.assertNotIn(self.CYCLE_SCOPE_LINE, r.out, repr(r))
+
+    def enter_full_scope_phase(self) -> None:
+        phases = json.loads((self.loop_dir / "phases.json").read_text())
+        phases["phases"][0]["review_scope"] = "full"
+        (self.loop_dir / "phases.json").write_text(json.dumps(phases, ensure_ascii=False))
+        self.enter_phase("foundation")
+
+    def enter_phase_already_iterated(self) -> None:
+        (self.loop_dir / "history-foundation.jsonl").write_text('{"iteration":1}\n')
+        self.enter_phase("foundation")
+
+    def test_confirmation_cycle_does_not_narrow_and_consumes_the_marker(self):
+        """좁힌 회차가 PASS 를 내면 phase 범위로 한 번 더 돈다 — 그 회차는 안 좁힌다.
+
+        마커를 그 회차에 지우는 것이 확인 회차를 1회로 묶는 장치다. 안 지우면 이후 모든 회차가
+        확인 회차가 되어 회차 좁히기가 통째로 죽는다.
+        """
+        self.prepare()
+        r = self.second_cycle([{"location": "src/Main.kt:10-40"}])
+        self.assertIn(self.CYCLE_SCOPE_LINE, r.out, repr(r))
+        (self.loop_dir / "confirm-full-foundation").touch()   # Step 2-4 의 PASS 분기가 하는 일
+        confirm = self.run_block("b-lens")
+        self.assertEqual(confirm.rc, 0, repr(confirm))
+        self.assertIn("확인 회차", confirm.out, repr(confirm))
+        self.assertNotIn(self.CYCLE_SCOPE_LINE, confirm.out, repr(confirm))
+        self.assertFalse((self.loop_dir / "confirm-full-foundation").exists(),
+                         "확인 회차가 마커를 안 지웠다 — 이후 회차가 전부 확인 회차가 된다")
 
     def test_lens_paths_are_deterministic_and_emptied(self):
         """렌즈마다 결정적 경로를 잡고 스핀 직전 비운다. 잔여가 남으면 그 축이 이번 사이클에
@@ -1562,6 +1746,37 @@ ENG="$CLAUDE_PLUGIN_ROOT/_loop-engine"
 [ -f "$ENG/lib.sh" ] || { echo "loop: 채점 엔진을 못 찾았다 ($ENG)" >&2; exit 65; }
 echo "엔진 찾음: $ENG"
 '''
+
+
+class TestCodexMirrorContracts(unittest.TestCase):
+    """이 트리가 실행으로 잠근 계약이 codex 거울에도 서 있나.
+
+    거울 쪽 build 스킬은 셸 블록이 하나도 없어 전부 산문이다. 그래서 여기서 재는 것은 동작이
+    아니라 **그 계약이 문장으로 남아 있는가** 뿐이다. 문장이 사라지면 두 호스트가 서로 다른
+    루프를 돌게 되는데, 한쪽만 고치는 표류는 그때 아무 검사도 실패하지 않는다.
+
+    앵커는 계약 한 줄의 핵심 어구다 — 문장을 다듬는 것은 자유롭고, 계약이 빠지면 걸린다.
+    """
+
+    ANCHORS = (
+        # 게이트 0개 거부 — 이 트리에서는 b-setup 의 exit 3 이 같은 계약을 집행한다.
+        "When build and test both come back empty, do not start",
+        # 회차 좁히기 — 직전 렌즈 실행 이후 변경 + 직전 지적 파일의 합집합.
+        "Within a phase, narrow per cycle too",
+        # 확인 회차 예산 — PASS 를 brake 보다 먼저 보고, 그 한 회차만 상한을 넘긴다.
+        "Read the PASS before the brake",
+    )
+
+    def test_mirror_carries_the_same_contracts(self):
+        self.assertTrue(CODEX_BUILD.is_file(), f"codex 거울을 못 찾았다: {CODEX_BUILD}")
+        text = CODEX_BUILD.read_text(encoding="utf-8")
+        for anchor in self.ANCHORS:
+            # assertIn 이 아니라 assertTrue 다 — 실패 메시지에 거울 전문이 실리면 무엇이 빠졌는지가
+            # 그 안에 묻힌다.
+            with self.subTest(anchor=anchor):
+                self.assertTrue(
+                    anchor in text,
+                    f"이 계약이 거울에서 사라졌다 — 두 호스트가 다른 루프를 돈다: '{anchor}'")
 
 
 class TestControlGroups(BlockCase):

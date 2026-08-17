@@ -5,7 +5,7 @@ description: Score a codebase for AI-readiness against a 7-category 100-point ru
 
 # AI-Ready Codebase Audit
 
-Turns a codebase into an AI-navigable one. Inspired by Meta's internal "AI had no map" → "59 module CLAUDE.md files" approach (Meta Engineering blog, 2026).
+Turns a codebase into an AI-navigable one.
 
 ## What This Skill Produces
 
@@ -33,7 +33,7 @@ The audit auto-detects the layout from build manifests and switches scoring + sc
 
 ### Stack adapters (`scripts/stacks.py`)
 
-"Where do logical modules start?" has a different answer per language, so the answer lives in one adapter registry that both `audit.py` and `scaffold.py` consume. It used to be hardcoded to JVM in each of them separately — two copies, so adding a stack meant editing two files and fixing only one made scoring and scaffolding look at different directories.
+"Where do logical modules start?" has a different answer per language, so the answer lives in one adapter registry that both `audit.py` and `scaffold.py` consume. One registry is the point: with a copy per call site, fixing only one makes scoring and scaffolding read different directories.
 
 | Stack | Detected by | Source root |
 |---|---|---|
@@ -47,7 +47,7 @@ Adapters are tried in that order, so a Gradle project carrying a frontend `packa
 
 **Adding a stack**: append one `(name, fn)` entry to `ADAPTERS` in `scripts/stacks.py`. The function answers one question — which directory's children are the logical modules — and returns `SourceLayout` or `None`. Call sites iterate the registry, so nothing else changes.
 
-**An unknown stack fails loudly, it does not pass quietly.** `scaffold.py` exits `3` when no adapter matches and `4` when the source root holds no code, naming what it saw and where to add the adapter. It used to print a note and exit `0`, which made a run that produced nothing indistinguishable from a run that succeeded.
+**An unknown stack fails loudly, it does not pass quietly.** `scaffold.py` exits `3` when no adapter matches and `4` when the source root holds no code, naming what it saw and where to add the adapter. A note plus exit `0` made a run that produced nothing indistinguishable from a run that succeeded.
 
 ## Inputs You Need
 
@@ -60,10 +60,13 @@ Adapters are tried in that order, so a Gradle project carrying a frontend `packa
 The skill ships a baseline four-step run plus several optional action scripts (see "Additional Action Scripts" below). All scripts are stdlib-only — **no third-party dependencies**. Run the four baseline scripts in this order:
 
 ```bash
-# **`$CLAUDE_PLUGIN_ROOT` does not exist in the Bash tool's shell** — it is substituted when the
-# skill body is rendered, so it never reaches the child shell (measured). Using it here would make
+# The four steps are one gate, not four independent commands. Without this line a step that dies
+# (measured: step 3 exits 4 on a target that is not a git repository) leaves step 4 running and the
+# block still finishes with exit code 0, so the caller reads a partial run as a successful one.
+set -euo pipefail
+# **`$CLAUDE_PLUGIN_ROOT` does not exist in the Bash tool's shell** (measured) — using it makes
 # SKILL_DIR="/skills/audit", a path that silently does not exist. Paste the "Base directory for
-# this skill" value printed at the top of this skill body instead — that directory *is* skills/audit.
+# this skill" value printed at the top of this skill body instead.
 SKILL_DIR="<paste the Base directory from the top of this skill body>"
 [ -f "$SKILL_DIR/scripts/audit.py" ] || { echo "audit: scripts not found under $SKILL_DIR — check the base directory" >&2; exit 65; }
 TARGET="<absolute path to target codebase>"
@@ -105,7 +108,7 @@ To raise the score by executing ROI actions directly, use the scripts below. The
 
 Scripts that modify existing files (`inject_module_map.py`, `inject_lazy_load_index.py`, `install_hook.py`) are idempotent. `inject_module_map.py` and `inject_lazy_load_index.py` expose a `--dry-run` option so changes can be previewed first; `install_hook.py` has no `--dry-run` (it offers `--uninstall` to remove the hook instead).
 
-**Overwrite guard.** Every script that writes a document (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `extract_antipatterns`) refuses to clobber a file that lacks the ai-ready generation signature — a document a human has taken over. It exits `3` and says so; `--force` overrides. This matters most for `extract_antipatterns`, whose output is *by design* a draft a human prunes and adopts: the convention is to point `--out` at `.ai-ready/scaffolds/`, but a convention is not a mechanism, and pointing it at an adopted `docs/ANTIPATTERNS.md` would otherwise replace curated entries with a git-history dump. The generated seed carries the signature itself, so re-running an audit over its own previous output stays fine.
+**Overwrite guard.** Every script that writes a document (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `extract_antipatterns`) refuses to clobber a file that lacks the ai-ready generation signature — a document a human has taken over. It exits `3` and says so; `--force` overrides. This matters most for `extract_antipatterns`, whose output is *by design* a draft a human prunes and adopts: the convention is to point `--out` at `.ai-ready/scaffolds/`, but a convention is not a mechanism, and pointing it at an adopted `docs/ANTIPATTERNS.md` would otherwise replace curated entries with a git-history dump. The generated seed carries the signature itself, so re-running an audit over its own previous output stays fine. `extract_antipatterns` also exits `4` when it cannot read git at all (the target is not a repository, or `git` failed) — that is a different outcome from "read the history and found nothing", and it writes no document.
 
 **`--json` facts mode (v0.5.0+)**: the doc-touching scripts (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `inject_lazy_load_index`) accept `--json` to emit the gathered facts (doc list + summaries, dependency edges, matched sections, module summaries, present triggers) as JSON **without writing any document**. This is how `ai-ready:apply` maintains docs surgically — the script supplies read-only facts and the AI adds/updates only what changed while preserving human curation, instead of wholesale-overwriting. The `--out` write mode remains for bootstrapping a doc that does not exist yet.
 
@@ -116,29 +119,17 @@ Optional file at `<target>/.ai-ready/config.json` enables frontmatter-aware beha
 ```json
 {
   "version": 1,
-  "frontmatter": {
-    "required":  ["type", "feature", "module", "status", "created", "updated"],
-    "search":    ["aliases", "tags"],
-    "evolution": ["supersedes", "superseded-by"]
-  },
   "index": {
     "groups": [
       { "id": "adr", "title": "ADR (`docs/adr/`)",
         "match": { "path_prefix": "docs/adr/" }, "sub_group_by": "feature" }
-    ],
-    "cross_reference": { "enabled": true, "title": "한영 검색 인덱스" },
-    "evolution_graph": { "enabled": true, "title": "ADR 결정 진화", "scope": "adr" }
+    ]
   },
-  "lazy_load_triggers": {
-    "detect":               [ { "path": "docs/adr/", "label": "[`docs/adr/`](docs/adr/)", "trigger": "ADR 조회" } ],
-    "override_hardcoded":   [ "docs/decisions" ]
-  },
-  "rubric": {
-    "decision_records": { "dir_hints": ["docs/design"] },
-    "api_contracts":    { "build_deps": ["springdoc", "springfox"] }
-  }
+  "rubric": { "decision_records": { "dir_hints": ["docs/design"] } }
 }
 ```
+
+Every section is optional. The other sections are `frontmatter`, `lazy_load_triggers`, and `module_map`.
 
 What it changes:
 1. `gen_index.py` switches from hardcoded categories (claude / guides / docs-decisions / docs-other) to *config-defined groups* with frontmatter `sub_group_by` (e.g., feature/module), plus optional `cross_reference` and `evolution_graph` sections.
@@ -212,11 +203,9 @@ The audit script looks at:
 - Module detection prefers conventional layouts (Gradle multi-module, npm monorepo, Python `src/` layout, Go modules, Cargo workspaces). Single-module source roots come from the stack adapters above; a stack with no adapter is reported and exits non-zero rather than being skipped silently.
 - The "standard layout" rule (`controller`/`service`/`domain`/`repository`) is a JVM web convention. On other stacks it is reported as *not measured* and the catalog alone earns the points — full marks since v1.5.3, where it previously capped at 4 of 5 and left a permanent "add controller/service/domain/repository" action on node/python/go/rust repos. It is never advice to restructure a non-JVM repo into that shape. A JVM repo with no controller-bearing package still scores 4: there the layout is measurable in principle and simply absent.
 - HTML dashboard is intentionally dependency-free (vanilla CSS + inline SVG) — pretty enough but not interactive.
-- **Scores the cartography (map) layer only — not code health (sanitize)**: this audit measures whether the docs/map exist and self-maintain, not whether the code underneath is healthy (test coverage, dead code, code smells). A repo can score high on the map while the terrain is still a maze — a high score on unhealthy code is a *false signal*. Treat sanitize (tests / dead-code removal / consistent conventions) as a prerequisite you ensure separately; the map only helps once the terrain is sound.
+- **Scores the cartography (map) layer only — not code health (sanitize)**: this audit measures whether the docs/map exist and self-maintain, not whether the code underneath is healthy (test coverage, dead code, code smells). A repo can score high on the map while the code it describes is untested and tangled — a high score on unhealthy code is a *false signal*. Treat sanitize (tests / dead-code removal / consistent conventions) as a prerequisite you ensure separately.
 - **Does not measure token/cost**: the audit's "Outcome Metrics" category checks whether usage is *tracked*, not the cost itself. There is no session-log parser or cache-hit dashboard here — use `ccusage` / RTK `gain` for that.
 
 ## Re-running
 
 This is meant to be run periodically (monthly is a good cadence). Each run overwrites `audit.json` / `audit-report.md` / `dashboard.html` / `README.md`, but **also archives the result to `history/{timestamp}.json`** so the dashboard can render a trend sparkline. Don't delete the `history/` directory.
-
-**월간 정합 스캔 연계**: 대상 repo 가 living design 문서 체계 (`docs/design/{name}.md`) 를 쓰면, 월간 audit 와 *같은 날* `/sync-docs --all` (전역 드리프트 스캔) 을 함께 수행하는 리듬을 권장한다. 역할 분담 — audit 는 구조 지표 (커버리지 / 길이 / freshness 메타), 전역 스캔은 내용 정합 (문서 서술 ↔ 코드 동작의 양방향 드리프트). audit 만으로는 문서 내용이 코드와 맞는지 보장되지 않는다.
