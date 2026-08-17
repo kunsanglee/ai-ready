@@ -44,6 +44,11 @@ TREE = Path(os.environ.get("AI_READY_TREE") or Path(__file__).resolve().parents[
 SKILLS = TREE / "skills"
 ENGINE = TREE / "_loop-engine"
 
+# 두 번째 셸 축. 블록은 오케스트레이터의 Bash 도구가 그대로 실행하고 그 셸이 무엇인지는 호스트가
+# 정한다 — bash 로만 재면 zsh 에서만 나는 실패(매칭 0개 글롭이 명령을 통째로 취소하는 것)를
+# 구조적으로 못 본다. 없는 환경에서는 그 사례만 skip 한다.
+ZSH = shutil.which("zsh")
+
 # codex 거울. 그쪽 스킬은 셸 블록이 없고 전부 산문 계약이라 실행으로 잴 것이 없다 — 대신 이 트리가
 # 실행으로 잠근 계약이 거울에도 문장으로 서 있는지만 본다. 레포 상대 위치라 AI_READY_TREE 로 다른
 # 트리를 겨눈 실행에서는 여기 없다(변이 하네스가 그렇게 돈다).
@@ -298,7 +303,7 @@ class BlockCase(unittest.TestCase):
 
     def run_block(self, block_id: str, *, env: dict[str, str] | None = None,
                   subst: dict[str, str] | None = None, body: str | None = None,
-                  keep_placeholder: bool = False) -> Run:
+                  keep_placeholder: bool = False, shell: str = "bash") -> Run:
         text = BLOCKS[block_id] if body is None else body
         if block_id in NEEDS_PREAMBLE and body is None:
             text = PREAMBLE + text
@@ -312,7 +317,7 @@ class BlockCase(unittest.TestCase):
         self._n += 1
         path = self.blockdir / f"{self._n:02d}-{block_id}.sh"
         path.write_text(text)
-        proc = subprocess.run(["bash", str(path)], cwd=str(self.work),
+        proc = subprocess.run([shell, str(path)], cwd=str(self.work),
                               env=env or self.env(), capture_output=True, text=True)
         return Run(proc)
 
@@ -340,9 +345,9 @@ class BlockCase(unittest.TestCase):
         return proc.stdout
 
     # -- 준비 ---------------------------------------------------------------
-    def setup_loop(self, **extra: str) -> Run:
-        r = self.run_block("b-setup", env=self.env(**extra))
-        self.assertEqual(r.rc, 0, f"b-setup 실패\n{r}")
+    def setup_loop(self, *, shell: str = "bash", **extra: str) -> Run:
+        r = self.run_block("b-setup", env=self.env(**extra), shell=shell)
+        self.assertEqual(r.rc, 0, f"b-setup 실패({shell})\n{r}")
         return r
 
     def setup_phases(self, data: dict | None = None) -> None:
@@ -457,7 +462,22 @@ class TestLoopRunSetup(BlockCase):
         **첫 회차**가 앞 루프 마지막 회차를 기준으로 좁힌다 — 첫 회차는 안 좁히는 것이 계약이다.
         `confirm-full-*` 이 남으면 첫 회차가 확인 회차로 읽힌다. 둘 다 소리 없이 지나간다.
         """
-        self.setup_loop()
+        self.check_stale_cycle_state_cleared()
+
+    def test_setup_clears_cycle_scope_state_under_zsh(self):
+        """같은 초기화를 zsh 로도 잰다 — 셸을 bash 로 고정하면 안 보이는 실패가 있다.
+
+        zsh 는 매칭 0개인 글롭이 하나라도 있으면 명령 자체를 실행하지 않는다. 정상 종료한
+        루프에는 `narrowed-*`·`confirm-full-*` 이 없으므로, 정리를 셸 글롭에 맡긴 판은
+        zsh 에서 **아무것도 안 지우고** 끝난다. 오케스트레이터의 Bash 도구가 어느 셸을
+        띄우는지는 호스트가 정하고 이 하네스의 실제 셸이 zsh 다 — 그래서 한 자리는 두 셸로 잰다.
+        """
+        if not ZSH:
+            self.skipTest("zsh 가 PATH 에 없다 — 이 축은 셸이 있는 곳에서만 잰다")
+        self.check_stale_cycle_state_cleared(shell=ZSH)
+
+    def check_stale_cycle_state_cleared(self, *, shell: str = "bash") -> None:
+        self.setup_loop(shell=shell)
         stale = {
             "scope-cycle-foundation.txt": "deadbeef\told.txt\0",
             "narrowed-foundation": "",
@@ -465,10 +485,11 @@ class TestLoopRunSetup(BlockCase):
         }
         for name, body in stale.items():
             (self.loop_dir / name).write_text(body)
-        self.setup_loop()
+        self.setup_loop(shell=shell)
         for name in stale:
             self.assertFalse((self.loop_dir / name).exists(),
-                             f"앞 루프의 '{name}' 가 남았다 — 새 루프 첫 회차가 그것을 기준으로 돈다")
+                             f"앞 루프의 '{name}' 가 남았다({shell}) — "
+                             "새 루프 첫 회차가 그것을 기준으로 돈다")
 
     def test_no_gate_commands_refuse_to_start(self):
         """빌드·테스트가 둘 다 비면 결정론 게이트가 통째로 없다 — 렌즈 판정만으로 PASS 까지 간다.
@@ -1104,19 +1125,40 @@ class TestGateLayer(BlockCase):
             "".join('{"iteration":%d}\n' % i for i in range(1, cycles + 1)))
 
     def test_confirmation_cycle_runs_past_the_iteration_ceiling(self):
-        """좁힌 회차의 PASS 뒤 확인 회차는 회차 상한을 한 번 넘겨 준다.
+        """좁힌 회차의 PASS 뒤 확인 회차는 회차 상한을 한 번 넘어설 수 있다.
 
-        안 넘겨 주면 마지막 허용 회차에 나온 PASS 가 brake 에 먹혀, phase 가 PASS 를 받고도 안
+        이 예외가 없으면 마지막 허용 회차에 나온 PASS 가 brake 판정에 가려, phase 가 PASS 를 받고도 안
         닫힌 채 사람이 불려 온다. 그 사람이 할 수 있는 일은 상한을 올려 같은 회차를 다시 돌리는
         것뿐이라, 무인 완주가 PASS 한 자리에서 끊긴다.
         """
         self.enter_at_iteration_ceiling(max_iter="2", cycles=2)
         control = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
-        self.assertIn("brake 도달", control.err, f"대조군이 이미 안 문다\n{control}")
+        self.assertIn("brake 도달", control.err, f"대조군이 이미 brake 에 안 걸린다\n{control}")
         (self.loop_dir / "confirm-full-foundation").touch()
         r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
         self.assertNotIn("brake 도달", r.err,
-                         f"확인 회차가 brake 에 먹혔다 — PASS 한 phase 가 안 닫힌다\n{r}")
+                         f"확인 회차가 brake 에 걸렸다 — PASS 한 phase 가 안 닫힌다\n{r}")
+
+    def test_confirmation_exception_is_one_slot_not_a_renewable_pass(self):
+        """확인 회차의 예외는 상한을 한 칸 올릴 뿐이다 — 게이트가 깨져도 되풀이되지 않는다.
+
+        마커를 지우는 자리는 Step 2-2 인데 게이트가 깨진 회차는 거기 도달하지 못한다. 그래서
+        마커는 살아남는다. 상한 비교를 통째로 건너뛰는 판이면 그 마커가 매 회차 예외를 다시
+        세워, 게이트 실패가 이어지는 동안 절대 상한까지 계속 돈다.
+        """
+        self.enter_at_iteration_ceiling(max_iter="5", cycles=5)
+        (self.loop_dir / "confirm-full-foundation").touch()
+        first = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        self.assertNotIn("brake 도달", first.err,
+                         f"확인 회차가 첫 진입부터 brake 에 걸렸다\n{first}")
+        # 그 회차의 게이트가 깨졌다고 본다 — 실패 카운터만 늘고 마커는 그대로 남는다.
+        self.run_block("b-gatefail")
+        self.assertTrue((self.loop_dir / "confirm-full-foundation").exists(),
+                        "게이트 실패 회차가 마커를 지웠다면 이 시험의 전제가 성립하지 않는다")
+        second = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        self.assertIn("brake 도달", second.err,
+                      f"마커가 남아 예외가 다시 섰다 — 절대 상한까지 공회전한다\n{second}")
+        self.assertIn("완료 5 회 + 게이트 실패 1 회", second.out, repr(second))
 
     def test_absolute_ceiling_stops_even_the_confirmation_cycle(self):
         """예외는 회차 상한 하나뿐이다 — 절대 상한은 무슨 일이 있어도 하드 스톱이다."""
@@ -1765,6 +1807,10 @@ class TestCodexMirrorContracts(unittest.TestCase):
         "Within a phase, narrow per cycle too",
         # 확인 회차 예산 — PASS 를 brake 보다 먼저 보고, 그 한 회차만 상한을 넘긴다.
         "Read the PASS before the brake",
+        # 그 예외의 크기 — 상한을 한 칸 올릴 뿐이라 게이트 실패로 되풀이되지 않고,
+        # 회차 상한이 이미 절대 상한이면 아예 서지 않는다.
+        "raises the iteration ceiling by exactly one",
+        "the exemption never applies",
     )
 
     def test_mirror_carries_the_same_contracts(self):

@@ -1,6 +1,6 @@
 """test_skill_blocks.py 가 실제로 이를 가졌는지 확인하는 변이 시험.
 
-통과한 시험이 충분한 시험은 아니다. 초록 50건은 "결함이 없다" 와 "결함을 볼 눈이 없다" 를
+통과한 시험이 충분한 시험은 아니다. 통과 50건은 "결함이 없다" 와 "결함을 볼 눈이 없다" 를
 구별하지 못한다. 그래서 트리 사본의 SKILL.md 에 **0.9.5 에서 실제로 있었던 결함을 되넣고**
 그 시험이 깨지는지 본다. 안 깨지면 그 시험은 장식이다.
 
@@ -95,12 +95,25 @@ set -a; . "$LOOP_DIR/params.env"; set +a
     (
         "초기화가 회차 스냅숏·마커를 남김",
         "skills/build/SKILL.md",
-        '''      "$LOOP_DIR"/scope-open-*.txt "$LOOP_DIR"/scope-cycle-*.txt \\
-      "$LOOP_DIR"/narrowed-* "$LOOP_DIR"/confirm-full-*''',
-        '''      "$LOOP_DIR"/scope-open-*.txt''',
+        '''  -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \\
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' \\) -delete''',
+        '''  -o -name 'stall*.json' -o -name 'scope-open-*.txt' \\) -delete''',
         ["TestLoopRunSetup.test_setup_clears_cycle_scope_state"],
         "앞 루프의 회차 스냅숏이 남으면 새 루프의 첫 회차가 그것을 기준으로 좁힌다 — "
         "첫 회차는 안 좁히는 것이 계약이고, 어긋나도 아무 소리가 안 난다.",
+    ),
+    (
+        "초기화를 셸 글롭 rm 으로 되돌림",
+        "skills/build/SKILL.md",
+        '''find "$LOOP_DIR" -maxdepth 1 \\( -name 'gate.fail' -o -name 'history*.jsonl' \\
+  -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \\
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' \\) -delete''',
+        '''rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json \\
+      "$LOOP_DIR"/scope-open-*.txt "$LOOP_DIR"/scope-cycle-*.txt \\
+      "$LOOP_DIR"/narrowed-* "$LOOP_DIR"/confirm-full-*''',
+        ["TestLoopRunSetup.test_setup_clears_cycle_scope_state_under_zsh"],
+        "zsh 는 매칭 0개인 글롭이 있으면 명령을 통째로 안 돌린다 — 정상 종료한 루프에는 "
+        "narrowed-*·confirm-full-* 이 없어 재실행마다 걸리고, 잔재가 하나도 안 지워진다.",
     ),
     (
         "게이트 0개인데 시작을 허용",
@@ -135,12 +148,23 @@ set -a; . "$LOOP_DIR/params.env"; set +a
     (
         "확인 회차가 회차 상한에 먹힘",
         "skills/build/SKILL.md",
-        '''if { [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] && [ "$CONFIRM" -eq 0 ]; } \\
+        '''if [ $((ITER + GFAIL)) -ge $((MAX_ITER + CONFIRM)) ] \\
    || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ]''',
         '''if [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ]''',
         ["TestGateLayer.test_confirmation_cycle_runs_past_the_iteration_ceiling"],
-        "마지막 허용 회차에 나온 PASS 가 brake 에 먹혀, phase 가 PASS 를 받고도 안 닫힌 채 "
+        "마지막 허용 회차에 나온 PASS 가 brake 판정에 가려, phase 가 PASS 를 받고도 안 닫힌 채 "
         "사람이 불려 온다.",
+    ),
+    (
+        "확인 회차가 회차 상한 비교를 통째로 건너뜀",
+        "skills/build/SKILL.md",
+        '''if [ $((ITER + GFAIL)) -ge $((MAX_ITER + CONFIRM)) ] \\
+   || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ]''',
+        '''if { [ $((ITER + GFAIL)) -ge "$MAX_ITER" ] && [ "$CONFIRM" -eq 0 ]; } \\
+   || [ $((ITER + GFAIL)) -ge "$ABS_CEIL" ]''',
+        ["TestGateLayer.test_confirmation_exception_is_one_slot_not_a_renewable_pass"],
+        "마커를 지우는 자리는 Step 2-2 이고 게이트가 깨진 회차는 거기 도달하지 못한다 — "
+        "비교를 건너뛰면 그 마커가 매 회차 예외를 다시 세워 절대 상한까지 공회전한다.",
     ),
     (
         "확인 회차가 마커를 안 지움",

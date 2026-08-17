@@ -101,6 +101,8 @@ def render(kind: str, source_target: Path, results: list[tuple[Path, list[str]]]
     # 인용구로 한 번 더 쓰지 않는다.
     lines.append("_자동 추출 (`ai-ready:apply`) — 재추출 시 전체를 덮어씁니다._")
     lines.append("")
+    lines.append("> 검토·정제 후 원본 문서에서 해당 섹션을 제거하고 이 파일을 참조하도록 하세요.")
+    lines.append("")
     total = sum(len(s) for _, s in results)
     if total == 0:
         lines.append(f"매칭되는 섹션을 찾지 못했습니다 (키워드: {', '.join(KEYWORD_SETS[kind])}).")

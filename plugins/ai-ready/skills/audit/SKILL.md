@@ -129,7 +129,7 @@ Optional file at `<target>/.ai-ready/config.json` enables frontmatter-aware beha
 }
 ```
 
-Every section is optional. The other sections are `frontmatter`, `lazy_load_triggers`, and `module_map`.
+Every section is optional. Sections not shown here are documented where they are read — the full schema lives in `scripts/config_loader.py`.
 
 What it changes:
 1. `gen_index.py` switches from hardcoded categories (claude / guides / docs-decisions / docs-other) to *config-defined groups* with frontmatter `sub_group_by` (e.g., feature/module), plus optional `cross_reference` and `evolution_graph` sections.

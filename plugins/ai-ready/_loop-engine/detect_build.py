@@ -177,13 +177,20 @@ def detect_build_system(target: Path) -> dict[str, str]:
         run = lambda s: f"{pm} run {s}"  # noqa: E731
         # 실측 사고: 스크립트 이름이 typecheck 라 빈 값이 나갔고, 빈 값을 게이트가 스킵해 타입
         # 검사가 통째로 건너뛰어졌다. `check` 는 목록에 없다 — `prettier --check` 처럼 포맷·린트가
-        # 흔히 쓰는 이름이라 컴파일 게이트 자리에 다른 것이 앉는다. 하나도 못 집으면 게이트 0개가
+        # 흔히 쓰는 이름이라 컴파일 게이트로 포맷 검사가 잡힌다. 하나도 못 집으면 게이트 0개가
         # 되고, 그때는 build 스킬이 시작을 거부하며 사람이 LOOP_BUILD_CMD 로 지정한다.
         build_cmd = ""
         for name in ("build", "typecheck", "tsc", "compile"):
             if name in scripts:
                 build_cmd = run(name)
                 break
+        # 컴파일 게이트를 못 집었는데 check 스크립트가 있으면 알린다. test 스크립트가 함께 있으면
+        # 게이트 0개가 아니라 Step 0 의 거부에 안 걸리고, 그 저장소는 타입 검사 없이 돈다.
+        # 거부까지 넓히지는 않는다 — 테스트만 있는 저장소는 정당하다. stdout 은 JSON 전용이라
+        # 이 한 줄은 stderr 로만 나간다(파서가 읽는 쪽을 오염시키지 않는다).
+        if not build_cmd and "check" in scripts:
+            print("detect: npm check 스크립트는 컴파일 게이트로 집지 않는다. "
+                  "타입 검사라면 LOOP_BUILD_CMD 로 지정하라.", file=sys.stderr)
         # npm/yarn/pnpm 은 test 가 최상위 명령(`npm test`)이라 run 없이.
         # npm init 기본 스텁("no test specified" && exit 1)은 테스트가 아니다 — 게이트로 채택하면
         # maker 가 고칠 수 없는 실패라 매 사이클 게이트 재진입 공회전이 된다. 부재로 취급한다.

@@ -68,7 +68,9 @@ checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 
 사람은 그 경로를 덮었다고 믿는데 실제로는 아무 가중도 안 서고, `|` 로 열이 밀린 행이 그 모양이 된다.
 
 > **BASE 목록은 2026-08-09 적대적 시험으로 채웠다.** 처음의 다섯 줄은 흔한 마이그레이션 배치를
-> 여럿 놓쳤고, 그래서 **운영 DB 를 드롭하는 finding 이 사람 없이 돌 수 있었다.**
+> 여럿 놓쳤고(앞 슬래시 요구로 레포 루트 누락, Rails `db/migrate` 한 글자 차이, Liquibase 실제
+> 경로 `db/changelog` 대신 리터럴 `liquibase`, 대소문자), 그래서 **운영 DB 를 드롭하는 finding 이
+> 사람 없이 돌 수 있었다.** 행을 더할 때 조심할 자리가 정확히 그 넷이다.
 
 **BASE 에는 어느 스택에서나 같은 뜻인 것만 둔다.** DB 마이그레이션 디렉터리가 그렇다.
 돈·인가 경로는 저장소마다 이름이 달라 BASE 가 못 정한다 — LOCAL rubric 에 자기 경로를 적는다.
@@ -128,12 +130,13 @@ LOCAL 이 덮지만 PATHWEIGHTS 는 누적이라, 마이그레이션 디렉터�
 > **다섯에 `kind_id` 를 준 이유(2026-08-09).** 목록이 산문으로만 있던 동안 표에
 > `force_await=always` 인 행이 하나도 없어, 사람 대기가 checker 의 프롬프트 준수에만 달려 있었다.
 >
-> **`force_await=always` 는 LOCAL 이 끄지 못한다(2026-08-09).** 이 열만 병합이 합집합이다.
+> **`force_await=always` 는 LOCAL 이 끄지 못한다(2026-08-09).** 이 열만 병합이 합집합이다 — 어느 쪽이든 `always` 면 `always` 다.
 > LOCAL 파일(`.loop/rubric.md`)은 채점받는 maker 가 쓸 수 있는 자리라, 덮게 두면 한 줄로
 > 다섯 게이트가 사라진다. 등급은 여전히 LOCAL 이 조절할 수 있다.
 >
 > **다섯 행의 `always` 는 등급(BLOCKER)과 겹친다.** `no` 로 바꿔도 테스트가 안 깨지는 것을
-> 변이로 확인했고, 그래서 `always` 자체는 `test.sh` 의 `minor-but-irreversible` 이 잠근다.
+> 변이로 확인했다. 그래도 적어 두는 것은 나중에 누가 등급을 내려도 사람 대기가 남게 하기
+> 위해서고, `always` 자체는 `test.sh` 의 `minor-but-irreversible` 이 잠근다.
 
 ## 3층 분리
 
@@ -182,6 +185,7 @@ LOCAL 이 덮지만 PATHWEIGHTS 는 누적이라, 마이그레이션 디렉터�
 `base_severity` 는 가중 조건 적용 전 기본값. `force_await=always` 면 가중·severity 무관 사람 대기.
 조건부 사람 대기(IDOR+`authz`, 멱등성+`money`)는 별도 열이 아니라 가중 상향(CRITICAL→BLOCKER→AWAIT_USER)으로 자연히 처리된다.
 이 표는 ANTIPATTERNS 승인 단계에서만 자란다 — 반복되는 새 종류가 자기 floor 와 다를 때 한 줄 추가, floor 와 같으면 안 늘린다.
+floor 로 충분하다고 이미 판단해 표에서 뺀 종류의 결정 이력은 `_loop-engine/README.md` 에 있다 — 표를 늘리기 전에 먼저 본다.
 
 <!-- LOOP_RUBRIC:KINDS:BEGIN -->
 
