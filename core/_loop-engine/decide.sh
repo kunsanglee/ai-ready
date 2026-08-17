@@ -36,9 +36,15 @@ input="$(cat "${1:-/dev/stdin}")"
 # findings 없는 JSON(계약 밖 입력)을 // [] 로 빈 배열 오독하면 그대로 PASS 가 된다 — score 출력 계약을 fail-loud 로 강제.
 loop_validate_json "$input" 'type=="object" and has("findings") and (.findings|type=="array")' \
   'decide 입력은 score 출력({findings:[...]})이어야 한다 (파이프 배선 오류 의심 — 사람 대기)'
+# 형태만 보면 score 를 안 거친 checker/merge 출력도 통과한다 — 그 입력은 severity 가 없거나
+# 사다리 밖이라, 아래에서 걸러 버리면 finding 전부가 사라져 counts 0 → PASS 로 둔갑한다.
+# 그래서 버리지 않고 여기서 멈춘다. severity 는 score 가 무조건 붙이므로, 하나라도 없으면
+# 배선이 score 를 건너뛴 것이고, 사다리 밖 문자열이면 LOCAL rubric 의 표 오타가 흘러온 것이다.
+loop_validate_json "$input" '[.findings[] | .severity] | all(IN("MINOR","MAJOR","CRITICAL","BLOCKER"))' \
+  'decide 입력에 severity 없는(또는 사다리 밖) finding — score 를 안 거친 입력 의심 (사람 대기)'
 
 jq '
-  ((.findings // []) | map(select(.severity != null))) as $f
+  (.findings) as $f
   | {
       counts: {
         BLOCKER:  ([$f[] | select(.severity == "BLOCKER")]  | length),

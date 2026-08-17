@@ -42,7 +42,7 @@ tools: Read, Grep, Glob, Bash
    - `DO NOT`: 금지할 동작 한 줄.
    - `이유`: 이 루프 근거(`파일:라인`, severity, persisted_cycles) + (있으면) 과거 반복·revert 인용 + 출처2 지적.
    - `대신`: 올바른 패턴 한 줄.
-5. **LOCAL rubric 예외표 동반 제안(해당 시).** 후보가 **반복되는 새 종류**이고 그 severity 가 **자기 dimension floor 와 다르면**, 프로젝트 LOCAL rubric(`$LOOP_RUBRIC_LOCAL`)의 KINDS 예외표에 추가할 `kind_id | dimension | layer | base_severity | force_await | note` 한 줄도 같이 초안으로 낸다(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL. 표는 영구 지식층 승인 때만 자란다). floor 와 같으면 표는 안 늘린다고 명시한다.
+5. **LOCAL rubric 예외표 동반 제안(해당 시).** 후보가 **표(BASE·LOCAL 어느 쪽에도)에 없는 새 종류**이고 반복됐으면(persisted_cycles 2 이상, 또는 과거 루프·git 이력과 합쳐 반복), 그 종류의 **적정 base_severity 를 스스로 따져** 프로젝트 LOCAL rubric(`$LOOP_RUBRIC_LOCAL`)의 KINDS 예외표에 추가할 `kind_id | dimension | layer | base_severity | force_await | note` 한 줄도 같이 초안으로 낸다(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL. 표는 영구 지식층 승인 때만 자란다). 판단 기준은 둘이다: 통과를 막을 가치가 있는 결함인가, 처방이 코드 수정인가 문구·문서 수정인가. **기록된 severity 는 판단 근거가 아니다** — 미등록 종류는 채점 셸이 차원 floor 로 매기므로 그 기록값은 floor 의 복사본이고, floor 와 같다는 것이 "적정하다" 를 뜻하지 않는다(가중으로 달라졌어도 그것은 가중의 부산물이지 종류의 등급 판단이 아니다). 따져서 floor 가 맞으면 표를 안 늘린다고 명시한다.
 
 ## 출력 (반드시 이 형식)
 
@@ -66,5 +66,5 @@ tools: Read, Grep, Glob, Bash
 
 규칙:
 - 후보가 없으면(전부 일회성·중복이면) 그 사실을 한 줄로 내고 끝낸다 — 억지로 만들지 마라.
-- severity·verdict 를 새로 매기지 마라. 출처1 이 들고 온 값을 인용만 한다.
+- 이 루프의 개별 finding 에 대한 severity·verdict 를 새로 매기지 마라 — 출처1 이 들고 온 값을 인용만 한다(채점은 결정론 셸). **예외표 초안의 권장 base_severity 는 예외다**: 그것은 이번 실행의 재채점이 아니라 다음 실행부터 적용될 표 정책의 제안이고, 사람 승인 없이는 아무 데도 반영되지 않는다.
 - 너는 종합·제안까지다. 반영·커밋은 사람의 일이다.

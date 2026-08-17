@@ -175,7 +175,14 @@ def detect_build_system(target: Path) -> dict[str, str]:
         pm = _npm_pm(target)
         scripts = _npm_scripts(target)
         run = lambda s: f"{pm} run {s}"  # noqa: E731
-        build_cmd = run("build") if "build" in scripts else ""
+        # 컴파일 게이트의 목적은 타입·문법 오류를 결정론으로 잡는 것 — build 스크립트가 없으면
+        # 그 목적을 대신하는 스크립트를 순서대로 집는다. 실측 사고: 스크립트 이름이 typecheck 라
+        # 빈 값이 나갔고, 빈 값을 게이트가 스킵해 타입 검사가 통째로 건너뛰어졌다.
+        build_cmd = ""
+        for name in ("build", "typecheck", "tsc", "compile", "check"):
+            if name in scripts:
+                build_cmd = run(name)
+                break
         # npm/yarn/pnpm 은 test 가 최상위 명령(`npm test`)이라 run 없이.
         # npm init 기본 스텁("no test specified" && exit 1)은 테스트가 아니다 — 게이트로 채택하면
         # maker 가 고칠 수 없는 실패라 매 사이클 게이트 재진입 공회전이 된다. 부재로 취급한다.

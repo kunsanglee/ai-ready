@@ -166,7 +166,7 @@ LOCAL 이 덮지만 PATHWEIGHTS 는 누적이라, 마이그레이션 디렉터�
 
 모든 finding 은 기본적으로 그 차원의 floor severity 로 채점된다. 아래 예외표에 오른 종류만 floor 대신 자기 값을 쓴다.
 모르는(표에 없는) 종류도 같은 규칙 — 차원 floor 로 채점된다. fallback 이 아니라 **주 메커니즘**이다.
-floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외표에 한 줄 등록된다(옛 "lessons 졸업"을 대체).
+표에 없는 종류가 반복되면 ANTIPATTERNS 승인 단계에서 적정 등급을 따져 예외표에 한 줄 등록될 수 있다 — 기록된 severity 는 floor 채점의 복사본이라 등록 여부의 비교 기준이 아니다(옛 "lessons 졸업"을 대체).
 
 > floor 값은 "모르는 건 더 보수적으로"가 기준. runtime·intent 를 한 단계씩 올렸다(runtime MAJOR→CRITICAL: 모르는 runtime → RETRY,
 > intent MINOR→MAJOR: 모르는 intent → RETRY_SOFT). security 차원은 BASE 에선 넓게 본다(인가·인증·입력 검증·민감정보 —

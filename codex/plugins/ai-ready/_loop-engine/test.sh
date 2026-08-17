@@ -61,6 +61,15 @@ assert_eq "변질 입력 파이프 fail-loud(비0)" "$([ "$rc" -ne 0 ] && echo l
 # decide/stall 계약 검증: findings/counts 없는 JSON 을 // 폴백으로 PASS·[0,0,0] 오독하지 않는다.
 printf '{"nothing":1}' | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
 assert_eq "decide: findings 없는 입력 거부 exit65" "$rc" "65"
+# score 를 안 거친 입력(severity 없음)은 형태 검증을 통과한다 — 종전에는 select 가 finding 을
+# 전부 걸러 counts 0 → PASS 로 둔갑했다. 버리지 않고 거부하는지 본다.
+printf '{"findings":[{"kind":"idor","dimension":"security","evidence":"x"}]}' \
+  | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
+assert_eq "decide: severity 없는 finding 거부 exit65" "$rc" "65"
+# 사다리 밖 severity(LOCAL rubric 표 오타가 흘러온 값)도 같은 구멍 — counts 어느 버킷에도 안 잡힌다.
+printf '{"findings":[{"kind":"idor","severity":"SEVERE","evidence":"x"}]}' \
+  | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
+assert_eq "decide: 사다리 밖 severity 거부 exit65" "$rc" "65"
 sttmp="$(mktemp -d)"; stf="$sttmp/s.json"
 printf '{"findings":[]}' | bash "$DIR/stall.sh" --state "$stf" >/dev/null 2>&1; rc=$?
 assert_eq "stall: counts 없는 입력 거부 exit65" "$rc" "65"

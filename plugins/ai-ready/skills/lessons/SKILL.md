@@ -22,7 +22,7 @@ description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 �
 
 1. **사람 승인 없이는 반영 금지.** synthesizer 도 이 스킬도 초안·제시까지다. 추가/수정/버림은 사람이 정한다. 무인 loop 여도 이 한 단계는 반드시 사람.
 2. **수록 문턱을 지킨다.** 영구 지식층(`$LOOP_KNOWLEDGE_LAYER`) 헤더 기준이 권위: 동일 위치 fix 3회+ 또는 revert. 못 넘으면 모듈 `CLAUDE.md` "절대 금지" 로만, 또는 보류. 한 loop 1회 발생은 대개 문턱 미달 — 과거 git fix 핫스팟과 합산해야 넘는다.
-3. **rubric 예외표는 ANTIPATTERNS 승인 때만 자란다.** 승인된 후보가 반복되는 새 종류이고 그 severity 가 자기 dimension floor 와 **다를 때만** KINDS 표에 한 줄 추가. floor 와 같으면 안 늘린다.
+3. **rubric 예외표는 ANTIPATTERNS 승인 때만 자란다.** 승인된 후보가 표에 없는 반복 종류이면, synthesizer 가 따진 **권장 base_severity** 로 KINDS 표에 한 줄 추가한다. 기록된 severity 와 floor 의 비교는 기준이 아니다 — 미등록 종류의 기록값은 floor 채점의 복사본이라 항상 같게 나오고, 그 비교를 기준으로 두면 표가 자라는 경로가 구조적으로 닫힌다(실제로 지금 예외표 항목은 전부 사람이 오프라인으로 넣었다). synthesizer 가 따져서 floor 가 맞으면 안 늘린다.
 
 ## 호출 예시
 
@@ -94,7 +94,7 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 
 - **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(ai-ready 가 만든 `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 *덧붙인다*(append, 통째 덮어쓰기 금지 — ai-ready 와 공동 저작하는 문서). 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다. 감지된 지식층 경로가 비어 있으면(프로젝트에 `docs/ANTIPATTERNS.md` 부재) 사용자에게 어디에 둘지 묻는다 — 임의 생성 금지.
 - **모듈 CLAUDE.md 추가**(문턱 미달·모듈 고유): 해당 `{module}/CLAUDE.md` "절대 금지" 섹션에 짧게.
-- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 반복되는 새 종류이고 severity 가 자기 dimension floor 와 다르면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다(이것이 스택 특유 종류가 자라는 유일한 경로 — 별도 생성기 없음). floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "<엔진 경로>/test.sh"` 로 BASE 채점 회귀 0 확인 — 엔진 경로는 Step 1 이 창에 낸 "lessons 값:" 줄의 `engine=` 값이다(`$CLAUDE_PLUGIN_ROOT` 는 Bash 도구의 셸에 없고, 셸 변수도 호출을 건너 남지 않는다).
+- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 표에 없는 반복 종류이고 synthesizer 가 권장 base_severity 를 floor 와 다르게 따졌으면 프로젝트의 LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다(이것이 스택 특유 종류가 자라는 유일한 경로 — 별도 생성기 없음). 권장이 floor 와 같으면 추가하지 않는다(원칙 3). 추가했으면 `bash "<엔진 경로>/test.sh"` 로 BASE 채점 회귀 0 확인 — 엔진 경로는 Step 1 이 창에 낸 "lessons 값:" 줄의 `engine=` 값이다(`$CLAUDE_PLUGIN_ROOT` 는 Bash 도구의 셸에 없고, 셸 변수도 호출을 건너 남지 않는다).
 - 반영 후 변경 파일·추가 항목을 사용자에게 1줄로 보고한다. 커밋은 사용자/별도 절차가 한다(이 스킬은 파일 기록까지).
 
 ## 트러블슈팅
@@ -108,5 +108,5 @@ synthesizer 후보를 **하나씩** 사용자에게 제시하고 추가/수정/�
 ## Non-Goals
 
 - 자동 반영 — 사람 승인 게이트가 품질 차단선. 절대 자동화하지 않는다.
-- severity 재산정 — synthesizer 가 들고 온 값을 인용만. 채점은 결정론 셸.
+- 개별 finding 의 severity 재산정 — 출처1 값을 인용만. 채점은 결정론 셸. (KINDS 초안의 권장 base_severity 는 다음 실행의 표 정책 제안이라 여기 해당하지 않는다 — 원칙 3.)
 - loop 실행·재시도 — 이 스킬은 loop 종료 후 회고 단계.
