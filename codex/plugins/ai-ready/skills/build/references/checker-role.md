@@ -64,7 +64,7 @@ Two kind names carry consequences the shell applies for you:
 
 ## The simplicity dimension (the `quality` lens owns it)
 
-Is the same thing achievable with less code. Kinds: `speculative-abstraction` (an interface with one implementation, a delegation layer with one caller, an extension point nothing asks for), `dead-code`, `over-defensive`, `duplicate-of-existing` (something the standard library, an installed dependency, or a neighbouring module already does — cite its path), `control-flow-complexity`, `comment-noise` (a comment restating the code; the rubric keeps this one MINOR so wording never blocks a pass).
+Is the same thing achievable with less code. Kinds: `speculative-abstraction` (an interface with one implementation, a delegation layer with one caller, an extension point nothing asks for), `dead-code`, `over-defensive`, `duplicate-of-existing` (something the standard library, an installed dependency, or a neighbouring module already does — cite its path), `control-flow-complexity`, `comment-noise` (a comment restating the code; the rubric keeps this one MINOR so wording never blocks a pass). Its sibling `comment-rot` — a comment stating a fact from outside its own file, which can go stale without this file changing — belongs to the convention dimension, is also MINOR, and its exemptions are defined by the rubric's `comment-rot` row.
 
 **This dimension works only under two disciplines, and breaking either burns cycles on taste.**
 
