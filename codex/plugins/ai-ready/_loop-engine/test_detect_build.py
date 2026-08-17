@@ -6,6 +6,8 @@ test.sh 가 마지막 섹션에서 이 파일을 호출한다.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -52,6 +54,59 @@ class TestDetectBuildSystem(unittest.TestCase):
             self.assertEqual(b["build_cmd"], "npm run build")
             self.assertEqual(b["lint_cmd"], "npm run lint")
             self.assertEqual(b["test_cmd"], "")
+
+    def test_typecheck_stands_in_for_a_missing_build_script(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json", '{"scripts": {"typecheck": "tsc --noEmit"}}')
+            self.assertEqual(detect_build.detect_build_system(root)["build_cmd"],
+                             "npm run typecheck")
+
+    def test_check_script_is_not_taken_as_the_compile_gate(self):
+        # `check` 는 포맷·린트가 흔히 쓰는 이름이라, 집으면 컴파일 게이트 자리에 포맷 검사가
+        # 앉는다. 안 집으면 게이트 0개가 되고 build 스킬이 시작을 거부해 사람이 지정한다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json", '{"scripts": {"check": "prettier --check ."}}')
+            with contextlib.redirect_stderr(io.StringIO()):   # 알림 자체는 아래 사례가 잰다
+                self.assertEqual(detect_build.detect_build_system(root)["build_cmd"], "")
+
+    def test_check_alongside_test_warns_because_the_refusal_will_not_fire(self):
+        # test 가 함께 있으면 게이트 0개가 아니라 Step 0 의 거부가 안 걸린다 — 그 저장소는
+        # 컴파일 게이트 없이 돈다. 거부를 넓히는 대신 stderr 한 줄로 알리고, stdout 은 건드리지
+        # 않는다(JSON 을 읽는 쪽이 있다).
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"check": "tsc --noEmit", "test": "jest"}}')
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                b = detect_build.detect_build_system(root)
+            self.assertEqual(b["build_cmd"], "")
+            self.assertEqual(b["test_cmd"], "npm test")
+            self.assertIn("LOOP_BUILD_CMD", err.getvalue())
+
+    def test_no_check_script_stays_quiet(self):
+        # 대조군 — check 가 없으면 알림도 없다. 늘 나오는 알림은 아무것도 알리지 않는다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json", '{"scripts": {"test": "jest"}}')
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(detect_build.detect_build_system(root)["build_cmd"], "")
+            self.assertEqual(err.getvalue(), "")
+
+    def test_build_script_present_silences_the_check_warning(self):
+        # 대조군 — 컴파일 게이트를 집었으면 check 가 있어도 알릴 것이 없다.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _write(root, "package.json",
+                   '{"scripts": {"build": "tsc", "check": "prettier --check ."}}')
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(detect_build.detect_build_system(root)["build_cmd"],
+                                 "npm run build")
+            self.assertEqual(err.getvalue(), "")
 
     def test_pnpm_detected_from_lockfile(self):
         with tempfile.TemporaryDirectory() as td:

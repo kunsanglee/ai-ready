@@ -249,5 +249,22 @@ class TestMakerContractParity(unittest.TestCase):
                 self.assertIn(anchor, claude, f"Claude 계약에 {anchor} 가 없다")
 
 
+class TestRubricMirrorParity(unittest.TestCase):
+    """codex 거울의 배점표가 Claude 원본과 바이트 동일한가.
+
+    codex `audit/SKILL.md` 는 `references/RUBRIC.md` 를 카테고리 점수의 해석 기준으로
+    지정하는데, 두 트리의 `audit.py` 채점 로직은 같다. 그래서 이 사본이 낡으면 코드는
+    맞고 문서만 거짓인 상태가 되고, 채점 근거를 읽으러 온 사람이 실제와 다른 기준을
+    본다. 실제로 두 판(v0.9.1 경로 실재 검사, v0.9.3 구체 금지 줄) 뒤처져 있었다.
+    """
+
+    def test_rubric_matches_claude_tree(self):
+        codex_rubric = PLUGIN / "skills" / "audit" / "references" / "RUBRIC.md"
+        claude_rubric = ROOT.parent / "plugins" / "ai-ready" / "skills" / "audit" / "RUBRIC.md"
+        self.assertEqual(
+            claude_rubric.read_bytes(), codex_rubric.read_bytes(),
+            f"{codex_rubric} 가 {claude_rubric} 와 다르다 — Claude 쪽을 그대로 복사하라")
+
+
 if __name__ == "__main__":
     unittest.main()

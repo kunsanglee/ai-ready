@@ -61,6 +61,15 @@ assert_eq "변질 입력 파이프 fail-loud(비0)" "$([ "$rc" -ne 0 ] && echo l
 # decide/stall 계약 검증: findings/counts 없는 JSON 을 // 폴백으로 PASS·[0,0,0] 오독하지 않는다.
 printf '{"nothing":1}' | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
 assert_eq "decide: findings 없는 입력 거부 exit65" "$rc" "65"
+# score 를 안 거친 입력(severity 없음)은 형태 검증을 통과한다 — 종전에는 select 가 finding 을
+# 전부 걸러 counts 0 → PASS 로 둔갑했다. 버리지 않고 거부하는지 본다.
+printf '{"findings":[{"kind":"idor","dimension":"security","evidence":"x"}]}' \
+  | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
+assert_eq "decide: severity 없는 finding 거부 exit65" "$rc" "65"
+# 사다리 밖 severity(LOCAL rubric 표 오타가 흘러온 값)도 같은 구멍 — counts 어느 버킷에도 안 잡힌다.
+printf '{"findings":[{"kind":"idor","severity":"SEVERE","evidence":"x"}]}' \
+  | bash "$DIR/decide.sh" >/dev/null 2>&1; rc=$?
+assert_eq "decide: 사다리 밖 severity 거부 exit65" "$rc" "65"
 sttmp="$(mktemp -d)"; stf="$sttmp/s.json"
 printf '{"findings":[]}' | bash "$DIR/stall.sh" --state "$stf" >/dev/null 2>&1; rc=$?
 assert_eq "stall: counts 없는 입력 거부 exit65" "$rc" "65"
@@ -344,6 +353,9 @@ for loc in 'docs/db/migration-policy.md:12' 'docs/guide/liquibase-vs-flyway.md:4
 done
 # 줄 번호가 붙은 채로 맞추면 `\.md$` 같은 끝 앵커가 영영 안 맞는다 — 실제로 그래서 안 들었다.
 assert_eq "location 의 :줄 을 떼고 맞춘다" "$(mig_await 'docs/a.md:12')" "false"
+# 줄 범위(`:10-40`)도 checker 가 실제로 내는 형태다. 한 줄짜리만 떼면 마이그레이션을 *설명하는*
+# 문서가 `\.md$` 제외를 빠져나가 사람 대기로 선다.
+assert_eq "location 의 :줄-줄 도 떼고 맞춘다" "$(mig_await 'docs/db/migration-policy.md:10-40')" "false"
 assert_eq "제외 없는 경로는 그대로 유도"   "$(mig_await 'src/main/resources/db/migration/V1__x.sql:9')" "true"
 
 # LOCAL 이 BASE 경로 규칙을 끄는 유일한 길이 이 표다(PATHWEIGHTS 는 누적이라 덮을 수 없다).

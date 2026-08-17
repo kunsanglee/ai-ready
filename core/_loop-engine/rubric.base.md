@@ -1,10 +1,8 @@
 # 무인 검증 loop 루브릭 — BASE (프로젝트 무관 골격)
 
-> 이 문서는 **BASE 루브릭 — 프로젝트 무관 골격**입니다. 사람이 읽고 편집합니다.
-> 적용 로직(종류 lookup·가중 상향·집계·종료 판정·정체 floor 계산)은 같은 plugin 의 `_loop-engine/` 셸이
-> 가지고, 이 표를 파싱해 채점합니다. 스택·도메인 특유 종류(예: DDL 안전성·i18n 키 누락)는 여기 두지 않고
-> 대상 프로젝트가 LOCAL rubric(`$CLAUDE_PROJECT_DIR/.loop/rubric.md`)에 추가합니다. BASE 와 LOCAL 은
-> 병합돼 채점되며 같은 kind/dimension 은 LOCAL 이 BASE 를 덮습니다.
+> 스택·도메인 특유 종류(예: DDL 안전성·i18n 키 누락)는 여기 두지 않고 대상 프로젝트가
+> LOCAL rubric(`$CLAUDE_PROJECT_DIR/.loop/rubric.md`)에 추가합니다. BASE 와 LOCAL 은 병합돼
+> 채점되며 같은 kind/dimension 은 LOCAL 이 BASE 를 덮습니다.
 
 ## 핵심 원칙
 
@@ -69,11 +67,10 @@ checker 는 finding 의 `weights` 배열에 위 키를 담아 보낸다. 셸이 
 **`weight_keys` 가 위 WEIGHTS 허용 표 밖이면 설정 오류로 거부한다**(exit 65). 조용히 무시하면
 사람은 그 경로를 덮었다고 믿는데 실제로는 아무 가중도 안 서고, `|` 로 열이 밀린 행이 그 모양이 된다.
 
-> **BASE 목록은 2026-08-09 적대적 시험으로 채웠다.** 처음엔 다섯 줄이었는데 흔한 배치를 놓쳤다 —
-> `/migrations/` 가 앞 슬래시를 요구해 레포 루트 `migrations/`(golang-migrate·sqlx)를 놓쳤고,
-> Rails 의 `db/migrate/` 는 `db/migration` 과 한 글자 차이로 빗나갔고, Liquibase 의 실제 관례
-> 디렉터리는 `db/changelog` 인데 패턴은 리터럴 `liquibase` 라 보통 경로에 안 나왔다.
-> 대소문자를 가려 `DB/Migration` 도 빠졌다. **운영 DB 를 드롭하는 finding 이 사람 없이 돌 수 있었다.**
+> **BASE 목록은 2026-08-09 적대적 시험으로 채웠다.** 처음의 다섯 줄은 흔한 마이그레이션 배치를
+> 여럿 놓쳤고(앞 슬래시 요구로 레포 루트 누락, Rails `db/migrate` 한 글자 차이, Liquibase 실제
+> 경로 `db/changelog` 대신 리터럴 `liquibase`, 대소문자), 그래서 **운영 DB 를 드롭하는 finding 이
+> 사람 없이 돌 수 있었다.** 행을 더할 때 조심할 자리가 정확히 그 넷이다.
 
 **BASE 에는 어느 스택에서나 같은 뜻인 것만 둔다.** DB 마이그레이션 디렉터리가 그렇다.
 돈·인가 경로는 저장소마다 이름이 달라 BASE 가 못 정한다 — LOCAL rubric 에 자기 경로를 적는다.
@@ -130,24 +127,16 @@ LOCAL 이 덮지만 PATHWEIGHTS 는 누적이라, 마이그레이션 디렉터�
 4. 알림·메시지 대량 발송 (회수 불가) — `mass-dispatch`
 5. 삭제·익명화·탈퇴 처리 (복구 불가) — `destructive-data-op`
 
-> **다섯에 `kind_id` 를 준 이유(2026-08-09).** 이 목록은 오래 산문으로만 있었고, 종류표에
-> `force_await=always` 를 쓰는 행이 **하나도 없었다.** "표의 열, 또는 finding 의 플래그" 두 경로 중
-> 앞쪽이 비어 있었다는 뜻이고, 실제로 도는 것은 checker 가 자기 판단으로 다는 플래그뿐이었다.
-> 그건 사람 대기 여부를 **프롬프트 준수**에 맡긴 것이다. 이제 checker 가 종류 이름만 맞게 부르면
-> 사람 대기가 표에서 선다. 종류를 잘못 부르면 여전히 새지만, 모델이 맞춰야 할 것이
-> **둘(종류 + 가중 플래그)에서 하나(종류)로** 줄었다. 이름은 스택 무관하게 골랐다 — 프로젝트가
-> 자기 용어를 쓰고 싶으면 LOCAL 에서 같은 `kind_id` 로 덮거나 별칭 행을 더한다.
+> **다섯에 `kind_id` 를 준 이유(2026-08-09).** 목록이 산문으로만 있던 동안 표에
+> `force_await=always` 인 행이 하나도 없어, 사람 대기가 checker 의 프롬프트 준수에만 달려 있었다.
 >
-> **`force_await=always` 는 LOCAL 이 끄지 못한다(2026-08-09).** 다른 열은 LOCAL 이 덮지만 이 열만
-> 병합이 합집합이다 — 어느 쪽이든 `always` 면 `always` 다. 그러지 않으면 LOCAL 한 줄로 다섯 게이트가
-> 통째로 사라지는데, 그 파일은 `.loop/rubric.md` 라 **채점받는 쪽(maker)이 쓸 수 있는 자리**다.
-> 등급은 여전히 LOCAL 이 조절할 수 있고, 사람 대기만 남는다.
+> **`force_await=always` 는 LOCAL 이 끄지 못한다(2026-08-09).** 이 열만 병합이 합집합이다 — 어느 쪽이든 `always` 면 `always` 다.
+> LOCAL 파일(`.loop/rubric.md`)은 채점받는 maker 가 쓸 수 있는 자리라, 덮게 두면 한 줄로
+> 다섯 게이트가 사라진다. 등급은 여전히 LOCAL 이 조절할 수 있다.
 >
-> **다섯 행의 `always` 는 등급과 겹친다.** `base_severity` 가 BLOCKER 라 그것만으로 이미 사람 대기다.
-> 그래도 `always` 를 함께 적는 이유는, 나중에 누가 등급을 내려도 사람 대기가 남게 하기 위해서다
-> (이 목록의 뜻이 "등급 무관 사람 대기" 라서다). 겹친다는 것은 **변이로 확인했다** — 다섯 행의
-> `always` 를 `no` 로 바꿔도 테스트가 하나도 안 깨졌다. 그래서 `always` 자체는 등급이 낮은 행으로
-> 따로 잠갔다(`test.sh` 의 `minor-but-irreversible`).
+> **다섯 행의 `always` 는 등급(BLOCKER)과 겹친다.** `no` 로 바꿔도 테스트가 안 깨지는 것을
+> 변이로 확인했다. 그래도 적어 두는 것은 나중에 누가 등급을 내려도 사람 대기가 남게 하기
+> 위해서고, `always` 자체는 `test.sh` 의 `minor-but-irreversible` 이 잠근다.
 
 ## 3층 분리
 
@@ -166,19 +155,15 @@ LOCAL 이 덮지만 PATHWEIGHTS 는 누적이라, 마이그레이션 디렉터�
 
 모든 finding 은 기본적으로 그 차원의 floor severity 로 채점된다. 아래 예외표에 오른 종류만 floor 대신 자기 값을 쓴다.
 모르는(표에 없는) 종류도 같은 규칙 — 차원 floor 로 채점된다. fallback 이 아니라 **주 메커니즘**이다.
-floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외표에 한 줄 등록된다(옛 "lessons 졸업"을 대체).
+표에 없는 종류가 반복되면 ANTIPATTERNS 승인 단계에서 적정 등급을 따져 예외표에 한 줄 등록될 수 있다 — 기록된 severity 는 floor 채점의 복사본이라 등록 여부의 비교 기준이 아니다(옛 "lessons 졸업"을 대체).
 
-> floor 값은 "모르는 건 더 보수적으로"가 기준. runtime·intent 를 한 단계씩 올렸다(runtime MAJOR→CRITICAL: 모르는 runtime → RETRY,
-> intent MINOR→MAJOR: 모르는 intent → RETRY_SOFT). security 차원은 BASE 에선 넓게 본다(인가·인증·입력 검증·민감정보 —
-> checker 본문 security 절과 동일 기준). "security=IDOR 하나로 좁히기"는 특정 프로젝트(c8c-api)의 LOCAL 결정이지 BASE 규칙이
-> 아니다 — 좁히려는 프로젝트는 LOCAL rubric·컨벤션 문서에 그 결정을 명시한다.
+> floor 값은 "모르는 건 더 보수적으로"가 기준. runtime·intent 를 한 단계씩 올렸다
+> (runtime MAJOR→CRITICAL, intent MINOR→MAJOR). security 차원은 BASE 에선 넓게 본다
+> (인가·인증·입력 검증·민감정보. checker 본문 security 절과 동일 기준).
 >
-> **simplicity 가 MAJOR 인 이유는 두 실패를 동시에 피하려는 것이다.** MINOR 로 두면 잡아도 PASS 를 막지 않아
-> 과잉 설계가 기록만 되고 그대로 남는다 — 무인 루프가 수렴시킨 코드가 단순성 검사를 사실상 안 받는 셈이다.
-> CRITICAL 로 두면 반대로 "더 단순한 형태가 있다" 는 판단이 갈리는 지적이 PASS 를 완전히 막아, 루프가 취향
-> 논쟁으로 회차를 더 쓴다. MAJOR 는 `RETRY_SOFT` 를 내서 고치려 시도하되 정체하면 사람이 그 등급을 안고
-> 통과시킬 수 있는 자리다. 이 차원은 "더 적은 코드로 같은 일이 되는가" 만 보고, 등가 대안을 제시할 수 없는
-> 지적은 checker 본문이 금지한다.
+> **simplicity 가 MAJOR 인 이유는 두 실패를 동시에 피하려는 것이다.** MINOR 면 과잉 설계가 기록만 되고
+> 남고, CRITICAL 이면 판단이 갈리는 지적이 PASS 를 완전히 막아 회차를 더 쓴다. MAJOR 는 고치려
+> 시도하되 정체하면 사람이 그 등급을 안고 통과시킬 수 있는 자리다.
 
 <!-- LOOP_RUBRIC:DIMFLOOR:BEGIN -->
 
@@ -200,12 +185,7 @@ floor 와 다른 종류가 반복되면 ANTIPATTERNS 승인 단계에서 예외�
 `base_severity` 는 가중 조건 적용 전 기본값. `force_await=always` 면 가중·severity 무관 사람 대기.
 조건부 사람 대기(IDOR+`authz`, 멱등성+`money`)는 별도 열이 아니라 가중 상향(CRITICAL→BLOCKER→AWAIT_USER)으로 자연히 처리된다.
 이 표는 ANTIPATTERNS 승인 단계에서만 자란다 — 반복되는 새 종류가 자기 floor 와 다를 때 한 줄 추가, floor 와 같으면 안 늘린다.
-
-> floor 로 처리되어 표에서 빠진 종류(결정 이력): compatibility 3종·security idor·runtime 8종(concurrency-bug, transaction-scope,
-> event-before-commit, idempotency-missing, unbounded-findall, logic-regression, timeout-missing, enum-removal-risk)·convention-violation·
-> intent-requirement-missing 은 전부 자기 dimension floor 와 같아 floor 가 채점한다. `input-validation-injection`·`sensitive-info-exposure` 를
-> 점검 범위에서 뺀 것(C-8: security=IDOR only)은 c8c-api 의 LOCAL 결정이다 — BASE 채점은 지금도 그 kind 슬러그가 오면
-> security floor(CRITICAL)로 채점하며, 다른 프로젝트의 checker 는 security 를 넓게 본다.
+floor 로 충분하다고 이미 판단해 표에서 뺀 종류의 결정 이력은 `_loop-engine/README.md` 에 있다 — 표를 늘리기 전에 먼저 본다.
 
 <!-- LOOP_RUBRIC:KINDS:BEGIN -->
 
@@ -265,15 +245,5 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 
 <!-- LOOP_RUBRIC:PARAMS:END -->
 
-> 정체 파라미터와 brake 파라미터를 한 표에 둔다 — 이 표가 loop 설정 전체의 단일 원천이다.
-> 정체 파라미터(`stall_threshold_*`, `regress_consecutive`)는 `stall.sh` 가 `loop_param` 으로 읽는다.
-> `repeated_kind_cycles` 는 `kindstreak.sh` 가 같은 방식으로 읽는다 — 같은 **종류**의 finding 이 몇 사이클
-> 연속으로 그 사이클을 지배하면 사람을 부를지다. 3인 이유는 두 번은 우연일 수 있고 세 번이면 코드가 아니라
-> 목표를 의심할 근거이기 때문이다(끝나는 지점이 없는 목표는 하나를 고칠 때마다 checker 가 다음 하나를 찾는다).
-> brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
-> 같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
-> 값은 단일 통일(5회 / $500 / 5M 토큰 / 120분) — 무인(케이스2)·핸드오프(케이스3) 같은 상한. 케이스별 프로파일은 두지 않는다.
-> 토큰(5M)이 실질 상한이고 $500 은 폭주 안전망(opus 단가상 5M 토큰을 넉넉히 덮어 토큰이 먼저 닿게). 케이스2 는 회차별 정확 집행,
-> 케이스3 은 회차·시간·정체 자가 집행 + 종료 후 비용 백스톱. 런별 오버라이드가 필요하면 드라이버 호출 시 env 로 전달해
-> 이 기본값을 덮어쓴다 — 커밋되는 별도 프로파일 파일은 두지 않는다(`.loop/run/{ticket}/` 에는 루프 한정 휘발 상태만 —
-> state·history 와 Bash 호출 간 재유도 스냅숏 `params.env` — 남고 종료 시 폐기된다).
+> 정체 파라미터와 brake 파라미터를 한 표에 둔다. 이 표가 loop 설정 전체의 단일 원천이고,
+> 파라미터의 근거와 소비자는 `_loop-engine/README.md`.

@@ -134,3 +134,32 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 - **케이스2(Sentry 무인)** — agent 봇이 `runLoopFix` 로 수정 worktree 에서 헤드리스로 `/build` 를 띄워 같은 엔진을 돈다(케이스2 = 케이스3, 헤드리스 위임). brake 집행도 그 스킬이 한다.
 
 런타임 상태(`history-{phase}.jsonl` producer·`stall-{phase}.json` state·`started.epoch`·재유도 스냅숏 `params.env`·게이트 실패 카운터 `gate.fail`·렌즈별 checker findings/병합본/scored + 브랜치별 포인터 `.active-{브랜치}`)는 `/build` 스킬이 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/` 에 사이클마다 append·갱신하고, 종료 시(lesson 종합 후) 폐기한다. `.loop/run/` 은 gitignore.
+
+## 루브릭 표를 읽는 쪽 (PARAMS·KINDS 편집 노트)
+
+### 파라미터의 근거와 소비자
+
+`rubric.base.md` 의 PARAMS 표가 정체 파라미터와 brake 파라미터를 한 자리에 모은 단일 원천이고,
+값을 읽는 쪽은 이 엔진과 무인 드라이버다.
+정체 파라미터(`stall_threshold_*`, `regress_consecutive`)는 `stall.sh` 가 `loop_param` 으로 읽는다.
+`repeated_kind_cycles` 는 `kindstreak.sh` 가 같은 방식으로 읽는다. 같은 **종류**의 finding 이 몇 사이클
+연속으로 그 사이클을 지배하면 사람을 부를지다. 3인 이유는 두 번은 우연일 수 있고 세 번이면 코드가 아니라
+목표를 의심할 근거이기 때문이다(끝나는 지점이 없는 목표는 하나를 고칠 때마다 checker 가 다음 하나를 찾는다).
+brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
+같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
+값은 단일 통일(5회 / $500 / 5M 토큰 / 120분)이고 무인(케이스2)·핸드오프(케이스3)가 같은 상한을 쓴다.
+케이스별 프로파일은 두지 않는다. 토큰(5M)이 실질 상한이고 $500 은 폭주 안전망이다(opus 단가상 5M 토큰을
+넉넉히 덮어 토큰이 먼저 닿게). 케이스2 는 회차별 정확 집행, 케이스3 은 회차·시간·정체 자가 집행 + 종료 후
+비용 백스톱. 런별 오버라이드가 필요하면 드라이버 호출 시 env 로 전달해 이 기본값을 덮어쓴다. 커밋되는 별도
+프로파일 파일은 두지 않는다. 런별 상태는 위의 `.loop/run/{ticket}/` 에만 남는 루프 한정 휘발 상태다
+(state·history 와 Bash 호출 간 재유도 스냅숏 `params.env`).
+
+### floor 로 처리되어 KINDS 예외표에서 빠진 종류 (결정 이력)
+
+compatibility 3종·security idor·runtime 8종(concurrency-bug, transaction-scope, event-before-commit,
+idempotency-missing, unbounded-findall, logic-regression, timeout-missing, enum-removal-risk)·
+convention-violation·intent-requirement-missing 은 전부 자기 dimension floor 와 같아 floor 가 채점한다.
+`input-validation-injection`·`sensitive-info-exposure` 를 점검 범위에서 뺀 것(C-8: security=IDOR only)은
+c8c-api 의 LOCAL 결정이다. BASE 채점은 지금도 그 kind 슬러그가 오면 security floor(CRITICAL)로 채점하며,
+다른 프로젝트의 checker 는 security 를 넓게 본다. "security=IDOR 하나로 좁히기" 도 같은 LOCAL 결정이지
+BASE 규칙이 아니다. 좁히려는 프로젝트는 LOCAL rubric·컨벤션 문서에 그 결정을 명시한다.
