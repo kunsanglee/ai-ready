@@ -11,8 +11,9 @@ A "hot module" is one with the most recent activity (git commits in the last
   4) Dependencies — what this module touches
   5) Tribal knowledge — non-obvious facts
 
-The script writes drafts to <out>/<module-path>/CLAUDE.md. You then review,
-edit, and copy them into the actual module directories.
+The script writes drafts to <out>/<module-path>/CLAUDE.md and an AGENTS.md
+relative symlink beside it. You then review, edit, and copy them into the
+actual module directories.
 """
 from __future__ import annotations
 
@@ -322,6 +323,21 @@ TEMPLATE = """# CLAUDE.md — `{module_path}`
 """
 
 
+def link_agents_beside(claude_path: Path) -> Path | None:
+    """CLAUDE.md 옆에 AGENTS.md 상대 심링크를 둔다.
+
+    Codex 처럼 AGENTS.md 만 찾는 도구가 같은 본문을 읽게 한다. 복사본을
+    두면 한쪽만 고치고 다른 쪽이 낡는다. 사람이 이미 쓴 AGENTS.md 는 덮지 않는다.
+    """
+    if claude_path.name != "CLAUDE.md":
+        raise ValueError(f"expected CLAUDE.md, got {claude_path.name}")
+    agents = claude_path.with_name("AGENTS.md")
+    if agents.exists() or agents.is_symlink():
+        return None
+    agents.symlink_to("CLAUDE.md")
+    return agents
+
+
 def render_what_block(module_path: str, stack_hint: str, file_count: int, summary: str | None) -> str:
     """T-10: 루트 CLAUDE.md 의 module map 1줄 설명을 자동으로 cherry-pick."""
     head = f"- {summary}" if summary else f"- TODO: `{module_path}` 의 책임을 한 문장으로 적으세요."
@@ -574,8 +590,9 @@ def run(target: Path, out_dir: Path, top_n: int):
         out_path = out_dir / m / "CLAUDE.md"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(content, encoding="utf-8")
+        link_agents_beside(out_path)
         written.append(out_path)
-    print(f"모듈 CLAUDE.md 초안 {len(written)}개 생성: {out_dir}")
+    print(f"모듈 CLAUDE.md 초안 {len(written)}개 생성 (AGENTS.md 다리 포함): {out_dir}")
     for p in written:
         print(f"  - {p}")
     return EXIT_OK

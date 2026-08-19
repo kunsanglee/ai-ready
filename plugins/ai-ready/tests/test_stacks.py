@@ -206,6 +206,49 @@ class TestScaffoldExitCodes(unittest.TestCase):
             self.assertTrue((out / "PACKAGES.md").is_file())
 
 
+class TestAgentsBridge(unittest.TestCase):
+    """모듈 초안은 CLAUDE.md 하나만 쓰면 Codex 가 그 폴더를 빈 것으로 본다."""
+
+    def test_module_scaffold_pairs_agents_md_symlink(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "mod-a/build.gradle.kts")
+            _mk(root, "mod-a/src/Foo.kt")
+            _mk(root, "mod-b/build.gradle.kts")
+            _mk(root, "mod-b/src/Bar.kt")
+            out = root / "out"
+            self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_OK)
+            claude = out / "mod-a" / "CLAUDE.md"
+            agents = out / "mod-a" / "AGENTS.md"
+            self.assertTrue(claude.is_file())
+            self.assertTrue(agents.is_symlink())
+            self.assertEqual(agents.readlink(), Path("CLAUDE.md"))
+            self.assertEqual(
+                agents.read_text(encoding="utf-8"),
+                claude.read_text(encoding="utf-8"),
+            )
+
+    def test_authored_agents_md_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            claude = Path(d) / "CLAUDE.md"
+            claude.write_text("# body\n", encoding="utf-8")
+            agents = Path(d) / "AGENTS.md"
+            agents.write_text("# authored\n", encoding="utf-8")
+            self.assertIsNone(scaffold.link_agents_beside(claude))
+            self.assertFalse(agents.is_symlink())
+            self.assertEqual(agents.read_text(encoding="utf-8"), "# authored\n")
+
+    def test_existing_symlink_is_a_noop(self):
+        with tempfile.TemporaryDirectory() as d:
+            claude = Path(d) / "CLAUDE.md"
+            claude.write_text("# body\n", encoding="utf-8")
+            agents = Path(d) / "AGENTS.md"
+            agents.symlink_to("CLAUDE.md")
+            self.assertIsNone(scaffold.link_agents_beside(claude))
+            self.assertTrue(agents.is_symlink())
+            self.assertEqual(agents.readlink(), Path("CLAUDE.md"))
+
+
 class TestCatalogTemplateIsStackNeutral(unittest.TestCase):
     """초안 문구가 한 스택의 어휘를 쓰면, 그 스택이 아닌 사람은 채울 수 없는 자리를 받는다."""
 
