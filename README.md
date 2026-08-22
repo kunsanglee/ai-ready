@@ -6,7 +6,7 @@
 
 1. **audit** — 코드베이스의 AI 준비도(AI-readiness)를 7개 카테고리 100점 척도로 채점하고 개선 로드맵을 만듭니다.
 2. **apply** — 그 감사 결과에서 투자 대비 효과(ROI)가 높은 개선을 실제로 적용합니다.
-3. **무인 검증 루프**(build · review · lessons) — 코드 변경을 사람이 매 단계 지켜보지 않아도 자동으로 점검·수정·빌드아웃합니다.
+3. **무인 검증 루프**(spec · build · review · lessons) — 무엇을 만들지부터 스펙으로 확정하고, 코드 변경을 사람이 매 단계 지켜보지 않아도 자동으로 점검·수정·빌드아웃합니다.
 
 `audit → apply → verify` 한 주기를 하나만 설치해서 씁니다.
 
@@ -61,6 +61,25 @@ AI 에이전트(Claude 등)가 낯선 코드베이스에서 잘 일하려면, �
 **축 B · 무인 검증 루프** — 준비된 코드베이스 위에서 실제 코드 변경을 자동으로 검증·수정·빌드아웃하는 쪽입니다. `spec`(무인 실행에 넘길 스펙 도출), `build`(설계를 단계로 쪼개 통과까지 수렴), `review`(1회 점검), `lessons`(실수 회수)로 구성됩니다. 뒤 셋은 같은 판정 엔진(`_loop-engine`)을 공유하고, `spec` 은 그 앞에서 무엇을 향해 돌지를 정합니다.
 
 두 축은 한 지점에서 만납니다. audit 이 만드는 `docs/ANTIPATTERNS.md` 가 loop 계열의 **지식층**이 됩니다. 루프가 점검할 때 이 문서를 읽고, `lessons` 가 새로 잡은 실수를 여기에 덧붙입니다.
+
+```mermaid
+flowchart LR
+    subgraph axisA["축 A · 문서화와 AI 준비도"]
+        audit["audit<br>준비도 채점"] --> apply["apply<br>ROI 개선 적용"]
+    end
+    subgraph axisB["축 B · 무인 검증 루프"]
+        spec["spec<br>스펙 도출"] --> build["build<br>무인 수렴"]
+        review["review<br>1회 점검"]
+    end
+    knowledge[("docs/ANTIPATTERNS.md<br>지식층")]
+    apply --> knowledge
+    knowledge --> build
+    knowledge --> review
+    build --> lessons["lessons<br>실수 회수"]
+    lessons -- 사람 승인 --> knowledge
+```
+
+audit 이 채운 지식층을 루프가 점검 기준으로 읽고, 루프가 잡은 실수가 사람 승인을 거쳐 다시 지식층으로 돌아옵니다. 이 순환이 플러그인 전체의 뼈대입니다.
 
 ---
 
@@ -196,6 +215,7 @@ AI 에이전트(Claude 등)가 낯선 코드베이스에서 잘 일하려면, �
 |---|---|
 | 코드베이스가 AI 에게 얼마나 준비됐는지 점수·로드맵을 보고 싶다 | `audit` |
 | 그 로드맵의 개선을 실제로 적용하고 싶다 | `apply` |
+| 루프에 넘길 스펙이 아직 없다. 미결정부터 열거해 닫고 싶다 | `spec` |
 | 변경 **하나**를, 또는 **설계 전체**를 통과까지 무인으로 수렴시키고 싶다 | `build` |
 | 지금 변경을 고치지 않고 **한 번** 점검만 받고 싶다 | `review` |
 | 루프가 잡은 실수를 재발 방지 지식으로 정리하고 싶다 | `lessons` |
@@ -221,6 +241,31 @@ loop 계열 셋은 같은 결정론 판정 엔진을 공유합니다. 핵심은 
   | MINOR | 통과(기록만) | 사소 |
 
 - **통과는 점수 합산이 아니라 게이트** — 사소한 결함이 10개라도 심각한 게 없으면 통과, 단 하나라도 BLOCKER 면 불통과입니다. "총점 평균"이 아니라 "가장 심각한 게 무엇이냐"로 문을 엽니다.
+
+한 phase 안의 회차는 아래 상태 기계를 돕니다. 전이 라벨은 `decide.sh` 가 내는 verdict 이름 그대로라, 이 그림과 엔진의 어휘가 어긋날 자리가 없습니다.
+
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> Maker: 분해 승인 (사람, 유일한 시작 게이트)
+    Maker: maker 구현·수정 (매 회차 새 서브에이전트)
+    Gate: 빌드 게이트 (컴파일·기존 테스트·린트)
+    Check: checker 렌즈 3 병렬 (contract · safety · quality)
+    Decide: 결정론 판정 (merge_findings → score → decide)
+    Await: 사람 대기
+    Maker --> Gate: 워킹 트리 변경 확인
+    Gate --> Maker: 실패 (gate_parse 항목 큐)
+    Gate --> Check: 통과
+    Check --> Decide: 렌즈 결과 개수 검증
+    Decide --> [*]: PASS (다음 phase 로 전진)
+    Decide --> Maker: RETRY (CRITICAL 있음)
+    Decide --> Maker: RETRY_SOFT (MAJOR 만)
+    Decide --> Await: AWAIT_USER (BLOCKER·비가역 영역)
+    Decide --> Await: STALLED (정체·악화 감지)
+    Maker --> Await: brake (회차·시간·예산 상한)
+```
+
+사람이 개입하는 문은 둘뿐입니다. 시작할 때의 분해 승인, 그리고 `Await` 로 빠졌을 때입니다. 나머지 전이는 전부 결정론 셸이 정합니다.
 - **비가역 영역은 등급과 무관하게 사람 대기** — 운영 DB 변경, 돈·정산, 인가 정책, 대량 발송, 삭제·탈퇴는 점수가 만점이어도 멈춰 사람을 부릅니다.
 - **상한 기본값(단일 원천)** — 회차 5(천장 10), 시간 120분, 비용 $500, 토큰 5M. 정체·악화 감지 파라미터도 같은 표에 있습니다.
 - **BASE + LOCAL 루브릭** — 프로젝트 무관 골격은 `_loop-engine/rubric.base.md`(BASE)에, 프로젝트 특유 규칙은 대상의 `.loop/rubric.md`(LOCAL)에 둡니다. 둘은 병합되며 같은 항목은 LOCAL 이 우선합니다.
@@ -267,6 +312,7 @@ loop 계열 셋은 같은 결정론 판정 엔진을 공유합니다. 핵심은 
         ├── skills/
         │   ├── audit/         # AI 준비도 채점 + 리포트·대시보드·시드 생성
         │   ├── apply/         # ROI 액션 적용 (외과적 문서 유지보수)
+        │   ├── spec/          # 무인 루프에 넘길 스펙 도출 (미결 0 까지)
         │   ├── build/         # 설계를 phase 로 쪼개 통과까지 무인 수렴
         │   ├── review/        # 1회 점검·보고
         │   └── lessons/       # 잡은 실수 → 지식층 반영 (사람 승인)
