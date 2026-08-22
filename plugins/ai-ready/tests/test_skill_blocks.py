@@ -1464,6 +1464,18 @@ class TestCheckerAndScoring(BlockCase):
         self.assertIn("렌즈 safety 샤드 s1: 입력", r.out)
         self.assertIn("checker-foundation-quality-s2.json", r.out)
         self.assertIn("렌즈 contract 출력 경로", r.out, "contract 는 전체 시야로 하나여야 한다")
+        # 이번 회차 몫의 샤드 산출은 빈 파일로 선다 — 죽은 샤드가 빈 파일로 병합에 걸린다
+        self.assertEqual((self.loop_dir / "checker-foundation-safety-s1.json").read_text(), "")
+
+    def test_lens_block_clears_stale_shard_outputs(self):
+        """앞 회차의 샤드 산출이 남으면, 이번 회차 샤드가 죽어도 옛 결과가 병합된다 —
+        렌즈 산출을 스핀 직전 비우는 것과 같은 계약을 샤드 산출에도 건다."""
+        self.prepare()
+        stale = self.loop_dir / "checker-foundation-quality-s3.json"
+        stale.write_text(self.CLEAN)   # K=3 이던 앞 회차의 잔재
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertFalse(stale.exists(), "옛 샤드 산출이 살아남았다")
 
     def test_lens_block_does_not_shard_small_scope_or_confirm_cycle(self):
         self.prepare()

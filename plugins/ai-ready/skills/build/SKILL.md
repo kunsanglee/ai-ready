@@ -543,6 +543,9 @@ set -a; . "$LOOP_DIR/params.env"; set +a
 # 비우기를 빠뜨리고 checker 가 안 쓰면 그 옛 결과가 채점돼 미점검 phase 가 done 으로 둔갑한다.
 LENSES="contract safety quality"
 for L in $LENSES; do : > "$LOOP_DIR/checker-$PHASE-$L.json"; done
+# 옛 샤드 산출도 같은 이유로 지운다 — 남으면 이번 회차 샤드가 죽어도 옛 결과가 병합돼
+# 미점검 파일들이 점검된 것으로 둔갑한다. 이번 회차 몫은 아래 샤드 계획이 빈 파일로 다시 만든다.
+find "$LOOP_DIR" -maxdepth 1 \( -name "checker-$PHASE-safety-s*.json" -o -name "checker-$PHASE-quality-s*.json" \) -delete
 # 프롬프트에 넣을 값을 창에 출력한다 — 변수 대입만으론 오케스트레이터가 값을 알 수 없다(대입은 stdout 이 없다).
 echo "checker 렌즈: $LENSES"
 echo "checker 공통 값: base=$LOOP_BASE_BRANCH / conv=[${LOOP_CONVENTION_DOCS:-없음}] / knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / base_rubric=$ENG/rubric.base.md / local_rubric=[${LOOP_RUBRIC_LOCAL:-없음}]"
@@ -679,6 +682,11 @@ else
       --out-prefix "$LOOP_DIR/shard-$PHASE-")" || SHARD_K=1
   if [ "${SHARD_K:-1}" -ge 2 ]; then
     printf '%s\n' "$SHARD_K" > "$LOOP_DIR/lens-sharded-$PHASE"
+    i=1; while [ "$i" -le "$SHARD_K" ]; do   # 죽은 샤드가 빈 파일로 병합에 걸리게 — 렌즈 산출 비우기와 같은 계약
+      : > "$LOOP_DIR/checker-$PHASE-safety-s$i.json"
+      : > "$LOOP_DIR/checker-$PHASE-quality-s$i.json"
+      i=$((i + 1))
+    done
     echo "샤드: safety·quality 를 $SHARD_K 개로 나눈다 (shard_size=$SHARD_SIZE cap=$SHARD_CAP). contract 는 전체."
   else
     echo "샤드: 안 나눈다 — 점검 파일이 shard_size($SHARD_SIZE) 이하"
