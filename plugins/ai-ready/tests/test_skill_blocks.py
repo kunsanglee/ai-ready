@@ -1448,6 +1448,71 @@ class TestCheckerAndScoring(BlockCase):
         self.assertTrue(all(f["id"].startswith("contract-") for f in scored["findings"]),
                         f"렌즈 접두가 안 붙었다: {[f['id'] for f in scored['findings']]}")
 
+    def test_lens_block_plans_shards_when_scope_is_large(self):
+        """점검 파일이 shard_size 를 넘으면 safety·quality 샤드 계획이 선다 — 목록 파일과 마커,
+        그리고 오케스트레이터가 프롬프트에 옮길 입력·출력 경로가 창에 나와야 한다."""
+        self.prepare()
+        for i in range(10):
+            (self.work / f"wide{i}.txt").write_text("x\n")
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("샤드: safety·quality 를 2 개로 나눈다", r.out, repr(r))
+        self.assertEqual((self.loop_dir / "lens-sharded-foundation").read_text().strip(), "2")
+        s1 = (self.loop_dir / "shard-foundation-s1.txt").read_text().splitlines()
+        s2 = (self.loop_dir / "shard-foundation-s2.txt").read_text().splitlines()
+        self.assertTrue(s1 and s2, "샤드 목록이 비어 있다")
+        self.assertIn("렌즈 safety 샤드 s1: 입력", r.out)
+        self.assertIn("checker-foundation-quality-s2.json", r.out)
+        self.assertIn("렌즈 contract 출력 경로", r.out, "contract 는 전체 시야로 하나여야 한다")
+
+    def test_lens_block_does_not_shard_small_scope_or_confirm_cycle(self):
+        self.prepare()
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("샤드: 안 나눈다", r.out)
+        self.assertFalse((self.loop_dir / "lens-sharded-foundation").exists())
+        # 확인 회차 — 파일이 많아도 전체 시야로 본다
+        for i in range(10):
+            (self.work / f"wide{i}.txt").write_text("x\n")
+        (self.loop_dir / "confirm-full-foundation").write_text("")
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("확인 회차는 전체 시야로 본다", r.out, repr(r))
+        self.assertFalse((self.loop_dir / "lens-sharded-foundation").exists())
+
+    def write_sharded_lenses(self, shard_count: int, *, skip: str | None = None) -> None:
+        (self.loop_dir / "lens-sharded-foundation").write_text(f"{shard_count}\n")
+        self.lens_path("contract").write_text(self.CLEAN)
+        for i in range(1, shard_count + 1):
+            for lens in ("safety", "quality"):
+                name = f"{lens}-s{i}"
+                if name == skip:
+                    continue
+                (self.loop_dir / f"checker-foundation-{name}.json").write_text(self.CLEAN)
+
+    def test_scoring_merges_sharded_lens_files(self):
+        """샤딩 회차의 병합 — --expect 가 1 + 2K 로 늘고, history 에 샤드 수가 남는다."""
+        self.prepare()
+        self.write_sharded_lenses(2)
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("verdict=PASS", r.out)
+        self.assertIn("샤드 2", r.out)
+        hist = json.loads(
+            (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
+        self.assertEqual(hist["lens_shards"], 2)
+
+    def test_scoring_stops_when_a_shard_is_missing(self):
+        """샤드 하나가 조용히 죽으면 렌즈 하나가 죽었을 때와 똑같이 멈춘다 — 그 샤드 몫의
+        파일들은 점검된 적이 없고, 그걸 통과로 읽으면 그 파일들의 결함이 영영 안 잡힌다."""
+        self.prepare()
+        self.write_sharded_lenses(2, skip="quality-s2")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 65, repr(r))
+        self.assertIn("병합 실패", r.err)
+        self.assertFalse((self.loop_dir / "history-foundation.jsonl").read_text(),
+                         "실패했는데 history 에 회차가 쌓였다")
+
     def test_scoring_records_lens_timing(self):
         """렌즈별 소요 계측(판정 무관) — 시작은 회차 스냅숏 mtime, 끝은 렌즈 산출 mtime.
         팬아웃 스펙의 선행 실측 장치라, 이 기록이 죽으면 다음 루프의 데이터가 조용히 안 쌓인다."""
@@ -1472,6 +1537,7 @@ class TestCheckerAndScoring(BlockCase):
         self.assertEqual(hist["scope_files"], 4, "범위 크기가 숫자로 안 실렸다")
         self.assertEqual(hist["scope_mode"], "narrowed-cycle")
         self.assertFalse(hist["lens_remerged"], "재병합 표시의 기본값은 false 다")
+        self.assertEqual(hist["lens_shards"], 1, "샤딩 안 한 회차의 샤드 수는 1 이다")
 
     def test_scoring_timing_absence_is_not_fatal(self):
         """스냅숏·범위 파일이 없으면(구판에서 시작한 실행 등) 빈 계측으로 지나간다 — 회차를 안 막는다."""
