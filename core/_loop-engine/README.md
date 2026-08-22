@@ -147,10 +147,10 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 `repeated_kind_cycles` 는 `kindstreak.sh` 가 같은 방식으로 읽는다. 같은 **종류**의 finding 이 몇 사이클
 연속으로 그 사이클을 지배하면 사람을 부를지다. 3인 이유는 두 번은 우연일 수 있고 세 번이면 코드가 아니라
 목표를 의심할 근거이기 때문이다(끝나는 지점이 없는 목표는 하나를 고칠 때마다 checker 가 다음 하나를 찾는다).
+
 샤드 파라미터(`shard_size`·`shard_cap`)는 build 스킬의 렌즈 준비 블록이 같은 `loop_param` 으로
 읽어 checker 팬아웃(safety·quality 샤딩)의 발동·상한을 정한다. **초기값 8·3 은 실측 없는
 임의값이다** — history 의 `lens_seconds`·`scope_files` 계측이 쌓이면 조정한다.
-
 brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
 같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
 값은 단일 통일(5회 / $500 / 5M 토큰 / 120분)이고 무인(케이스2)·핸드오프(케이스3)가 같은 상한을 쓴다.

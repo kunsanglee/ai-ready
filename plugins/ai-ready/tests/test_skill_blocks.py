@@ -1448,6 +1448,18 @@ class TestCheckerAndScoring(BlockCase):
         self.assertTrue(all(f["id"].startswith("contract-") for f in scored["findings"]),
                         f"렌즈 접두가 안 붙었다: {[f['id'] for f in scored['findings']]}")
 
+    def test_lens_outputs_are_emptied_under_zsh(self):
+        """zsh 는 따옴표 없는 변수 확장을 단어로 안 쪼갠다 — `for L in $LENSES` 면 비우기가
+        한 번만 돌아, 안 돈 렌즈가 앞 회차 결과로 병합돼 통과한다(리뷰 실측). 두 셸로 잰다."""
+        if not ZSH:
+            self.skipTest("zsh 없음")
+        self.prepare()
+        stale = self.lens_path("contract")
+        stale.write_text(self.CLEAN)   # 앞 회차 잔재
+        r = self.run_block("b-lens", shell="zsh")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertEqual(stale.read_text(), "", "zsh 에서 렌즈 산출 비우기가 안 됐다")
+
     def test_lens_block_plans_shards_when_scope_is_large(self):
         """점검 파일이 shard_size 를 넘으면 safety·quality 샤드 계획이 선다 — 목록 파일과 마커,
         그리고 오케스트레이터가 프롬프트에 옮길 입력·출력 경로가 창에 나와야 한다."""
@@ -1506,6 +1518,8 @@ class TestCheckerAndScoring(BlockCase):
         """샤딩 회차의 병합 — --expect 가 1 + 2K 로 늘고, history 에 샤드 수가 남는다."""
         self.prepare()
         self.write_sharded_lenses(2)
+        (self.loop_dir / "shard-foundation-s1.txt").write_text("a.txt\nb.txt\n")
+        (self.loop_dir / "shard-foundation-s2.txt").write_text("c.txt\n")
         r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("verdict=PASS", r.out)
@@ -1513,6 +1527,8 @@ class TestCheckerAndScoring(BlockCase):
         hist = json.loads(
             (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
         self.assertEqual(hist["lens_shards"], 2)
+        self.assertEqual(hist["shard_files"], [2, 1],
+                         "샤드별 파일 수가 소요의 분모로 남아야 한다")
 
     def test_scoring_stops_when_a_shard_is_missing(self):
         """샤드 하나가 조용히 죽으면 렌즈 하나가 죽었을 때와 똑같이 멈춘다 — 그 샤드 몫의
@@ -1550,6 +1566,7 @@ class TestCheckerAndScoring(BlockCase):
         self.assertEqual(hist["scope_mode"], "narrowed-cycle")
         self.assertFalse(hist["lens_remerged"], "재병합 표시의 기본값은 false 다")
         self.assertEqual(hist["lens_shards"], 1, "샤딩 안 한 회차의 샤드 수는 1 이다")
+        self.assertEqual(hist["shard_files"], [])
 
     def test_scoring_timing_absence_is_not_fatal(self):
         """스냅숏·범위 파일이 없으면(구판에서 시작한 실행 등) 빈 계측으로 지나간다 — 회차를 안 막는다."""

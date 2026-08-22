@@ -12,7 +12,8 @@
 규칙(전부 결정론):
   - K = ceil(파일 수 / size) 를 cap 으로 자른다. 파일 수 <= size 면 K=1.
   - 배정은 바이트 크기 균형 — 큰 파일부터(크기 내림차순, 같으면 이름 오름차순) 가장 가벼운
-    샤드에 넣는다(같으면 낮은 번호). 읽는 시간이 파일 크기에 대체로 비례한다는 근사다.
+    샤드에 넣는다(무게가 같으면 파일 수 적은 쪽, 그래도 같으면 낮은 번호 — 크기가 전부 0 인
+    목록이 한 샤드로 몰리지 않게). 읽는 시간이 파일 크기에 대체로 비례한다는 근사다.
   - 없는 파일(삭제된 경로 등)은 크기 0 으로 배정에 남긴다 — 목록에서 빼면 그 파일의 지적
     이력이 어느 샤드의 시야에도 안 들어간다.
   - 샤드 안 목록은 이름 정렬로 쓴다. 같은 입력이면 언제나 같은 파일이 같은 샤드에 간다.
@@ -31,7 +32,8 @@ __all__ = ["plan_shards"]
 
 def plan_shards(files: list[str], size: int, cap: int, root: str = ".") -> list[list[str]]:
     """파일 목록 → 샤드별 목록. 길이 1 이면 샤딩 안 함."""
-    names = sorted({f.strip() for f in files if f.strip()})
+    # strip 으로 거르면 앞뒤 공백이 있는 경로의 이름이 바뀐다 — 빈 줄만 버리고 원문을 보존한다.
+    names = sorted({f for f in files if f.strip()})
     if not names:
         return [[]]
     count = min(max(1, math.ceil(len(names) / max(1, size))), max(1, cap))

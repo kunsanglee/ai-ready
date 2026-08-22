@@ -148,7 +148,7 @@ fi
 # 실행하고 그 셸이 무엇인지는 호스트가 정하므로, 패턴을 find 에 넘겨 셸과 무관하게 만든다.
 find "$LOOP_DIR" -maxdepth 1 \( -name 'gate.fail' -o -name 'history*.jsonl' \
   -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \
-  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' \) -delete
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' -o -name 'shard-*' \) -delete
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -306,7 +306,7 @@ build 시작 — phase N개, 진행은 .loop/run/{ticket}/phases.json 에서 볼
 
 **컨텍스트 위생은 그 층에도 그대로 걸린다**(아래 "오케스트레이터는 내용을 보유하지 않는다"). 그리고 **메인에 올리는 보고는 phase 단위 요약** 이지 사이클 잡음이 아니다 — 사이클마다 보고하면 잡음이 한 층만 늦게 같은 창에 쌓인다.
 
-**아래층 스폰의 제약.** 위임 오케스트레이터가 maker·checker 를 띄울 때는 `run_in_background` 와 `name` 을 쓸 수 없다 — 그 깊이에서는 동기 서브에이전트만 뜬다. **checker 렌즈 셋은 한 메시지에 `Agent` 호출 셋을 담아 함께 띄우면 동기여도 병렬로 돈다.** 그 층은 팀 명부에도 화면에도 안 보이므로, 진행을 사람이 보려면 `.loop/run/{ticket}/` 의 이력 파일을 읽는다.
+**아래층 스폰의 제약.** 위임 오케스트레이터가 maker·checker 를 띄울 때는 `run_in_background` 와 `name` 을 쓸 수 없다 — 그 깊이에서는 동기 서브에이전트만 뜬다. **checker 는 한 메시지에 `Agent` 호출들을 담아 함께 띄우면 동기여도 병렬로 돈다(기본 렌즈 셋, 샤딩 회차는 1+2K 개).** 그 층은 팀 명부에도 화면에도 안 보이므로, 진행을 사람이 보려면 `.loop/run/{ticket}/` 의 이력 파일을 읽는다.
 
 **호스트가 이름 붙인 백그라운드 서브에이전트를 못 띄우면 이 세션이 Step 2 를 돈다.** 위임은 잡음이 어느 창에 쌓이는가의 문제라, 그 수단이 없는 호스트에서 스킬 자체를 못 쓰게 만들 이유가 없다. **다만 착수 전 스펙 검사는 그대로 통과해야 한다** — 그 검사는 위임 여부와 무관한 시작 조건이다. 이 퇴로로 들어왔으면 사이클 잡음이 사람 창에 쌓이므로, 한 phase 가 길어지면 세션을 나눌지 사람에게 묻는다.
 
@@ -504,7 +504,7 @@ fi
 
 #### Step 2-2. checker 렌즈 셋을 병렬로 (독립·적대 시선)
 
-**`Agent` 호출 셋을 한 메시지에 담아 함께 띄운다.** 렌즈마다 담당 차원이 다르고 서로를 모른다(불변 2).
+**`Agent` 호출을 한 메시지에 담아 함께 띄운다 — 기본 셋, 샤딩 회차는 아래 블록 출력이 정하는 1+2K 개("샤딩 회차의 스핀" 참조).** 렌즈마다 담당 차원이 다르고 서로를 모른다(불변 2).
 
 | 렌즈 | 담당 차원 | 무엇을 의심하나 |
 |---|---|---|
@@ -542,7 +542,9 @@ set -a; . "$LOOP_DIR/params.env"; set +a
 # **phase 별로도 가른다**: 단일 파일을 phase 가 공유하면 앞 phase 의 잔여가 남아, 다음 phase 에서
 # 비우기를 빠뜨리고 checker 가 안 쓰면 그 옛 결과가 채점돼 미점검 phase 가 done 으로 둔갑한다.
 LENSES="contract safety quality"
-for L in $LENSES; do : > "$LOOP_DIR/checker-$PHASE-$L.json"; done
+# zsh 는 따옴표 없는 변수 확장을 단어로 안 쪼갠다 — $LENSES 로 돌리면 이 루프가 한 번 돌고
+# 렌즈 산출이 하나도 안 비워져, 안 돈 렌즈가 앞 회차 결과로 병합돼 통과한다(실측). literal 로 돈다.
+for L in contract safety quality; do : > "$LOOP_DIR/checker-$PHASE-$L.json"; done
 # 옛 샤드 산출도 같은 이유로 지운다 — 남으면 이번 회차 샤드가 죽어도 옛 결과가 병합돼
 # 미점검 파일들이 점검된 것으로 둔갑한다. 이번 회차 몫은 아래 샤드 계획이 빈 파일로 다시 만든다.
 find "$LOOP_DIR" -maxdepth 1 \( -name "checker-$PHASE-safety-s*.json" -o -name "checker-$PHASE-quality-s*.json" \) -delete
@@ -647,8 +649,11 @@ elif [ "$PHASE_NARROWED" -eq 1 ]; then
   printf '%s narrowed-phase\n' "$(printf '%s\n' "$SCOPE" | awk 'NF' | wc -l | tr -d ' ')" \
     > "$LOOP_DIR/lens-scope-count-$PHASE"
 else
-  printf '%s full\n' "$({ git -C "$PROJECT_ROOT" diff --name-only "$LOOP_BASE_BRANCH" 2>/dev/null;
-      git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null; } | awk 'NF' | sort -u | wc -l | tr -d ' ')" \
+  # 이 합집합이 전 범위 회차의 "렌즈에 넘기는 목록" 정본이다 — 아래 샤드 분할이 같은 변수를 쓴다.
+  # 두 번 계산하면 계측 분모와 분할 대상이 조용히 어긋난다.
+  FULL_LIST="$({ git -C "$PROJECT_ROOT" diff --name-only "$LOOP_BASE_BRANCH" 2>/dev/null;
+      git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null; } | awk 'NF' | sort -u)"
+  printf '%s full\n' "$(printf '%s\n' "$FULL_LIST" | awk 'NF' | wc -l | tr -d ' ')" \
     > "$LOOP_DIR/lens-scope-count-$PHASE"
 fi
 # 다음 회차의 기준점 — 렌즈를 띄우기 직전 상태를 찍는다(재개 멱등: 매 회차 덮는 것이 맞다).
@@ -660,13 +665,13 @@ python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" --out "$CYCLE
 # contract 는 항상 전체를 본다: 계약·호출자 관계는 파일 사이에 있어서, 교차 시야가 순회 안에
 # 항상 하나는 남아야 한다(마지막 phase 를 안 좁히는 것과 같은 원리). 확인 회차는 샤딩하지 않는다.
 # 나누는 목록은 이번 회차 렌즈에 실제로 넘기는 그 목록이고, 전 범위 회차는 위 계측과 같은
-# 합집합으로 목록을 만든다 — 읽기량이 가장 큰 회차를 샤딩에서 빼면 이 장치의 과녁이 빠진다.
+# 합집합으로 목록을 만든다 — 가장 오래 걸리는 회차가 빠지면 이 장치로 줄일 시간이 거의 안 남는다.
 find "$LOOP_DIR" -maxdepth 1 -name "shard-$PHASE-*.txt" -delete   # 글롭이면 zsh 가 no matches 로 죽는다
 rm -f "$LOOP_DIR/lens-sharded-$PHASE"
 SHARD_SIZE="$(source "$ENG/lib.sh" && loop_param shard_size)"
 SHARD_CAP="$(source "$ENG/lib.sh" && loop_param shard_cap)"
-case "$SHARD_SIZE" in ''|*[!0-9]*) SHARD_SIZE="";; esac
-case "$SHARD_CAP"  in ''|*[!0-9]*) SHARD_CAP="";;  esac
+case "$SHARD_SIZE" in ''|0|*[!0-9]*) SHARD_SIZE="";; esac   # 0 이면 파일마다 한 샤드가 된다 — 오타로 보고 끈다
+case "$SHARD_CAP"  in ''|0|*[!0-9]*) SHARD_CAP="";;  esac
 if [ -z "$SHARD_SIZE" ] || [ -z "$SHARD_CAP" ]; then
   echo "샤드: 안 나눈다 — PARAMS 에 shard_size·shard_cap 이 없다(구판 rubric). 값이 서면 켜진다"
 elif [ "$IS_CONFIRM" -eq 1 ]; then
@@ -674,8 +679,7 @@ elif [ "$IS_CONFIRM" -eq 1 ]; then
 else
   if [ -f "$LOOP_DIR/narrowed-$PHASE" ]; then SHARD_LIST="$CYC_SCOPE"
   elif [ "$PHASE_NARROWED" -eq 1 ]; then SHARD_LIST="$SCOPE"
-  else SHARD_LIST="$({ git -C "$PROJECT_ROOT" diff --name-only "$LOOP_BASE_BRANCH" 2>/dev/null;
-      git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null; } | awk 'NF' | sort -u)"
+  else SHARD_LIST="$FULL_LIST"
   fi
   SHARD_K="$(printf '%s\n' "$SHARD_LIST" | python3 "$ENG/shard_scope.py" \
       --size "$SHARD_SIZE" --cap "$SHARD_CAP" --root "$PROJECT_ROOT" \
@@ -700,7 +704,7 @@ if [ -f "$LOOP_DIR/lens-sharded-$PHASE" ]; then
     i=$((i + 1))
   done
 else
-  for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
+  for L in contract safety quality; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 fi
 ```
 
@@ -741,7 +745,9 @@ else
   MERGE_ARGS+=("safety=$LOOP_DIR/checker-$PHASE-safety.json")
   MERGE_ARGS+=("quality=$LOOP_DIR/checker-$PHASE-quality.json")
 fi
-bash "$ENG/merge_findings.sh" --expect "${#MERGE_ARGS[@]}" "${MERGE_ARGS[@]}" > "$F" || {
+# --expect 는 배열 길이가 아니라 독립 계산이다 — 배열 길이를 넘기면 개수 검사가 항등식이 되어,
+# 블록을 손대다 인자 한 줄을 떨어뜨려도 아무도 못 잡는다.
+bash "$ENG/merge_findings.sh" --expect "$(( SHARD_K >= 2 ? 1 + 2 * SHARD_K : 3 ))" "${MERGE_ARGS[@]}" > "$F" || {
   : > "$LOOP_DIR/lens-remerge-$PHASE"   # 계측 표시 — 이 회차 소요는 되띄운 렌즈만 부풀어 표본에서 가른다
   echo "build: 렌즈 결과 병합 실패 — 위 메시지가 어느 축인지 말한다. 그 축만 다시 띄우거나 멈춰 사람 호출" >&2
   exit 65
@@ -780,6 +786,15 @@ print(json.dumps(out))
 [ -n "$LENS_SECONDS" ] || LENS_SECONDS='{}'
 LENS_REMERGED=false
 [ -f "$LOOP_DIR/lens-remerge-$PHASE" ] && { LENS_REMERGED=true; rm -f "$LOOP_DIR/lens-remerge-$PHASE"; }
+# 샤드별 파일 수 — 샤드 소요(lens_seconds 의 -s<i> 라벨)와 짝지을 분모. 분할이 바이트 균형이라
+# 전체 수를 샤드 수로 나눠서는 복원되지 않는다.
+SHARD_FILES='[]'
+if [ "$SHARD_K" -ge 2 ]; then
+  SHARD_FILES=$(i=1; while [ "$i" -le "$SHARD_K" ]; do
+    if [ -f "$LOOP_DIR/shard-$PHASE-s$i.txt" ]; then wc -l < "$LOOP_DIR/shard-$PHASE-s$i.txt" | tr -d ' '; else echo 0; fi
+    i=$((i + 1))
+  done | jq -sc '.')
+fi
 { read -r SCOPE_N SCOPE_MODE < "$LOOP_DIR/lens-scope-count-$PHASE"; } 2>/dev/null || { SCOPE_N=unknown; SCOPE_MODE=unknown; }
 [ -n "${SCOPE_MODE:-}" ] || SCOPE_MODE=unknown
 ITER=$(( $(wc -l < "$HIST" 2>/dev/null | tr -d ' ') + 1 ))
@@ -791,9 +806,10 @@ jq -nc --argjson it "$ITER" \
        --arg sm "$SCOPE_MODE" \
        --argjson lr "$LENS_REMERGED" \
        --argjson sk "$SHARD_K" \
+       --argjson sf "$SHARD_FILES" \
   '{iteration:$it, verdict:$v.verdict, findings:($s.findings // []),
     lens_seconds:$lt, scope_files:($sn|tonumber? // $sn), scope_mode:$sm, lens_remerged:$lr,
-    lens_shards:$sk}' >> "$HIST"   # 한 줄 = 한 사이클
+    lens_shards:$sk, shard_files:$sf}' >> "$HIST"   # 한 줄 = 한 사이클
 # 같은 **종류**가 사이클을 연속 지배하는지. stall.sh 는 등급 개수만 봐서 이걸 못 본다.
 # **반드시 위 append 뒤에** 부른다 — 이번 회차가 이력에 들어간 뒤라야 이번 회차가 판정에 포함된다.
 KINDST=$(bash "$ENG/kindstreak.sh" --history "$HIST") || {
@@ -827,7 +843,7 @@ printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kin
 아래 **위에서부터** 먼저 걸리는 것을 따른다.
 
 1. `V == AWAIT_USER` → **멈춤, 사람 호출.** 비가역·자동화 금지 영역(BLOCKER/force_await). maker 가 손대면 안 된다.
-2. `V == PASS` → **이 회차가 좁힌 범위로 돌았거나(`$LOOP_DIR/narrowed-$PHASE`) 샤딩으로 돌았으면(`$LOOP_DIR/lens-sharded-$PHASE`) 아직 닫지 않는다** — 샤드는 각자 자기 몫만 봐서 파일 사이 상호작용 결함은 어느 샤드도 못 본다. `: > "$LOOP_DIR/confirm-full-$PHASE"` 를 만들고 Step 2-1 로 돌아가 phase 범위로 **확인 회차**를 한 번 돈다 — 좁힌 시야 밖에 남은 결함이 없는지 마지막에 한 번은 전 시야로 본다. 좁히지 않은 회차의 PASS 면 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
+2. `V == PASS` → **이 회차가 좁힌 범위로 돌았거나(`$LOOP_DIR/narrowed-$PHASE`) 샤딩으로 돌았으면(`$LOOP_DIR/lens-sharded-$PHASE`) 아직 닫지 않는다** — contract 가 남기는 교차 시야는 계약·의도 축뿐이라, 보안·런타임·컨벤션·단순성 축에서 서로 다른 샤드에 갈린 파일 사이의 결함은 어느 샤드도 못 본다. `: > "$LOOP_DIR/confirm-full-$PHASE"` 를 만들고 Step 2-1 로 돌아가 phase 범위로 **확인 회차**를 한 번 돈다 — 좁힌 시야 밖에 남은 결함이 없는지 마지막에 한 번은 전 시야로 본다. 좁히지 않은 회차의 PASS 면 이 phase `status=done`, **메인에 한 줄 보고**, 다음 phase 로. 남은 phase 가 없으면 Step 3.
    - **PASS 를 brake 보다 먼저 본다.** 반대 순서면 마지막 허용 회차에 나온 PASS 가 brake 판정에 가려, phase 가 PASS 를 받고도 안 닫힌 채 사람이 불려 온다. 확인 회차는 마커가 회차 상한을 한 칸만 올리는 것이라 1회로 제한되고(게이트 실패로 그 회차를 다시 열면 다음 진입에서 brake 가 선다), 절대 상한 `ABS_CEIL` 과 시간 상한은 그대로 하드 스톱이다. **회차 상한이 절대 상한과 같으면 이 예외는 서지 않는다** — 절대 상한이 이긴다.
 3. brake 도달(`ITER + GFAIL >= MAX_ITER` 또는 `>= ABS_CEIL` 또는 `ELAPSED_MIN >= BUDGET_MIN`) → **멈춤, 사람 호출.** 현재까지의 best 상태와 남은 finding 을 요약해 넘긴다. **`exit_criteria_probes` 가 있으면 조건별 성립 여부를 함께 넘긴다** — 사람이 "한 회차 더" 와 "여기서 닫는다" 를 가르는 재료가 그것이다(아래 블록). **회차 요약의 범위 계측(`out_of_scope`)도 함께 넘긴다** — 조건이 성립했나와 남은 지적이 이번 목표 안인가는 같은 판단의 두 반쪽이다.
 4. `ST == STALLED` 또는 `ST == REGRESS_ESCALATE` → **멈춤, 사람 호출.** 헛바퀴/악화. `RETRY_SOFT`(MAJOR 만)로 정체한 경우 사람에게 "이 MAJOR 안고 통과할까?" 승인 옵션을 같이 제시한다 — **simplicity 지적이 이 자리에 자주 온다**(더 단순한 형태가 있다는 판단은 갈릴 수 있고, floor 가 MAJOR 인 것이 그 뜻이다).
