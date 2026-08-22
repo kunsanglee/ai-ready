@@ -630,6 +630,15 @@ elif [ -f "$CYCLE_SNAP" ] \
 else
   echo "회차 범위: 첫 회차이거나 산출 거부 — 좁히지 않는다(위 점검 범위 그대로)"
 fi
+# 계측(판정 무관): 이번 회차 렌즈에 넘긴 범위의 크기 — 렌즈 소요와의 비례를 재는 선행 실측이다
+# (팬아웃 스펙의 전제 확인용). 좁혀진 목록이면 파일 수, 전 범위면 full 로 남긴다.
+if [ -f "$LOOP_DIR/narrowed-$PHASE" ]; then
+  printf '%s\n' "$CYC_SCOPE" | awk 'NF' | wc -l | tr -d ' ' > "$LOOP_DIR/lens-scope-count-$PHASE"
+elif [ "$PHASE_NARROWED" -eq 1 ]; then
+  printf '%s\n' "$SCOPE" | awk 'NF' | wc -l | tr -d ' ' > "$LOOP_DIR/lens-scope-count-$PHASE"
+else
+  printf 'full\n' > "$LOOP_DIR/lens-scope-count-$PHASE"
+fi
 # 다음 회차의 기준점 — 렌즈를 띄우기 직전 상태를 찍는다(재개 멱등: 매 회차 덮는 것이 맞다).
 python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" --out "$CYCLE_SNAP" --root "$PROJECT_ROOT"
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
@@ -667,11 +676,33 @@ SCORED=$(bash "$ENG/score.sh" "$F") || {
 }                                                                # finding 마다 severity·await 부여
 VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, counts, out_of_scope, await}
 STALL=$(printf '%s' "$VERDICT"  | bash "$ENG/stall.sh" --state "$STATE")   # 정체 판정 + 상태 영속
+# 계측(판정 무관): 렌즈별 소요 초 — 시작은 회차 스냅숏 mtime(Step 2-2 가 렌즈 직전에 기록),
+# 끝은 각 렌즈가 마지막에 쓰는 산출 파일 mtime. 오케스트레이터가 프롬프트를 조립하는 시간이
+# 앞에 끼므로 렌즈 순수 시간의 상한이다. 스냅숏·산출이 없으면 빈 값 — 계측 실패는 회차를 안 막는다.
+LENS_SECONDS=$(python3 -c '
+import json, os, sys
+d, ph = sys.argv[1], sys.argv[2]
+out = {}
+try:
+    t0 = os.path.getmtime(os.path.join(d, f"scope-cycle-{ph}.txt"))
+except OSError:
+    print("{}"); sys.exit(0)
+for lens in sys.argv[3:]:
+    try:
+        out[lens] = max(0, round(os.path.getmtime(os.path.join(d, f"checker-{ph}-{lens}.json")) - t0))
+    except OSError:
+        pass
+print(json.dumps(out))
+' "$LOOP_DIR" "$PHASE" contract safety quality)
+SCOPE_N=$(cat "$LOOP_DIR/lens-scope-count-$PHASE" 2>/dev/null || echo unknown)
 ITER=$(( $(wc -l < "$HIST" 2>/dev/null | tr -d ' ') + 1 ))
 jq -nc --argjson it "$ITER" \
        --argjson v "$VERDICT" \
        --argjson s "$SCORED" \
-  '{iteration:$it, verdict:$v.verdict, findings:($s.findings // [])}' >> "$HIST"   # 한 줄 = 한 사이클
+       --argjson lt "$LENS_SECONDS" \
+       --arg sn "$SCOPE_N" \
+  '{iteration:$it, verdict:$v.verdict, findings:($s.findings // []),
+    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn)}' >> "$HIST"   # 한 줄 = 한 사이클
 # 같은 **종류**가 사이클을 연속 지배하는지. stall.sh 는 등급 개수만 봐서 이걸 못 본다.
 # **반드시 위 append 뒤에** 부른다 — 이번 회차가 이력에 들어간 뒤라야 이번 회차가 판정에 포함된다.
 KINDST=$(bash "$ENG/kindstreak.sh" --history "$HIST") || {
@@ -691,6 +722,7 @@ printf '%s' "$VERDICT" | jq -r '.out_of_scope
 echo "반복 종류: $(printf '%s' "$KINDST" | jq -r '"\(.status) kind=\(.kind // "-") streak=\(.streak)/\(.threshold)"')"
 # 렌즈별 적발 수 — 한 축이 매번 0건이면 그 렌즈 프롬프트를 의심할 근거가 된다(빈 결과는 증거가 아니다).
 printf '%s' "$SCORED" | jq -r '[.findings[] | .lens // "?"] | group_by(.) | map("\(.[0])=\(length)") | "렌즈별 적발: " + join(" ")'
+echo "렌즈 소요(계측, 판정 무관): $(printf '%s' "$LENS_SECONDS" | jq -r 'to_entries | map("\(.key)=\(.value)s") | join(" ")') / 점검 파일 $SCOPE_N"
 # 오케스트레이터 컨텍스트 위생: findings 의 evidence 전문을 cat/Read 로 창에 끌어들이지 않는다.
 # 아래 한 줄 목록(등급·종류·위치)까지만 보고, 전문은 maker 단계에서 finding 단위로만 연다.
 printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kind)\t\(.location)"'

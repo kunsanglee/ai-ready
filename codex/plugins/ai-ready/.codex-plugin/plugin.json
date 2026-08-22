@@ -1,6 +1,6 @@
 {
   "name": "ai-ready",
-  "version": "1.5.5+codex.1",
+  "version": "1.5.6+codex.1",
   "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (build/review/lessons) in Codex. Checker lenses split by axis and review in parallel without seeing each other; severity is assigned by a deterministic rubric shell, not by the model. Release history lives in CHANGELOG.md.",
   "author": {
     "name": "kunsanglee",

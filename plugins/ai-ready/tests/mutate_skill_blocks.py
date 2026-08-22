@@ -29,6 +29,17 @@ TEST = TREE / "tests" / "test_skill_blocks.py"
 # 각 변이: (라벨, 대상 문서, 지울/바꿀 원문, 바꿀 내용, 깨져야 하는 시험, 왜 이 변이인가)
 MUTATIONS = [
     (
+        "history 줄에서 렌즈 계측 필드 제거",
+        "skills/build/SKILL.md",
+        """'{iteration:$it, verdict:$v.verdict, findings:($s.findings // []),
+    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn)}'""",
+        """'{iteration:$it, verdict:$v.verdict, findings:($s.findings // [])}'""",
+        ["TestCheckerAndScoring.test_scoring_records_lens_timing",
+         "TestCheckerAndScoring.test_scoring_timing_absence_is_not_fatal"],
+        "팬아웃 스펙의 선행 실측 장치. 계측은 판정에 안 들어가 죽어도 루프가 멀쩡히 돌므로, "
+        "이 변이가 살면 다음 루프에서 데이터가 조용히 안 쌓이고 아무도 모른다.",
+    ),
+    (
         "품질 게이트를 사슬에서 제거",
         "skills/build/SKILL.md",
         ' && run_gate QUALITY "${LOOP_QUALITY_CMD:-}"',

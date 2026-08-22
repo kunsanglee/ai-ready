@@ -1447,6 +1447,36 @@ class TestCheckerAndScoring(BlockCase):
         self.assertTrue(all(f["id"].startswith("contract-") for f in scored["findings"]),
                         f"렌즈 접두가 안 붙었다: {[f['id'] for f in scored['findings']]}")
 
+    def test_scoring_records_lens_timing(self):
+        """렌즈별 소요 계측(판정 무관) — 시작은 회차 스냅숏 mtime, 끝은 렌즈 산출 mtime.
+        팬아웃 스펙의 선행 실측 장치라, 이 기록이 죽으면 다음 루프의 데이터가 조용히 안 쌓인다."""
+        self.prepare()
+        (self.loop_dir / "scope-cycle-foundation.txt").write_text("")
+        (self.loop_dir / "lens-scope-count-foundation").write_text("4\n")
+        self.write_lenses(findings_in="contract")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("렌즈 소요(계측, 판정 무관)", r.out, "계측 줄이 창에 안 나왔다")
+        self.assertIn("점검 파일 4", r.out)
+        hist = json.loads(
+            (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
+        self.assertEqual(set(hist["lens_seconds"]), {"contract", "safety", "quality"},
+                         f"렌즈 셋의 소요가 다 안 실렸다: {hist.get('lens_seconds')}")
+        self.assertTrue(all(isinstance(v, int) and v >= 0
+                            for v in hist["lens_seconds"].values()))
+        self.assertEqual(hist["scope_files"], 4, "범위 크기가 숫자로 안 실렸다")
+
+    def test_scoring_timing_absence_is_not_fatal(self):
+        """스냅숏·범위 파일이 없으면(구판에서 시작한 실행 등) 빈 계측으로 지나간다 — 회차를 안 막는다."""
+        self.prepare()
+        self.write_lenses(findings_in="contract")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 0, repr(r))
+        hist = json.loads(
+            (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
+        self.assertEqual(hist["lens_seconds"], {})
+        self.assertEqual(hist["scope_files"], "unknown")
+
     def test_all_lenses_clean_scores_as_pass(self):
         """대조군 — 셋 다 정상 '발견 없음' 이면 PASS 로 채점돼야 한다.
 
