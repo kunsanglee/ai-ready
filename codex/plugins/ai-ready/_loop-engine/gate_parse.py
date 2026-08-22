@@ -15,12 +15,16 @@
 형식은 추측이 아니라 실제 출력에서 떴다(2026-07-27, Kotlin 2.x + ktlint + Gradle test /
 2026-08-22, eslint 10.9.0 stylish + radon cc 6.0.1 + xenon 0.9.3 — QUALITY 게이트용 복잡도 도구).
 특히 Kotlin 2.x 는 **열 번호 뒤에 콜론이 없다** — `...:17:31 Unresolved reference` 다.
-구버전은 콜론이 붙어(`...:17:31: message`) 양쪽을 다 받는다. 그리고 eslint 는 출력을 파일로
-리다이렉트해도 ANSI 색 코드를 남긴다 — 매칭 전에 벗겨야 한다. 기억으로 쓰면 여기서 틀린다.
+구버전은 콜론이 붙어(`...:17:31: message`) 양쪽을 다 받는다. 그리고 게이트 출력을 파일로
+받아도 ANSI 색 코드가 남을 수 있다 — 도구 성질이 아니라, 에이전트 하네스가 FORCE_COLOR 를
+내보내면 도구의 비 TTY 색 억제가 덮이는 실행 환경의 성질이다(2026-08-22, FORCE_COLOR=3
+환경의 eslint 10.9.0 에서 확인. 변수를 지우면 색이 없다). 그래서 특정 도구가 아니라 모든
+줄에서 매칭 전에 벗긴다. 기억으로 쓰면 여기서 틀린다.
 
 빌드 시스템으로 분기하지 않고 아는 패턴을 전부 시도한다. 형식이 서로 충분히 달라 교차
 매칭이 나지 않고, 분기를 두면 `params.env` 에 빌드 시스템을 실어 나르는 단계가 늘어난다.
-한 패턴이 과하게 잡히면 그때 분기를 넣는다.
+한 패턴이 과하게 잡히면 그때 분기를 넣는다. 예외 하나: 파일 헤더 줄(`_BARE_PATH_HEADER`)은
+도구를 안 가리는 모양이라, 그 모양의 줄은 어느 출력에서든 항목이 아니라 헤더로 읽힌다.
 
 stdlib-only — json / re / sys / argparse 만 사용.
 """
@@ -79,25 +83,33 @@ _PYTEST_FAIL = re.compile(
 # 컴파일러 경고는 게이트를 깨지 않는다 — 항목으로 만들지 않는다.
 _WARN_PREFIX = re.compile(r"^w:\s")
 
-# ANSI 색 코드. eslint 는 파일로 리다이렉트해도 색을 남긴다(10.9.0 실측) — 매칭 전에 벗긴다.
+# ANSI 색 코드. FORCE_COLOR 가 켜진 환경(에이전트 하네스가 흔히 켠다)에서는 파일로
+# 리다이렉트해도 색이 남는다 — 매칭 전에 벗긴다.
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 # 파일 경로가 제 줄에 홀로 서는 헤더. eslint stylish 와 radon cc 가 이 모양으로 파일을 선언하고
-# 아래 항목 줄을 들여쓴다 — 항목 줄에는 파일이 없어 헤더를 기억해야 한다.
-_BARE_PATH_HEADER = re.compile(r"^(?:/|\.{1,2}/)?[^\s:]+\.[A-Za-z0-9]+$")
+# 아래 항목 줄을 들여쓴다 — 항목 줄에는 파일이 없어 헤더를 기억해야 한다. 확장자에 소문자를
+# 요구해 버전 숫자(6.0.1)·예외 클래스명(java.lang.IllegalStateException)을 헤더로 잡지 않는다.
+_BARE_PATH_HEADER = re.compile(r"^(?:/|\.{1,2}/)?[^\s:]+\.(?=[a-z0-9]*[a-z])[a-z0-9]{1,10}$")
 
 # `  1:1  error  Function 'route' has a complexity of 13. Maximum allowed is 5  complexity`
 # — eslint stylish (10.9.0 실측). 열 사이가 공백 둘 이상, 마지막 열이 규칙 이름.
+# 규칙 이름에는 @typescript-eslint/no-unused-vars 처럼 @ 스코프가 붙을 수 있고,
+# 구문 오류(Parsing error) 줄은 규칙 열 자체가 없다(실측) — 그래서 규칙 그룹이 선택이다.
 _ESLINT_ENTRY = re.compile(
-    r"^\s+(?P<line>\d+):(?P<col>\d+)\s{2,}(?P<sev>error|warning)\s{2,}(?P<msg>.+?)\s{2,}(?P<rule>[\w./-]+)$"
+    r"^\s+(?P<line>\d+):(?P<col>\d+)\s{2,}(?P<sev>error|warning)\s{2,}(?P<msg>.+?)(?:\s{2,}(?P<rule>[@\w./-]+))?$"
 )
+
+# eslint 가 --max-warnings 초과로 실패할 때 내는 줄. 이때는 경고가 게이트를 깬 것이라 항목이다.
+_ESLINT_MAXWARN_MARKER = "ESLint found too many warnings"
 
 # `    F 1:0 route - C (13)` — radon cc (6.0.1 실측). 점수 괄호는 -s 옵션일 때만 붙는다.
 _RADON_ENTRY = re.compile(
     r"^\s+[FMC]\s+(?P<line>\d+):(?P<col>\d+)\s+(?P<name>\S+)\s+-\s+(?P<rank>[A-F])(?:\s+\((?P<score>\d+)\))?$"
 )
 
-# `ERROR:xenon:block "sample.py:1 route" has a rank of C` — xenon (0.9.3 실측)
+# `ERROR:xenon:block "sample.py:1 route" has a rank of C` — xenon (0.9.3 실측).
+# 기본 block 형식만 안다 — --paths-in-front·module·average 판정은 문장 구조가 달라 안 걸린다.
 _XENON = re.compile(
     r'^ERROR:xenon:block\s+"(?P<file>.+?):(?P<line>\d+)\s+(?P<name>\S+)"\s+has a rank of\s+(?P<rank>[A-F])$'
 )
@@ -120,7 +132,7 @@ def parse_lines(lines: list[str]) -> list[dict]:
 
     def add(item: dict) -> None:
         # 같은 파일·줄·메시지가 여러 태스크에서 중복 보고되는 일이 흔하다.
-        key = (item.get("kind"), item.get("file"), item.get("line"),
+        key = (item.get("kind"), item.get("file"), item.get("line_number"),
                item.get("column"), item.get("message"), item.get("test"))
         if key in seen:
             return
@@ -128,6 +140,8 @@ def parse_lines(lines: list[str]) -> list[dict]:
         items.append(item)
 
     header_file = None   # 직전 헤더 줄의 파일 경로 — eslint·radon 항목 줄엔 파일이 없다
+    # --max-warnings 초과 실패는 경고만으로도 게이트를 깬다 — 그때는 경고도 항목이다.
+    warnings_broke_gate = any(_ESLINT_MAXWARN_MARKER in ln for ln in lines)
     for index, raw in enumerate(lines):
         line = _ANSI.sub("", raw.rstrip("\n"))
         if not line.strip() or _WARN_PREFIX.match(line):
@@ -139,17 +153,23 @@ def parse_lines(lines: list[str]) -> list[dict]:
 
         match = _ESLINT_ENTRY.match(line)
         if match and header_file:
-            if match.group("sev") == "warning":
+            if match.group("sev") == "warning" and not warnings_broke_gate:
                 continue   # 경고는 게이트를 깨지 않는다 — w: 접두어와 같은 취급
-            kind = ("complexity-over-threshold" if match.group("rule") == "complexity"
-                    else "lint-violation")
+            rule = match.group("rule")
+            msg = match.group("msg").strip()
+            if rule == "complexity":
+                kind = "complexity-over-threshold"
+            elif rule is None and msg.startswith("Parsing error"):
+                kind = "compile-error"   # 구문 오류는 규칙 열이 없다 — 큐 순서상 컴파일 오류다
+            else:
+                kind = "lint-violation"
             add(_item(
                 kind, line,
                 file=header_file,
                 line_number=int(match.group("line")),
                 column=int(match.group("col")),
-                message=match.group("msg").strip(),
-                rule=match.group("rule"),
+                message=msg,
+                rule=rule,
             ))
             continue
 

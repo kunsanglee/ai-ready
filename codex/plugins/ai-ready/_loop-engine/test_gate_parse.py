@@ -4,8 +4,9 @@
 Gradle test 리포터 / 2026-08-22: eslint 10.9.0 stylish, radon cc 6.0.1, xenon 0.9.3).
 경로·이름만 중립으로 바꿨다. 형식을 기억으로 쓰면 정규식과 테스트가
 같은 착오를 공유해 둘 다 초록인 채 실전에서 0건이 된다 — 실제로 Kotlin 2.x 는 열 번호 뒤에
-콜론이 없고 기억은 콜론이 있다고 알려줬으며, eslint 는 출력을 파일로 리다이렉트해도
-ANSI 색 코드를 남기는데 기억은 TTY 가 아니면 색이 꺼진다고 알려줬다.
+콜론이 없고 기억은 콜론이 있다고 알려줬다. ANSI 색은 도구가 아니라 환경의 성질이다 —
+FORCE_COLOR 가 켜진 하네스에서는 도구의 비 TTY 색 억제가 덮여 파일로 받아도 색이 남는다
+(eslint 10.9.0 + FORCE_COLOR=3 실측. 변수를 지우면 색이 없다).
 
 stdlib only. 실행:
     python3 _loop-engine/test_gate_parse.py
@@ -61,7 +62,8 @@ BUILD FAILED in 6s
 """
 
 
-# 실측 형식 — eslint 10.9.0 stylish, 출력을 파일로 리다이렉트한 원문. 색 코드가 그대로 남는다.
+# 실측 형식 — eslint 10.9.0 stylish, FORCE_COLOR=3 환경에서 파일로 리다이렉트한 원문.
+# 하네스가 FORCE_COLOR 를 내보내면 비 TTY 색 억제가 덮여 색 코드가 그대로 남는다.
 ESLINT_ANSI = (
     "\x1b[0m\n"
     "\x1b[4m/repo/web/src/route.js\x1b[24m\n"
@@ -104,7 +106,8 @@ src/app/service.py
     F 1:0 route - C
 """
 
-# 실측 형식 — xenon (radon 기반 게이트형). 한 줄에 파일·줄·이름·등급이 다 실린다.
+# 실측 형식 — xenon (radon 기반 게이트형)의 기본 block 판정. 한 줄에 파일·줄·이름·등급이 다 실린다.
+# radon cc 자체는 위반이 있어도 종료코드 0 이라 게이트를 못 깬다 — 문턱 실패는 xenon 의 몫.
 XENON = 'ERROR:xenon:block "src/app/service.py:1 route" has a rank of C\n'
 
 
@@ -275,6 +278,54 @@ class TestComplexityTools(unittest.TestCase):
         self.assertEqual(item["file"], "src/app/service.py")
         self.assertEqual(item["line_number"], 1)
         self.assertEqual(item["message"], "route cyclomatic complexity rank C")
+
+    def test_eslint_scoped_rule_names_are_kept(self):
+        # @typescript-eslint/* 처럼 스코프 붙은 규칙이 대부분인 TS 프로젝트에서
+        # 항목이 조용히 사라지던 자리 (1.5.5 리뷰 발견).
+        text = ("\n/repo/src/app.ts\n"
+                "  3:7   error  'x' is assigned a value but never used  @typescript-eslint/no-unused-vars\n"
+                "  12:1  error  Function 'route' has a complexity of 13. Maximum allowed is 5  complexity\n")
+        items = gate_parse.parse(text)
+        self.assertEqual(len(items), 2, f"@ 스코프 규칙 줄이 버려졌다: {items}")
+        self.assertEqual(items[0]["rule"], "@typescript-eslint/no-unused-vars")
+        self.assertEqual(items[0]["kind"], "lint-violation")
+
+    def test_eslint_parsing_error_without_rule_column(self):
+        # 구문 오류 줄은 규칙 열이 없다(실측). 가장 막고 있는 오류가 버려지면 안 된다.
+        text = ("\n/repo/src/broken.js\n"
+                "  2:1  error  Parsing error: Unexpected token\n")
+        items = gate_parse.parse(text)
+        self.assertEqual(len(items), 1, f"규칙 열 없는 구문 오류가 버려졌다: {items}")
+        self.assertEqual(items[0]["kind"], "compile-error")
+        self.assertNotIn("rule", items[0])
+
+    def test_eslint_max_warnings_failure_makes_warnings_items(self):
+        # --max-warnings 초과 실패에서는 경고가 게이트를 깬 것이라 항목이다.
+        # 감지가 package.json 의 lint 스크립트를 그대로 쓰므로 드문 조합이 아니다.
+        text = ("\n/repo/src/a.js\n"
+                "  3:1  warning  Unexpected console statement  no-console\n"
+                "\n"
+                "\u2716 1 problem (0 errors, 1 warning)\n"
+                "\n"
+                "ESLint found too many warnings (maximum: 0).\n")
+        items = gate_parse.parse(text)
+        self.assertEqual([i["rule"] for i in items], ["no-console"],
+                         f"경고가 게이트를 깬 경우엔 항목이어야 한다: {items}")
+
+    def test_dedup_key_uses_line_number(self):
+        # 키가 존재하지 않는 필드명을 읽어 줄 성분이 항상 None 이던 결함의 회귀.
+        text = ("\n/repo/src/a.js\n"
+                "  3:1   error  Unexpected console statement  no-console\n"
+                "  9:1   error  Unexpected console statement  no-console\n")
+        items = gate_parse.parse(text)
+        self.assertEqual(len(items), 2, "메시지가 같아도 줄이 다르면 별개 항목이다")
+
+    def test_version_and_exception_tokens_are_not_headers(self):
+        # 헤더 정규식이 점 찍힌 아무 토큰이나 받으면 뒤 항목이 엉뚱한 파일에 붙는다.
+        for token in ("6.0.1", "java.lang.IllegalStateException"):
+            items = gate_parse.parse(f"{token}\n    F 1:0 route - C (13)\n")
+            self.assertFalse([i for i in items if i.get("file") == token],
+                             f"{token} 이 파일 헤더로 잡혔다")
 
     def test_indented_entry_without_header_is_not_claimed(self):
         # 헤더 없이 들여쓴 항목 줄만 오면 파일을 지어내지 않는다 — 꼬리 폴백으로 남긴다.
