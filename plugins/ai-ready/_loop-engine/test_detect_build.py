@@ -35,7 +35,7 @@ class TestDetectBuildSystem(unittest.TestCase):
             self.assertEqual(b["build_system"], "gradle")
             self.assertEqual(b["build_cmd"], "./gradlew assemble -x test")
             self.assertEqual(b["test_cmd"], "./gradlew test")
-            self.assertEqual(b["lint_cmd"], "./gradlew ktlintCheck")
+            self.assertEqual(b["quality_cmd"], "./gradlew ktlintCheck")
 
     def test_gradle_without_wrapper_uses_bare_gradle(self):
         with tempfile.TemporaryDirectory() as td:
@@ -43,7 +43,7 @@ class TestDetectBuildSystem(unittest.TestCase):
             _write(root, "build.gradle", "// groovy dsl")
             b = detect_build.detect_build_system(root)
             self.assertEqual(b["build_cmd"], "gradle assemble -x test")
-            self.assertEqual(b["lint_cmd"], "")
+            self.assertEqual(b["quality_cmd"], "")
 
     def test_npm_only_scripts_present_become_commands(self):
         with tempfile.TemporaryDirectory() as td:
@@ -52,7 +52,7 @@ class TestDetectBuildSystem(unittest.TestCase):
             b = detect_build.detect_build_system(root)
             self.assertEqual(b["build_system"], "npm")
             self.assertEqual(b["build_cmd"], "npm run build")
-            self.assertEqual(b["lint_cmd"], "npm run lint")
+            self.assertEqual(b["quality_cmd"], "npm run lint")
             self.assertEqual(b["test_cmd"], "")
 
     def test_typecheck_stands_in_for_a_missing_build_script(self):
@@ -145,7 +145,7 @@ class TestDetectBuildSystem(unittest.TestCase):
             _write(root, "Cargo.toml", "[package]\nname='x'")
             b = detect_build.detect_build_system(root)
             self.assertEqual(b["build_system"], "cargo")
-            self.assertEqual(b["lint_cmd"], "cargo clippy")
+            self.assertEqual(b["quality_cmd"], "cargo clippy")
 
     def test_unknown_when_no_manifest(self):
         with tempfile.TemporaryDirectory() as td:
@@ -235,7 +235,7 @@ class TestDetectShape(unittest.TestCase):
             root = Path(td)
             _write(root, "Cargo.toml", "[package]\nname='x'")
             d = detect_build.detect(root)
-            for key in ("build_system", "build_cmd", "test_cmd", "lint_cmd", "stack",
+            for key in ("build_system", "build_cmd", "test_cmd", "quality_cmd", "stack",
                         "convention_docs", "knowledge_layer", "ticket_regex",
                         "base_branch", "local_kinds"):
                 self.assertIn(key, d)

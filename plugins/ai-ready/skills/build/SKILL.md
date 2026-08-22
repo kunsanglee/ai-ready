@@ -15,7 +15,7 @@ description: 설계·작업 지시를 사람 없이 구현해 수렴시키는 �
 
 - 이 스킬은 `ai-ready` plugin 의 일부다. **도구 본체는 유저 레벨**(plugin), **프로젝트별 차이는 런타임 감지**가 채운다 — 별도 어댑터 파일을 만들지 않는다.
 - plugin 번들(`$CLAUDE_PLUGIN_ROOT` 하위): `_loop-engine/`(채점 셸 `score`·`decide`·`stall`·`kindstreak`·`lessons`, 렌즈 결과 병합 `merge_findings`, `lib.sh` 의 `loop_param`, `detect_build.py` 감지기, `gate_parse.py` 게이트 실패 파서), `_loop-engine/rubric.base.md`(BASE 루브릭·brake 단일 원천), `agents/loop-maker.md`·`agents/loop-checker.md`·`agents/loop-spec-checker.md`·`agents/loop-lesson-synthesizer.md`(서브에이전트, `ai-ready:` namespace).
-- 프로젝트 사실(빌드·테스트·린트 명령·티켓 패턴·베이스 브랜치·컨벤션 docs·지식층)은 Step 0 에서 `detect_build.py` 가 매니페스트·브랜치를 *읽어* 감지한다(읽기 전용 — 커밋되는 어댑터 파일은 만들지 않는다).
+- 프로젝트 사실(빌드·테스트·품질 검사 명령·티켓 패턴·베이스 브랜치·컨벤션 docs·지식층)은 Step 0 에서 `detect_build.py` 가 매니페스트·브랜치를 *읽어* 감지한다(읽기 전용 — 커밋되는 어댑터 파일은 만들지 않는다).
 - 프로젝트 델타(레포에 커밋, 선택): `.loop/rubric.md`(LOCAL rubric — 그 스택 특유 kind. BASE 와 병합 채점). 없어도 BASE 만으로 돈다. 스택 특유 종류는 사람이 `/lessons` 로 덧붙여 키운다 — 자동 생성하지 않는다.
 - 지식층은 프로젝트의 `docs/ANTIPATTERNS.md`(ai-ready audit/apply 가 만들고 가꾸는 문서). checker 가 판정 기준으로 읽고, `/lessons` 가 잡힌 실수를 거기에 덧붙인다.
 - 런타임 상태는 `$CLAUDE_PROJECT_DIR/.loop/run/{ticket}/`(phases.json·phase 별 history·stall·렌즈별 checker 결과·scored·gate-queue·게이트 출력 원문·tree.snapshot·spec-gaps, 그리고 브랜치별 포인터 `.loop/run/.active-{브랜치}`) — 루프 한정 휘발성, `.gitignore` 로 `.loop/run/` 추적 제외. `.loop/rubric.md`(있으면)는 추적 대상.
@@ -82,7 +82,7 @@ DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
 # 사람이 미리 지정한 값이 감지값을 이긴다 — 트러블슈팅 표의 "직접 지정" 우회가 실제로 서는 자리.
 LOOP_BUILD_CMD="${LOOP_BUILD_CMD:-$(printf '%s' "$DET" | jq -r '.build_cmd // ""')}"
 LOOP_TEST_CMD="${LOOP_TEST_CMD:-$(printf '%s' "$DET" | jq -r '.test_cmd // ""')}"
-LOOP_LINT_CMD="${LOOP_LINT_CMD:-$(printf '%s' "$DET" | jq -r '.lint_cmd // ""')}"
+LOOP_QUALITY_CMD="${LOOP_QUALITY_CMD:-$(printf '%s' "$DET" | jq -r '.quality_cmd // ""')}"
 # 게이트 명령이 둘 다 비면 결정론 게이트가 통째로 사라진 채 루프가 돈다 — 컴파일·테스트가 한 번도
 # 안 돈 코드가 렌즈 판정만으로 PASS 까지 갈 수 있다. 없는 것과 못 찾은 것을 가른다: 게이트가 정말
 # 없는 대상(문서 전용 저장소)은 LOOP_NO_GATE=1 로 명시 선언하고 진행하고, 그 외에는 시작하지 않는다.
@@ -161,7 +161,7 @@ BUDGET_MIN="${BUDGET_MIN:-$(source "$ENG/lib.sh" && loop_param budget_minutes)}"
 # (빈 MAX_ITER 로 brake 정수 비교가 실패하면 brake 가 조용히 무력화된다 — 이 파일이 그 구멍을 막는다.)
 {
   printf 'ENG=%q\nLOOP_DIR=%q\nPHASES=%q\n' "$ENG" "$LOOP_DIR" "$PHASES"
-  printf 'LOOP_BASE_BRANCH=%q\nLOOP_BUILD_CMD=%q\nLOOP_TEST_CMD=%q\nLOOP_LINT_CMD=%q\n' "$LOOP_BASE_BRANCH" "$LOOP_BUILD_CMD" "$LOOP_TEST_CMD" "$LOOP_LINT_CMD"
+  printf 'LOOP_BASE_BRANCH=%q\nLOOP_BUILD_CMD=%q\nLOOP_TEST_CMD=%q\nLOOP_QUALITY_CMD=%q\n' "$LOOP_BASE_BRANCH" "$LOOP_BUILD_CMD" "$LOOP_TEST_CMD" "$LOOP_QUALITY_CMD"
   printf 'LOOP_CONVENTION_DOCS=%q\nLOOP_KNOWLEDGE_LAYER=%q\nLOOP_RUBRIC_LOCAL=%q\n' "$LOOP_CONVENTION_DOCS" "$LOOP_KNOWLEDGE_LAYER" "${LOOP_RUBRIC_LOCAL:-}"
   printf 'LOOP_DESIGN_REF=%q\n' "${LOOP_DESIGN_REF:-}"   # 설계 문서 경로(있으면). phases.json 의 design_ref 가 구역을 가리킨다
   printf 'MAX_ITER=%q\nBUDGET_MIN=%q\nABS_CEIL=%q\nTICKET=%q\n' "$MAX_ITER" "$BUDGET_MIN" "$ABS_CEIL" "$TICKET"
@@ -497,7 +497,7 @@ fi
 - **게이트 실패의 산출물은 버리지 않는다 — `gate-queue.jsonl` 이 그 사이클 maker 의 입력이다.** 창에는 한 줄 목록만 나가고 원문은 `$LOOP_DIR/gate-<단계>.out` 에 남아, 필요한 항목만 maker 가 열어 본다.
   - **아는 형식이 하나도 없어도 큐가 비지 않는다.** 파서가 출력 꼬리를 `gate-output-unparsed` 항목 하나로 남긴다. 조용히 버리면 큐가 비어 게이트가 통과한 것처럼 보이고, 그 오독이 이 큐가 막는 실패다.
   - 형식은 실제 출력에서 뜬 것이다. Kotlin 2.x 는 **열 번호 뒤에 콜론이 없다**. 형식 회귀는 `_loop-engine/test_gate_parse.py` 가 잡는다.
-- 린트 게이트가 필요하면 `run_gate LINT "${LOOP_LINT_CMD:-}"` 를 게이트 사슬에 덧붙인다(빈 값이면 스킵).
+- 정적 품질 게이트(린트·순환 복잡도·정적 분석)가 필요하면 `run_gate QUALITY "${LOOP_QUALITY_CMD:-}"` 를 게이트 사슬에 덧붙인다(빈 값이면 스킵). 복잡도 문턱 검사(xenon·eslint complexity 규칙 등)도 별도 게이트가 아니라 이 슬롯으로 태운다 — 도구가 숫자로 판정하므로 checker 를 태울 이유가 없다.
 - 게이트 통과면 Step 2-2 로.
 
 #### Step 2-2. checker 렌즈 셋을 병렬로 (독립·적대 시선)
@@ -764,7 +764,7 @@ echo "빌드: ${LOOP_BUILD_CMD:-없음} / 테스트: ${LOOP_TEST_CMD:-없음} / 
 
 - **`gate-queue.jsonl` 이 비어 있지 않으면 그것.** 게이트가 깨진 사이클이라는 뜻이고, 이때 `scored-{phase}.json` 은 **이번 사이클 것이 아니다** — 게이트가 깨지면 checker 를 부르지 않아 Step 2-3 이 돌지 않았고, 그 파일은 앞 사이클에서 남은 값이다. 그걸 주면 maker 가 없는 문제를 쫓는다. 불변 4의 연장이다.
 - **`gate-output-unparsed` 항목이 섞여 있으면** 파서가 그 도구의 형식을 모른 것이다. maker 가 꼬리를 읽고 고치되, 같은 형식이 반복되면 `gate_parse.py` 에 패턴을 더할 후보로 사람에게 보고하라고 한 줄 덧붙인다.
-- **오케스트레이터는 이 파일들의 전문을 창에 끌어오지 않는다.** 경로만 넘기고 maker 가 읽는다. 린트 게이트는 항목이 수천 개가 될 수 있다.
+- **오케스트레이터는 이 파일들의 전문을 창에 끌어오지 않는다.** 경로만 넘기고 maker 가 읽는다. 품질 게이트는 항목이 수천 개가 될 수 있다.
 - **테스트 동반 강제는 rubric 이 지탱한다.** KINDS 표의 `test-missing`(convention, CRITICAL)이 BASE 에 등록돼 있어 LOCAL rubric 없이도 작동한다.
 - **`blocked` 로 끝났으면 다음 maker 를 띄우지 않는다.** 사유를 사람에게 넘긴다(`AWAIT_USER`).
 

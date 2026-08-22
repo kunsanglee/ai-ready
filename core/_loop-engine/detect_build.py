@@ -4,7 +4,7 @@
 대상 코드베이스를 훑어 무인 검증 loop(`/build`·`/review`·`/lessons`)이
 그 프로젝트에서 돌 때 필요한 사실을 추론한다:
 
-  1. 빌드 시스템 (gradle / maven / npm / cargo / go / python) → 빌드·테스트·린트 명령
+  1. 빌드 시스템 (gradle / maven / npm / cargo / go / python) → 빌드·테스트·품질 검사 명령
   2. 스택 (Spring / JPA / PostgreSQL) → LOCAL rubric 에 심을 종류(kind) 후보
   3. 컨벤션 문서 (ANTIPATTERNS / CONVENTIONS / NAMING …) → 점검 기준 문서 목록 + 영구 지식층
   4. 티켓 패턴 (브랜치·커밋에서 JIRA 키 추론) + 베이스 브랜치
@@ -91,8 +91,8 @@ def _git(target: Path, *args: str) -> str:
 
 # --- 빌드 시스템 ----------------------------------------------------------
 
-def _gradle_lint_cmd(target: Path, gradle: str) -> str:
-    """루트 gradle 파일 텍스트에서 린트 플러그인을 감지해 대응 task 를 고른다."""
+def _gradle_quality_cmd(target: Path, gradle: str) -> str:
+    """루트 gradle 파일 텍스트에서 린트·정적 분석 플러그인을 감지해 대응 task 를 고른다."""
     text = "".join(_read(target / f) for f in _GRADLE_FILES).lower()
     if "ktlint" in text:
         return f"{gradle} ktlintCheck"
@@ -127,7 +127,7 @@ def _python_test_cmd(target: Path) -> str:
     return "python -m unittest"
 
 
-def _python_lint_cmd(target: Path) -> str:
+def _python_quality_cmd(target: Path) -> str:
     pyproject = _read(target / "pyproject.toml").lower()
     if "[tool.ruff" in pyproject or (target / "ruff.toml").is_file() or (target / ".ruff.toml").is_file():
         return "ruff check ."
@@ -137,9 +137,9 @@ def _python_lint_cmd(target: Path) -> str:
 
 
 def detect_build_system(target: Path) -> dict[str, str]:
-    """루트 매니페스트로 빌드 시스템을 고르고 빌드·테스트·린트 명령을 추론한다.
+    """루트 매니페스트로 빌드 시스템을 고르고 빌드·테스트·품질 검사 명령을 추론한다.
 
-    Returns dict(build_system, build_cmd, test_cmd, lint_cmd). 감지 실패 시 unknown + 빈 명령.
+    Returns dict(build_system, build_cmd, test_cmd, quality_cmd). 감지 실패 시 unknown + 빈 명령.
     빌드 명령은 *테스트 제외 컴파일* 을 기본으로 한다(게이트 단계가 빠르게 컴파일만 확인하도록).
     """
     has = lambda f: (target / f).is_file()  # noqa: E731
@@ -151,23 +151,23 @@ def detect_build_system(target: Path) -> dict[str, str]:
             "build_system": "gradle",
             "build_cmd": f"{gradle} assemble -x test",
             "test_cmd": f"{gradle} test",
-            "lint_cmd": _gradle_lint_cmd(target, gradle),
+            "quality_cmd": _gradle_quality_cmd(target, gradle),
         }
 
     # Maven
     if has("pom.xml"):
         mvn = "./mvnw" if has("mvnw") else "mvn"
         pom = _read(target / "pom.xml").lower()
-        lint = ""
+        quality = ""
         if "spotless-maven-plugin" in pom:
-            lint = f"{mvn} spotless:check"
+            quality = f"{mvn} spotless:check"
         elif "maven-checkstyle-plugin" in pom or "checkstyle" in pom:
-            lint = f"{mvn} checkstyle:check"
+            quality = f"{mvn} checkstyle:check"
         return {
             "build_system": "maven",
             "build_cmd": f"{mvn} -q -DskipTests compile",
             "test_cmd": f"{mvn} test",
-            "lint_cmd": lint,
+            "quality_cmd": quality,
         }
 
     # npm / pnpm / yarn — package.json 의 scripts 에 있는 것만 명령으로 채택.
@@ -199,12 +199,12 @@ def detect_build_system(target: Path) -> dict[str, str]:
         stub_text = str(scripts.get("test", "")).lower()
         is_npm_stub = "no test specified" in stub_text and "exit 1" in stub_text
         test_cmd = f"{pm} test" if ("test" in scripts and not is_npm_stub) else ""
-        lint_cmd = run("lint") if "lint" in scripts else ""
+        quality_cmd = run("lint") if "lint" in scripts else ""
         return {
             "build_system": pm,
             "build_cmd": build_cmd,
             "test_cmd": test_cmd,
-            "lint_cmd": lint_cmd,
+            "quality_cmd": quality_cmd,
         }
 
     # Cargo
@@ -213,7 +213,7 @@ def detect_build_system(target: Path) -> dict[str, str]:
             "build_system": "cargo",
             "build_cmd": "cargo build",
             "test_cmd": "cargo test",
-            "lint_cmd": "cargo clippy",
+            "quality_cmd": "cargo clippy",
         }
 
     # Go
@@ -222,7 +222,7 @@ def detect_build_system(target: Path) -> dict[str, str]:
             "build_system": "go",
             "build_cmd": "go build ./...",
             "test_cmd": "go test ./...",
-            "lint_cmd": "go vet ./...",
+            "quality_cmd": "go vet ./...",
         }
 
     # Python
@@ -231,10 +231,10 @@ def detect_build_system(target: Path) -> dict[str, str]:
             "build_system": "python",
             "build_cmd": "",  # 라이브러리는 별도 빌드 단계가 없는 경우가 흔함 — 게이트는 테스트로 충분
             "test_cmd": _python_test_cmd(target),
-            "lint_cmd": _python_lint_cmd(target),
+            "quality_cmd": _python_quality_cmd(target),
         }
 
-    return {"build_system": "unknown", "build_cmd": "", "test_cmd": "", "lint_cmd": ""}
+    return {"build_system": "unknown", "build_cmd": "", "test_cmd": "", "quality_cmd": ""}
 
 
 # --- 스택 ----------------------------------------------------------------
@@ -393,7 +393,7 @@ def detect(target: Path) -> dict[str, Any]:
         "build_system": build["build_system"],
         "build_cmd": build["build_cmd"],
         "test_cmd": build["test_cmd"],
-        "lint_cmd": build["lint_cmd"],
+        "quality_cmd": build["quality_cmd"],
         "stack": stack,
         "convention_docs": convention_docs,
         "knowledge_layer": knowledge_layer,
