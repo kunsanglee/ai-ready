@@ -162,6 +162,11 @@ case "${GATE_MODE:-pass}" in
       echo "    org.opentest4j.AssertionFailedError at MainTest.kt:16"
       exit 1
     fi ;;
+  fail-quality)
+    if [[ "$*" == *qualityCheck* ]]; then
+      echo 'ERROR:xenon:block "src/main/kotlin/Main.kt:12 process" has a rank of D'
+      exit 1
+    fi ;;
 esac
 echo "BUILD SUCCESSFUL"
 exit 0
@@ -1087,6 +1092,38 @@ class TestGateLayer(BlockCase):
         self.assertEqual(len(log.read_text().splitlines()), 1,
                          f"BUILD 실패인데 TEST 도 돌았다: {log.read_text()!r}")
         self.assertIn("assemble", log.read_text())
+
+    def test_quality_gate_runs_after_build_and_test(self):
+        # 셋째 슬롯이 사슬에 실제로 서 있는지 — 1.5.5 리뷰에서 "산문에만 있고 실행 경로에 없다" 로
+        # 걸린 자리다. params.env 에 계산만 되고 아무도 안 읽으면 이 시험이 먼저 죽는다.
+        self.setup_loop(LOOP_QUALITY_CMD="./gradlew qualityCheck")
+        log = self.scratch / "gate.log"
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass", GATE_LOG=str(log)))
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("게이트 QUALITY 통과", r.out)
+        lines = log.read_text().splitlines()
+        self.assertEqual(len(lines), 3, repr(lines))
+        self.assertIn("qualityCheck", lines[2], "품질은 컴파일·테스트가 선 뒤 맨 마지막이다")
+
+    def test_quality_gate_failure_fills_queue(self):
+        self.setup_loop(LOOP_QUALITY_CMD="./gradlew qualityCheck")
+        log = self.scratch / "gate.log"
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="fail-quality", GATE_LOG=str(log)))
+        self.assertEqual(r.rc, 1, repr(r))
+        items = [json.loads(ln) for ln in
+                 (self.loop_dir / "gate-queue.jsonl").read_text().splitlines()]
+        self.assertEqual([i["kind"] for i in items], ["complexity-over-threshold"], repr(items))
+        self.assertEqual(items[0]["stage"], "QUALITY")
+        # 품질 실패는 컴파일·테스트가 이미 선 뒤에만 나온다
+        self.assertEqual(len(log.read_text().splitlines()), 3, log.read_text())
+
+    def test_quality_gate_empty_command_skips_loudly(self):
+        # 픽스처 gradle 파일엔 ktlint·spotless·detekt 가 없어 감지값이 빈 문자열이다.
+        # 빈 명령은 침묵이 아니라 스킵을 소리 내고 통과한다 — 안 켠 것과 통과한 것을 가른다.
+        self.setup_loop()
+        r = self.run_block("b-gate", env=self.env(GATE_MODE="pass"))
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("QUALITY 게이트 명령 비어있음", r.err, repr(r))
 
     def test_gate_queue_is_refilled_each_cycle(self):
         self.setup_loop()

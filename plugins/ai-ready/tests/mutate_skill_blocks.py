@@ -29,6 +29,17 @@ TEST = TREE / "tests" / "test_skill_blocks.py"
 # 각 변이: (라벨, 대상 문서, 지울/바꿀 원문, 바꿀 내용, 깨져야 하는 시험, 왜 이 변이인가)
 MUTATIONS = [
     (
+        "품질 게이트를 사슬에서 제거",
+        "skills/build/SKILL.md",
+        ' && run_gate QUALITY "${LOOP_QUALITY_CMD:-}"',
+        "",
+        ["TestGateLayer.test_quality_gate_runs_after_build_and_test",
+         "TestGateLayer.test_quality_gate_failure_fills_queue",
+         "TestGateLayer.test_quality_gate_empty_command_skips_loudly"],
+        "1.5.5 리뷰에서 걸린 자리 — 셋째 슬롯이 산문에만 있고 실행 사슬에 없어, LOOP_QUALITY_CMD 가 "
+        "계산만 되고 아무도 안 읽었다. 이 변이가 살면 그 상태로 되돌아가는데 겉보기는 똑같다.",
+    ),
+    (
         "근거 없이 닫은 결정을 통과",
         "skills/spec/SKILL.md",
         '[ "$UNGROUNDED" -eq 0 ] || { echo "spec: 근거 없이 닫은 결정이',

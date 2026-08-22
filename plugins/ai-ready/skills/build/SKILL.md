@@ -476,7 +476,8 @@ run_gate() {   # run_gate <단계라벨> <명령>
   return 1
 }
 # 컴파일 먼저. 깨지면 테스트는 돌리지 않는다(깨진 컴파일 위의 테스트 실패는 정보가 없다).
-run_gate BUILD "${LOOP_BUILD_CMD:-}" && run_gate TEST "${LOOP_TEST_CMD:-}"
+# 품질(린트·복잡도)은 맨 뒤 — 행동에 영향 없는 위반이라 컴파일·테스트가 선 뒤에만 의미가 있다.
+run_gate BUILD "${LOOP_BUILD_CMD:-}" && run_gate TEST "${LOOP_TEST_CMD:-}" && run_gate QUALITY "${LOOP_QUALITY_CMD:-}"
 if [ "$GATE_FAILED" -eq 1 ]; then
   TOTAL=$(wc -l < "$GQ" | tr -d ' ')
   echo "게이트 실패 — 항목 $TOTAL 건이 $GQ 에 쌓였다. Step 2-5 가 여기부터 처리한다."
@@ -497,7 +498,7 @@ fi
 - **게이트 실패의 산출물은 버리지 않는다 — `gate-queue.jsonl` 이 그 사이클 maker 의 입력이다.** 창에는 한 줄 목록만 나가고 원문은 `$LOOP_DIR/gate-<단계>.out` 에 남아, 필요한 항목만 maker 가 열어 본다.
   - **아는 형식이 하나도 없어도 큐가 비지 않는다.** 파서가 출력 꼬리를 `gate-output-unparsed` 항목 하나로 남긴다. 조용히 버리면 큐가 비어 게이트가 통과한 것처럼 보이고, 그 오독이 이 큐가 막는 실패다.
   - 형식은 실제 출력에서 뜬 것이다. Kotlin 2.x 는 **열 번호 뒤에 콜론이 없다**. 형식 회귀는 `_loop-engine/test_gate_parse.py` 가 잡는다.
-- 정적 품질 게이트(린트·순환 복잡도·정적 분석)가 필요하면 `run_gate QUALITY "${LOOP_QUALITY_CMD:-}"` 를 게이트 사슬에 덧붙인다(빈 값이면 스킵). 복잡도 문턱 검사(xenon·eslint complexity 규칙 등)도 별도 게이트가 아니라 이 슬롯으로 태운다 — 도구가 숫자로 판정하므로 checker 를 태울 이유가 없다.
+- 정적 품질 게이트(린트·순환 복잡도·정적 분석)는 게이트 사슬의 셋째 자리다. `LOOP_QUALITY_CMD` 가 비면 스킵을 소리 내고 통과한다 — 안 켠 것과 통과한 것이 겉보기 같아지지 않게. 복잡도 문턱 검사(xenon·eslint complexity 규칙 등)도 별도 게이트가 아니라 이 슬롯으로 태운다 — 도구가 숫자로 판정하므로 checker 를 태울 이유가 없다.
 - 게이트 통과면 Step 2-2 로.
 
 #### Step 2-2. checker 렌즈 셋을 병렬로 (독립·적대 시선)
