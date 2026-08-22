@@ -24,7 +24,7 @@ checker 를 한 명만 띄우는 호출(`/review`)은 그 결과 파일을 `scor
 루프가 끝나면(PASS 또는 사람 대기) 사이클 로그를 종합해 선순환을 닫는다:
 
 ```
-history-{phase}.jsonl  (오케스트레이터가 사이클마다 append: { iteration, verdict, findings:[scored...] })
+history-{phase}.jsonl  (오케스트레이터가 사이클마다 append: { iteration, verdict, findings:[scored...], lens_seconds, scope_files, scope_mode })
    ▼
 lessons.sh     마지막 사이클 대비 diff → "출처1" 실수(떴다가 고쳐진 finding) 추출
    ▼
@@ -45,6 +45,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 | `score.sh` | 깨끗함↔안 봄 게이트(findings·reviewed 둘 다 비면 exit 65), 종류 lookup → base severity, 경로 유도 + checker 가중 합집합으로 한 단계 상향, force_await 판정 | findings JSON → severity 부여된 findings |
 | `decide.sh` | severity 집계 → 종료 verdict. **`out_of_scope` 는 세기만 하고 verdict 에 안 들어간다** — phase 가 안 보기로 한 표면의 지적이 몇 건인지 남기는 계측이다(등급을 내릴지는 수치가 쌓인 뒤에 정한다) | scored JSON → `{verdict, counts, out_of_scope, await}` |
 | `stall.sh` | 사전식 벡터 + best-ever floor 정체 판정 | decide JSON + `--state <file>` → 갱신된 상태 |
+| `shard_scope.py` | 점검 파일 목록을 checker 샤드로 결정론 분할(바이트 크기 균형·이름 정렬 안정). K>=2 면 샤드별 목록 파일을 쓰고 K 를 출력 | stdin 목록 + `--size/--cap/--out-prefix/--root` → K |
 | `lessons.sh` | 루프 종료 후 history-{phase}.jsonl diff → 출처1 실수(고쳐진 finding) 추출 | `--history <file>` → mistakes JSON |
 | `test.sh` | 결정론 채점 회귀 테스트: 정상 채점 고정 + 변질 입력 fail-loud + lessons 결정론 | (인자 없음) → 통과/실패, exit 0=전부 통과 |
 
@@ -93,7 +94,8 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 한 줄 = 한 사이클. `findings` 는 그 사이클 `score.sh` 출력(severity 부여됨), `verdict` 는 `decide.sh` 결과.
 
 ```
-{ "iteration": N, "verdict": "RETRY", "findings": [ { kind, dimension, location, severity, evidence, ... }, ... ] }
+{ "iteration": N, "verdict": "RETRY", "findings": [ { kind, dimension, location, severity, evidence, ... }, ... ],
+  "lens_seconds": { contract, safety, quality }, "scope_files": N|"unknown", "scope_mode": "narrowed-cycle|narrowed-phase|full|unknown" }
 ```
 
 `lessons.sh` 가 이걸 받아 **마지막 사이클에 없는 finding**(= 도중에 고쳐진 것)을 출처1 실수로 추출한다.
@@ -128,7 +130,7 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 
 위 부품(채점 셸 score/decide/stall·병합 merge_findings·lesson 추출기 lessons·에이전트 loop-checker/loop-lesson-synthesizer)을 묶는 오케스트레이션은 ai-ready 플러그인의 **스킬**이 한다. 별도 `/loop` 스킬·`profile.env`·외부 게이트 스크립트(enum-converter-guard 등)는 두지 않는다 — 부품을 묶는 정책이 곧 스킬 본문이고, 게이트는 런타임 감지한 빌드·테스트 명령으로 스킬이 직접 돌린다.
 
-- **`/build`** — 무인 자동 루프(사람 핸드오프, 케이스3). 일을 phase/step 으로 쪼개 승인을 한 번 받고, phase 마다 PASS 까지 순회한다. Step 0 에서 `detect_build.py` 로 빌드·테스트·품질 검사 명령·티켓·베이스를 런타임 감지(어댑터 파일 없음), 매 사이클 brake(반복·시간) 선확인 → 컴파일·테스트·품질 게이트 → checker 렌즈 셋(contract·safety·quality) 병렬 → `merge_findings|score|decide|stall` → verdict 분기 → maker 재스핀. 변경 하나만 수렴시키는 것은 phase 가 하나인 경우다. brake 값은 `rubric.base.md` PARAMS(`max_iterations` 5·`budget_minutes` 120 등) 단일 원천.
+- **`/build`** — 무인 자동 루프(사람 핸드오프, 케이스3). 일을 phase/step 으로 쪼개 승인을 한 번 받고, phase 마다 PASS 까지 순회한다. Step 0 에서 `detect_build.py` 로 빌드·테스트·품질 검사 명령·티켓·베이스를 런타임 감지(어댑터 파일 없음), 매 사이클 brake(반복·시간) 선확인 → 컴파일·테스트·품질 게이트 → checker 렌즈 셋(contract·safety·quality) 병렬(점검 파일이 많으면 safety·quality 는 샤드로 더 나눔) → `merge_findings|score|decide|stall` → verdict 분기 → maker 재스핀. 변경 하나만 수렴시키는 것은 phase 가 하나인 경우다. brake 값은 `rubric.base.md` PARAMS(`max_iterations` 5·`budget_minutes` 120 등) 단일 원천.
 - **`/review`** — 1회 점검(사람이 곧 루프). checker 1회(렌즈 지정 없이 여섯 차원 전부) + 채점 → 보고서. 코드 안 고침.
 - **`/lessons`** — 종료 후 lesson 수확. `lessons.sh` 출력 + 사람·PR 지적을 loop-lesson-synthesizer 가 ANTIPATTERNS 후보 초안으로 만들고, 사람 승인분만 반영.
 - **케이스2(Sentry 무인)** — agent 봇이 `runLoopFix` 로 수정 worktree 에서 헤드리스로 `/build` 를 띄워 같은 엔진을 돈다(케이스2 = 케이스3, 헤드리스 위임). brake 집행도 그 스킬이 한다.
@@ -145,6 +147,10 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 `repeated_kind_cycles` 는 `kindstreak.sh` 가 같은 방식으로 읽는다. 같은 **종류**의 finding 이 몇 사이클
 연속으로 그 사이클을 지배하면 사람을 부를지다. 3인 이유는 두 번은 우연일 수 있고 세 번이면 코드가 아니라
 목표를 의심할 근거이기 때문이다(끝나는 지점이 없는 목표는 하나를 고칠 때마다 checker 가 다음 하나를 찾는다).
+
+샤드 파라미터(`shard_size`·`shard_cap`)는 build 스킬의 렌즈 준비 블록이 같은 `loop_param` 으로
+읽어 checker 팬아웃(safety·quality 샤딩)의 발동·상한을 정한다. **초기값 8·3 은 실측 없는
+임의값이다** — history 의 `lens_seconds`·`scope_files` 계측이 쌓이면 조정한다.
 brake 파라미터(`max_iterations`, 예산 `budget_usd`/`budget_tokens`/`budget_minutes`)는 무인 드라이버가
 같은 `loop_param` 으로 읽는다. 드라이버는 대상 프로젝트 워크트리를 들고 있어 이 읽기가 공짜다.
 값은 단일 통일(5회 / $500 / 5M 토큰 / 120분)이고 무인(케이스2)·핸드오프(케이스3)가 같은 상한을 쓴다.

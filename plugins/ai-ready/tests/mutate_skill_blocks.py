@@ -29,6 +29,28 @@ TEST = TREE / "tests" / "test_skill_blocks.py"
 # 각 변이: (라벨, 대상 문서, 지울/바꿀 원문, 바꿀 내용, 깨져야 하는 시험, 왜 이 변이인가)
 MUTATIONS = [
     (
+        "채점이 샤드 마커를 무시하고 3축 병합으로 되돌아감",
+        "skills/build/SKILL.md",
+        '[ -f "$LOOP_DIR/lens-sharded-$PHASE" ] && SHARD_K="$(cat "$LOOP_DIR/lens-sharded-$PHASE")"',
+        "",
+        ["TestCheckerAndScoring.test_scoring_merges_sharded_lens_files",
+         "TestCheckerAndScoring.test_scoring_stops_when_a_shard_is_missing"],
+        "샤딩 회차의 산출은 샤드별 파일인데 병합이 3축 이름만 찾으면 exit 65 로 회차가 서거나, "
+        "잔재 3축 파일이 있으면 샤드 산출을 통째로 무시하고 옛 결과로 채점한다.",
+    ),
+    (
+        "history 줄에서 렌즈 계측 필드 제거",
+        "skills/build/SKILL.md",
+        """'{iteration:$it, verdict:$v.verdict, findings:($s.findings // []),
+    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn), scope_mode:$sm, lens_remerged:$lr,
+    lens_shards:$sk, shard_files:$sf}'""",
+        """'{iteration:$it, verdict:$v.verdict, findings:($s.findings // [])}'""",
+        ["TestCheckerAndScoring.test_scoring_records_lens_timing",
+         "TestCheckerAndScoring.test_scoring_timing_absence_is_not_fatal"],
+        "팬아웃 스펙의 선행 실측 장치. 계측은 판정에 안 들어가 죽어도 루프가 멀쩡히 돌므로, "
+        "이 변이가 살면 다음 루프에서 데이터가 조용히 안 쌓이고 아무도 모른다.",
+    ),
+    (
         "품질 게이트를 사슬에서 제거",
         "skills/build/SKILL.md",
         ' && run_gate QUALITY "${LOOP_QUALITY_CMD:-}"',
@@ -92,10 +114,8 @@ set -a; . "$LOOP_DIR/params.env"; set +a
     (
         "렌즈 병합을 건너뛰고 한 축만 채점",
         "skills/build/SKILL.md",
-        '''bash "$ENG/merge_findings.sh" --expect 3 \\
-  "contract=$LOOP_DIR/checker-$PHASE-contract.json" \\
-  "safety=$LOOP_DIR/checker-$PHASE-safety.json" \\
-  "quality=$LOOP_DIR/checker-$PHASE-quality.json" > "$F" || {
+        '''bash "$ENG/merge_findings.sh" --expect "$(( SHARD_K >= 2 ? 1 + 2 * SHARD_K : 3 ))" "${MERGE_ARGS[@]}" > "$F" || {
+  : > "$LOOP_DIR/lens-remerge-$PHASE"   # 계측 표시 — 이 회차 소요는 되띄운 렌즈만 부풀어 표본에서 가른다
   echo "build: 렌즈 결과 병합 실패 — 위 메시지가 어느 축인지 말한다. 그 축만 다시 띄우거나 멈춰 사람 호출" >&2
   exit 65
 }''',
@@ -107,7 +127,7 @@ set -a; . "$LOOP_DIR/params.env"; set +a
         "초기화가 회차 스냅숏·마커를 남김",
         "skills/build/SKILL.md",
         '''  -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \\
-  -o -name 'narrowed-*' -o -name 'confirm-full-*' \\) -delete''',
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' -o -name 'shard-*' \\) -delete''',
         '''  -o -name 'stall*.json' -o -name 'scope-open-*.txt' \\) -delete''',
         ["TestLoopRunSetup.test_setup_clears_cycle_scope_state"],
         "앞 루프의 회차 스냅숏이 남으면 새 루프의 첫 회차가 그것을 기준으로 좁힌다 — "
@@ -118,7 +138,7 @@ set -a; . "$LOOP_DIR/params.env"; set +a
         "skills/build/SKILL.md",
         '''find "$LOOP_DIR" -maxdepth 1 \\( -name 'gate.fail' -o -name 'history*.jsonl' \\
   -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \\
-  -o -name 'narrowed-*' -o -name 'confirm-full-*' \\) -delete''',
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' -o -name 'shard-*' \\) -delete''',
         '''rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json \\
       "$LOOP_DIR"/scope-open-*.txt "$LOOP_DIR"/scope-cycle-*.txt \\
       "$LOOP_DIR"/narrowed-* "$LOOP_DIR"/confirm-full-*''',

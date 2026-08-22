@@ -242,6 +242,8 @@ scored finding 들을 모아 verdict 하나를 낸다. LLM 의 "괜찮아 보임
 | budget_usd | 500 |
 | budget_tokens | 5000000 |
 | budget_minutes | 120 |
+| shard_size | 8 |
+| shard_cap | 3 |
 
 <!-- LOOP_RUBRIC:PARAMS:END -->
 

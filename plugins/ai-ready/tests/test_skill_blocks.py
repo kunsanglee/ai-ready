@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -1446,6 +1447,139 @@ class TestCheckerAndScoring(BlockCase):
         # 이름이 되어 반복 표시와 maker 지시가 서로 다른 finding 을 같은 것으로 가리킨다.
         self.assertTrue(all(f["id"].startswith("contract-") for f in scored["findings"]),
                         f"렌즈 접두가 안 붙었다: {[f['id'] for f in scored['findings']]}")
+
+    def test_lens_outputs_are_emptied_under_zsh(self):
+        """zsh 는 따옴표 없는 변수 확장을 단어로 안 쪼갠다 — `for L in $LENSES` 면 비우기가
+        한 번만 돌아, 안 돈 렌즈가 앞 회차 결과로 병합돼 통과한다(리뷰 실측). 두 셸로 잰다."""
+        if not ZSH:
+            self.skipTest("zsh 없음")
+        self.prepare()
+        stale = self.lens_path("contract")
+        stale.write_text(self.CLEAN)   # 앞 회차 잔재
+        r = self.run_block("b-lens", shell="zsh")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertEqual(stale.read_text(), "", "zsh 에서 렌즈 산출 비우기가 안 됐다")
+
+    def test_lens_block_plans_shards_when_scope_is_large(self):
+        """점검 파일이 shard_size 를 넘으면 safety·quality 샤드 계획이 선다 — 목록 파일과 마커,
+        그리고 오케스트레이터가 프롬프트에 옮길 입력·출력 경로가 창에 나와야 한다."""
+        self.prepare()
+        for i in range(10):
+            (self.work / f"wide{i}.txt").write_text("x\n")
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("샤드: safety·quality 를 2 개로 나눈다", r.out, repr(r))
+        self.assertEqual((self.loop_dir / "lens-sharded-foundation").read_text().strip(), "2")
+        s1 = (self.loop_dir / "shard-foundation-s1.txt").read_text().splitlines()
+        s2 = (self.loop_dir / "shard-foundation-s2.txt").read_text().splitlines()
+        self.assertTrue(s1 and s2, "샤드 목록이 비어 있다")
+        self.assertIn("렌즈 safety 샤드 s1: 입력", r.out)
+        self.assertIn("checker-foundation-quality-s2.json", r.out)
+        self.assertIn("렌즈 contract 출력 경로", r.out, "contract 는 전체 시야로 하나여야 한다")
+        # 이번 회차 몫의 샤드 산출은 빈 파일로 선다 — 죽은 샤드가 빈 파일로 병합에 걸린다
+        self.assertEqual((self.loop_dir / "checker-foundation-safety-s1.json").read_text(), "")
+
+    def test_lens_block_clears_stale_shard_outputs(self):
+        """앞 회차의 샤드 산출이 남으면, 이번 회차 샤드가 죽어도 옛 결과가 병합된다 —
+        렌즈 산출을 스핀 직전 비우는 것과 같은 계약을 샤드 산출에도 건다."""
+        self.prepare()
+        stale = self.loop_dir / "checker-foundation-quality-s3.json"
+        stale.write_text(self.CLEAN)   # K=3 이던 앞 회차의 잔재
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertFalse(stale.exists(), "옛 샤드 산출이 살아남았다")
+
+    def test_lens_block_does_not_shard_small_scope_or_confirm_cycle(self):
+        self.prepare()
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("샤드: 안 나눈다", r.out)
+        self.assertFalse((self.loop_dir / "lens-sharded-foundation").exists())
+        # 확인 회차 — 파일이 많아도 전체 시야로 본다
+        for i in range(10):
+            (self.work / f"wide{i}.txt").write_text("x\n")
+        (self.loop_dir / "confirm-full-foundation").write_text("")
+        r = self.run_block("b-lens")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("확인 회차는 전체 시야로 본다", r.out, repr(r))
+        self.assertFalse((self.loop_dir / "lens-sharded-foundation").exists())
+
+    def write_sharded_lenses(self, shard_count: int, *, skip: str | None = None) -> None:
+        (self.loop_dir / "lens-sharded-foundation").write_text(f"{shard_count}\n")
+        self.lens_path("contract").write_text(self.CLEAN)
+        for i in range(1, shard_count + 1):
+            for lens in ("safety", "quality"):
+                name = f"{lens}-s{i}"
+                if name == skip:
+                    continue
+                (self.loop_dir / f"checker-foundation-{name}.json").write_text(self.CLEAN)
+
+    def test_scoring_merges_sharded_lens_files(self):
+        """샤딩 회차의 병합 — --expect 가 1 + 2K 로 늘고, history 에 샤드 수가 남는다."""
+        self.prepare()
+        self.write_sharded_lenses(2)
+        (self.loop_dir / "shard-foundation-s1.txt").write_text("a.txt\nb.txt\n")
+        (self.loop_dir / "shard-foundation-s2.txt").write_text("c.txt\n")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("verdict=PASS", r.out)
+        self.assertIn("샤드 2", r.out)
+        hist = json.loads(
+            (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
+        self.assertEqual(hist["lens_shards"], 2)
+        self.assertEqual(hist["shard_files"], [2, 1],
+                         "샤드별 파일 수가 소요의 분모로 남아야 한다")
+
+    def test_scoring_stops_when_a_shard_is_missing(self):
+        """샤드 하나가 조용히 죽으면 렌즈 하나가 죽었을 때와 똑같이 멈춘다 — 그 샤드 몫의
+        파일들은 점검된 적이 없고, 그걸 통과로 읽으면 그 파일들의 결함이 영영 안 잡힌다."""
+        self.prepare()
+        self.write_sharded_lenses(2, skip="quality-s2")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 65, repr(r))
+        self.assertIn("병합 실패", r.err)
+        self.assertFalse((self.loop_dir / "history-foundation.jsonl").read_text(),
+                         "실패했는데 history 에 회차가 쌓였다")
+
+    def test_scoring_records_lens_timing(self):
+        """렌즈별 소요 계측(판정 무관) — 시작은 회차 스냅숏 mtime, 끝은 렌즈 산출 mtime.
+        팬아웃 스펙의 선행 실측 장치라, 이 기록이 죽으면 다음 루프의 데이터가 조용히 안 쌓인다."""
+        self.prepare()
+        snap = self.loop_dir / "scope-cycle-foundation.txt"
+        snap.write_text("")
+        now = time.time()
+        os.utime(snap, (now - 5, now - 5))   # 스냅숏을 5초 전으로 — 산술이 상수 0 이면 아래에서 걸린다
+        (self.loop_dir / "lens-scope-count-foundation").write_text("4 narrowed-cycle\n")
+        self.write_lenses(findings_in="contract")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("렌즈 소요(계측, 판정 무관)", r.out, "계측 줄이 창에 안 나왔다")
+        self.assertIn("점검 범위: 파일 4개(narrowed-cycle)", r.out)
+        hist = json.loads(
+            (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
+        self.assertEqual(set(hist["lens_seconds"]), {"contract", "safety", "quality"},
+                         f"렌즈 셋의 소요가 다 안 실렸다: {hist.get('lens_seconds')}")
+        self.assertTrue(all(isinstance(v, int) and 4 <= v <= 8
+                            for v in hist["lens_seconds"].values()),
+                        f"스냅숏 mtime 과의 차가 아니다: {hist['lens_seconds']}")
+        self.assertEqual(hist["scope_files"], 4, "범위 크기가 숫자로 안 실렸다")
+        self.assertEqual(hist["scope_mode"], "narrowed-cycle")
+        self.assertFalse(hist["lens_remerged"], "재병합 표시의 기본값은 false 다")
+        self.assertEqual(hist["lens_shards"], 1, "샤딩 안 한 회차의 샤드 수는 1 이다")
+        self.assertEqual(hist["shard_files"], [])
+
+    def test_scoring_timing_absence_is_not_fatal(self):
+        """스냅숏·범위 파일이 없으면(구판에서 시작한 실행 등) 빈 계측으로 지나간다 — 회차를 안 막는다."""
+        self.prepare()
+        self.write_lenses(findings_in="contract")
+        r = self.run_block("b-score")
+        self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("계측 없음", r.out)
+        hist = json.loads(
+            (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
+        self.assertEqual(hist["lens_seconds"], {})
+        self.assertEqual(hist["scope_files"], "unknown")
+        self.assertEqual(hist["scope_mode"], "unknown")
 
     def test_all_lenses_clean_scores_as_pass(self):
         """대조군 — 셋 다 정상 '발견 없음' 이면 PASS 로 채점돼야 한다.
