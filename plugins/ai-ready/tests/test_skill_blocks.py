@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -1451,20 +1452,26 @@ class TestCheckerAndScoring(BlockCase):
         """렌즈별 소요 계측(판정 무관) — 시작은 회차 스냅숏 mtime, 끝은 렌즈 산출 mtime.
         팬아웃 스펙의 선행 실측 장치라, 이 기록이 죽으면 다음 루프의 데이터가 조용히 안 쌓인다."""
         self.prepare()
-        (self.loop_dir / "scope-cycle-foundation.txt").write_text("")
-        (self.loop_dir / "lens-scope-count-foundation").write_text("4\n")
+        snap = self.loop_dir / "scope-cycle-foundation.txt"
+        snap.write_text("")
+        now = time.time()
+        os.utime(snap, (now - 5, now - 5))   # 스냅숏을 5초 전으로 — 산술이 상수 0 이면 아래에서 걸린다
+        (self.loop_dir / "lens-scope-count-foundation").write_text("4 narrowed-cycle\n")
         self.write_lenses(findings_in="contract")
         r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
         self.assertIn("렌즈 소요(계측, 판정 무관)", r.out, "계측 줄이 창에 안 나왔다")
-        self.assertIn("점검 파일 4", r.out)
+        self.assertIn("점검 범위: 파일 4개(narrowed-cycle)", r.out)
         hist = json.loads(
             (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
         self.assertEqual(set(hist["lens_seconds"]), {"contract", "safety", "quality"},
                          f"렌즈 셋의 소요가 다 안 실렸다: {hist.get('lens_seconds')}")
-        self.assertTrue(all(isinstance(v, int) and v >= 0
-                            for v in hist["lens_seconds"].values()))
+        self.assertTrue(all(isinstance(v, int) and 4 <= v <= 8
+                            for v in hist["lens_seconds"].values()),
+                        f"스냅숏 mtime 과의 차가 아니다: {hist['lens_seconds']}")
         self.assertEqual(hist["scope_files"], 4, "범위 크기가 숫자로 안 실렸다")
+        self.assertEqual(hist["scope_mode"], "narrowed-cycle")
+        self.assertFalse(hist["lens_remerged"], "재병합 표시의 기본값은 false 다")
 
     def test_scoring_timing_absence_is_not_fatal(self):
         """스냅숏·범위 파일이 없으면(구판에서 시작한 실행 등) 빈 계측으로 지나간다 — 회차를 안 막는다."""
@@ -1472,10 +1479,12 @@ class TestCheckerAndScoring(BlockCase):
         self.write_lenses(findings_in="contract")
         r = self.run_block("b-score")
         self.assertEqual(r.rc, 0, repr(r))
+        self.assertIn("계측 없음", r.out)
         hist = json.loads(
             (self.loop_dir / "history-foundation.jsonl").read_text().splitlines()[0])
         self.assertEqual(hist["lens_seconds"], {})
         self.assertEqual(hist["scope_files"], "unknown")
+        self.assertEqual(hist["scope_mode"], "unknown")
 
     def test_all_lenses_clean_scores_as_pass(self):
         """대조군 — 셋 다 정상 '발견 없음' 이면 PASS 로 채점돼야 한다.

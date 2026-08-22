@@ -138,7 +138,8 @@ fi
 # **점검 범위 스냅숏도 함께 지운다.** phase 진입이 그것을 한 번만 찍게 되어 있어(재개 대비),
 # 같은 티켓을 새로 시작할 때 옛 스냅숏이 남아 있으면 첫 phase 가 **앞 루프가 만든 것을 이미
 # 본 것으로 치고 조용히 좁힌다.** 초기화 대상에서 빠지면 그 실패는 아무 데도 안 드러난다.
-# **회차 스냅숏(scope-cycle-*)과 회차 마커(narrowed-*·confirm-full-*)도 같은 종류다.** 앞 루프의
+# **회차 스냅숏(scope-cycle-*)·회차 마커(narrowed-*·confirm-full-*)·계측 잔재(lens-*)도
+# 같은 종류다.** 앞 루프의
 # 회차 스냅숏이 남으면 새 루프의 **첫 회차**가 그것을 기준으로 좁히고(첫 회차는 안 좁히는 것이
 # 계약이다), confirm-full 이 남으면 첫 회차가 확인 회차로 읽힌다. 둘 다 조용히 지나간다.
 # **글롭 확장을 셸에 맡기지 않는다.** zsh 는 매칭 0개인 글롭이 하나라도 있으면 명령 자체를
@@ -147,7 +148,7 @@ fi
 # 실행하고 그 셸이 무엇인지는 호스트가 정하므로, 패턴을 find 에 넘겨 셸과 무관하게 만든다.
 find "$LOOP_DIR" -maxdepth 1 \( -name 'gate.fail' -o -name 'history*.jsonl' \
   -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \
-  -o -name 'narrowed-*' -o -name 'confirm-full-*' \) -delete
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' \) -delete
 date +%s > "$LOOP_DIR/started.epoch"
 # brake 값. Bash 호출마다 새 셸이라 필요할 때 다시 읽는다.
 ABS_CEIL=10
@@ -630,17 +631,26 @@ elif [ -f "$CYCLE_SNAP" ] \
 else
   echo "회차 범위: 첫 회차이거나 산출 거부 — 좁히지 않는다(위 점검 범위 그대로)"
 fi
-# 계측(판정 무관): 이번 회차 렌즈에 넘긴 범위의 크기 — 렌즈 소요와의 비례를 재는 선행 실측이다
-# (팬아웃 스펙의 전제 확인용). 좁혀진 목록이면 파일 수, 전 범위면 full 로 남긴다.
+# 계측(판정 무관): 이번 회차 렌즈에 넘긴 범위의 크기와 갈래 — 렌즈 소요와의 비례를 재는 선행
+# 실측이다(팬아웃 스펙의 전제 확인용). 전 범위 회차가 읽는 양이 가장 큰 표본이라 거기서도 파일
+# 수를 남긴다 — maker 는 커밋하지 않는 계약이라 base...HEAD 만으로는 루프 자신의 변경이 다
+# 빠지므로, 커밋된 diff 와 워킹 트리 변경의 합집합으로 센다(대략의 x축이면 충분한 근사치다).
 if [ -f "$LOOP_DIR/narrowed-$PHASE" ]; then
-  printf '%s\n' "$CYC_SCOPE" | awk 'NF' | wc -l | tr -d ' ' > "$LOOP_DIR/lens-scope-count-$PHASE"
+  printf '%s narrowed-cycle\n' "$(printf '%s\n' "$CYC_SCOPE" | awk 'NF' | wc -l | tr -d ' ')" \
+    > "$LOOP_DIR/lens-scope-count-$PHASE"
 elif [ "$PHASE_NARROWED" -eq 1 ]; then
-  printf '%s\n' "$SCOPE" | awk 'NF' | wc -l | tr -d ' ' > "$LOOP_DIR/lens-scope-count-$PHASE"
+  printf '%s narrowed-phase\n' "$(printf '%s\n' "$SCOPE" | awk 'NF' | wc -l | tr -d ' ')" \
+    > "$LOOP_DIR/lens-scope-count-$PHASE"
 else
-  printf 'full\n' > "$LOOP_DIR/lens-scope-count-$PHASE"
+  printf '%s full\n' "$({ git -C "$PROJECT_ROOT" diff --name-only "$LOOP_BASE_BRANCH" 2>/dev/null;
+      git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null; } | awk 'NF' | sort -u | wc -l | tr -d ' ')" \
+    > "$LOOP_DIR/lens-scope-count-$PHASE"
 fi
 # 다음 회차의 기준점 — 렌즈를 띄우기 직전 상태를 찍는다(재개 멱등: 매 회차 덮는 것이 맞다).
-python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" --out "$CYCLE_SNAP" --root "$PROJECT_ROOT"
+# 실패하면 옛 스냅숏을 지운다 — 낡은 mtime 이 남으면 다음 회차 계측이 그럴듯한 가짜 초를 싣고
+# 좁히기 기준점도 함께 어긋난다. 없는 쪽이 안전하다(다음 회차는 안 좁히고 계측은 빈 값).
+python3 "$ENG/review_scope.py" snapshot --base "$LOOP_BASE_BRANCH" --out "$CYCLE_SNAP" --root "$PROJECT_ROOT" \
+  || { rm -f "$CYCLE_SNAP"; echo "build: 회차 스냅숏 기록 실패 — 다음 회차는 좁히지 않고 계측은 빈 값" >&2; }
 for L in $LENSES; do echo "  렌즈 $L 출력 경로: $LOOP_DIR/checker-$PHASE-$L.json"; done
 ```
 
@@ -667,6 +677,7 @@ bash "$ENG/merge_findings.sh" --expect 3 \
   "contract=$LOOP_DIR/checker-$PHASE-contract.json" \
   "safety=$LOOP_DIR/checker-$PHASE-safety.json" \
   "quality=$LOOP_DIR/checker-$PHASE-quality.json" > "$F" || {
+  : > "$LOOP_DIR/lens-remerge-$PHASE"   # 계측 표시 — 이 회차 소요는 되띄운 렌즈만 부풀어 표본에서 가른다
   echo "build: 렌즈 결과 병합 실패 — 위 메시지가 어느 축인지 말한다. 그 축만 다시 띄우거나 멈춰 사람 호출" >&2
   exit 65
 }
@@ -678,31 +689,47 @@ VERDICT=$(printf '%s' "$SCORED" | bash "$ENG/decide.sh")         # {verdict, cou
 STALL=$(printf '%s' "$VERDICT"  | bash "$ENG/stall.sh" --state "$STATE")   # 정체 판정 + 상태 영속
 # 계측(판정 무관): 렌즈별 소요 초 — 시작은 회차 스냅숏 mtime(Step 2-2 가 렌즈 직전에 기록),
 # 끝은 각 렌즈가 마지막에 쓰는 산출 파일 mtime. 오케스트레이터가 프롬프트를 조립하는 시간이
-# 앞에 끼므로 렌즈 순수 시간의 상한이다. 스냅숏·산출이 없으면 빈 값 — 계측 실패는 회차를 안 막는다.
+# 앞에 끼므로 렌즈 순수 시간의 상한이다. 스냅숏·산출이 없으면 그 항목만 빠진다 — 계측 실패는
+# 회차를 안 막는다. 산출이 스냅숏보다 오래됐으면 이번 회차에 안 쓴 것이다(직전 회차 잔재) —
+# 0 으로 눌러 정상값처럼 만들지 않고 그 렌즈를 뺀다. 경로는 아래 병합 호출과 같은 문자열을
+# 인자로 받는다 — 이름이 갈리면 병합이 먼저 exit 65 로 소리를 낸다.
 LENS_SECONDS=$(python3 -c '
 import json, os, sys
-d, ph = sys.argv[1], sys.argv[2]
 out = {}
 try:
-    t0 = os.path.getmtime(os.path.join(d, f"scope-cycle-{ph}.txt"))
+    t0 = os.path.getmtime(sys.argv[1])
 except OSError:
     print("{}"); sys.exit(0)
-for lens in sys.argv[3:]:
+for spec in sys.argv[2:]:
+    lens, _, path = spec.partition("=")
     try:
-        out[lens] = max(0, round(os.path.getmtime(os.path.join(d, f"checker-{ph}-{lens}.json")) - t0))
+        delta = os.path.getmtime(path) - t0
     except OSError:
-        pass
+        continue
+    if delta >= 0:
+        out[lens] = round(delta)
 print(json.dumps(out))
-' "$LOOP_DIR" "$PHASE" contract safety quality)
-SCOPE_N=$(cat "$LOOP_DIR/lens-scope-count-$PHASE" 2>/dev/null || echo unknown)
+' "$LOOP_DIR/scope-cycle-$PHASE.txt" \
+  "contract=$LOOP_DIR/checker-$PHASE-contract.json" \
+  "safety=$LOOP_DIR/checker-$PHASE-safety.json" \
+  "quality=$LOOP_DIR/checker-$PHASE-quality.json")
+# python 이 죽어 빈 문자열이면 아래 --argjson 이 invalid JSON 으로 history append 를 통째로 죽인다
+# — 계측은 판정 경로 위에 못 올라앉는다. 빈 값은 빈 객체로 접는다.
+[ -n "$LENS_SECONDS" ] || LENS_SECONDS='{}'
+LENS_REMERGED=false
+[ -f "$LOOP_DIR/lens-remerge-$PHASE" ] && { LENS_REMERGED=true; rm -f "$LOOP_DIR/lens-remerge-$PHASE"; }
+{ read -r SCOPE_N SCOPE_MODE < "$LOOP_DIR/lens-scope-count-$PHASE"; } 2>/dev/null || { SCOPE_N=unknown; SCOPE_MODE=unknown; }
+[ -n "${SCOPE_MODE:-}" ] || SCOPE_MODE=unknown
 ITER=$(( $(wc -l < "$HIST" 2>/dev/null | tr -d ' ') + 1 ))
 jq -nc --argjson it "$ITER" \
        --argjson v "$VERDICT" \
        --argjson s "$SCORED" \
        --argjson lt "$LENS_SECONDS" \
        --arg sn "$SCOPE_N" \
+       --arg sm "$SCOPE_MODE" \
+       --argjson lr "$LENS_REMERGED" \
   '{iteration:$it, verdict:$v.verdict, findings:($s.findings // []),
-    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn)}' >> "$HIST"   # 한 줄 = 한 사이클
+    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn), scope_mode:$sm, lens_remerged:$lr}' >> "$HIST"   # 한 줄 = 한 사이클
 # 같은 **종류**가 사이클을 연속 지배하는지. stall.sh 는 등급 개수만 봐서 이걸 못 본다.
 # **반드시 위 append 뒤에** 부른다 — 이번 회차가 이력에 들어간 뒤라야 이번 회차가 판정에 포함된다.
 KINDST=$(bash "$ENG/kindstreak.sh" --history "$HIST") || {
@@ -722,7 +749,8 @@ printf '%s' "$VERDICT" | jq -r '.out_of_scope
 echo "반복 종류: $(printf '%s' "$KINDST" | jq -r '"\(.status) kind=\(.kind // "-") streak=\(.streak)/\(.threshold)"')"
 # 렌즈별 적발 수 — 한 축이 매번 0건이면 그 렌즈 프롬프트를 의심할 근거가 된다(빈 결과는 증거가 아니다).
 printf '%s' "$SCORED" | jq -r '[.findings[] | .lens // "?"] | group_by(.) | map("\(.[0])=\(length)") | "렌즈별 적발: " + join(" ")'
-echo "렌즈 소요(계측, 판정 무관): $(printf '%s' "$LENS_SECONDS" | jq -r 'to_entries | map("\(.key)=\(.value)s") | join(" ")') / 점검 파일 $SCOPE_N"
+LT_SHOW=$(printf '%s' "$LENS_SECONDS" | jq -r 'to_entries | map("\(.key)=\(.value)s") | join(" ")')
+echo "렌즈 소요(계측, 판정 무관): ${LT_SHOW:-계측 없음} / 점검 범위: 파일 ${SCOPE_N}개($SCOPE_MODE)"
 # 오케스트레이터 컨텍스트 위생: findings 의 evidence 전문을 cat/Read 로 창에 끌어들이지 않는다.
 # 아래 한 줄 목록(등급·종류·위치)까지만 보고, 전문은 maker 단계에서 finding 단위로만 연다.
 printf '%s' "$SCORED" | jq -r '.findings[] | "\(.severity)\t\(.dimension)/\(.kind)\t\(.location)"'
@@ -830,7 +858,11 @@ fi
 
 ### Step 3. 전체 완료 처리 (커밋하지 않는다)
 
-모든 phase 가 `done` 이면 사람에게 보고: 완료 phase 목록, phase 별 사이클 수, 남은 MINOR(기록만), 변경 요약.
+모든 phase 가 `done` 이면 사람에게 보고: 완료 phase 목록, phase 별 사이클 수, 남은 MINOR(기록만), 변경 요약, 그리고 **렌즈 계측 요약**. 계측은 history 에만 있고 Step 3-1 이 그 디렉터리를 지우므로, 이 보고가 값이 살아남는 유일한 자리다. phase 마다 한 줄:
+
+  ```
+  jq -rs '"렌즈 계측: 회차 \(length)개 / 렌즈별 합(초) " + ([.[].lens_seconds // {} | to_entries[]] | group_by(.key) | map("\(.[0].key)=\(map(.value)|add)") | join(" ")) + " / 범위 " + ([.[].scope_files|tostring] | join(","))' "$LOOP_DIR/history-<phase>.jsonl"
+  ```
 
 - **변경 요약은 maker 보고를 모아 쓰지 않고 `git diff "$LOOP_BASE_BRANCH"...HEAD --stat` 과 `git status --short` 에서 뽑는다** — maker 는 회차마다 새로 띄워져 전체를 아는 주체가 없고, 트리가 유일한 정본이다.
 - **커밋·push 하지 않는다.** 변경은 워크트리에 누적된 채 남긴다. 논리 단위 커밋·PR 은 프로젝트의 마감 워크플로우에서 사람이 마감한다.

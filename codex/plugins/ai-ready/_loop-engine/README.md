@@ -24,7 +24,7 @@ checker 를 한 명만 띄우는 호출(`/review`)은 그 결과 파일을 `scor
 루프가 끝나면(PASS 또는 사람 대기) 사이클 로그를 종합해 선순환을 닫는다:
 
 ```
-history-{phase}.jsonl  (오케스트레이터가 사이클마다 append: { iteration, verdict, findings:[scored...] })
+history-{phase}.jsonl  (오케스트레이터가 사이클마다 append: { iteration, verdict, findings:[scored...], lens_seconds, scope_files, scope_mode })
    ▼
 lessons.sh     마지막 사이클 대비 diff → "출처1" 실수(떴다가 고쳐진 finding) 추출
    ▼
@@ -93,7 +93,8 @@ loop-lesson-synthesizer (agents/, ai-ready: namespace)  출처1 + 출처2(전자
 한 줄 = 한 사이클. `findings` 는 그 사이클 `score.sh` 출력(severity 부여됨), `verdict` 는 `decide.sh` 결과.
 
 ```
-{ "iteration": N, "verdict": "RETRY", "findings": [ { kind, dimension, location, severity, evidence, ... }, ... ] }
+{ "iteration": N, "verdict": "RETRY", "findings": [ { kind, dimension, location, severity, evidence, ... }, ... ],
+  "lens_seconds": { contract, safety, quality }, "scope_files": N|"unknown", "scope_mode": "narrowed-cycle|narrowed-phase|full|unknown" }
 ```
 
 `lessons.sh` 가 이걸 받아 **마지막 사이클에 없는 finding**(= 도중에 고쳐진 것)을 출처1 실수로 추출한다.

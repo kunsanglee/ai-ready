@@ -32,7 +32,7 @@ MUTATIONS = [
         "history 줄에서 렌즈 계측 필드 제거",
         "skills/build/SKILL.md",
         """'{iteration:$it, verdict:$v.verdict, findings:($s.findings // []),
-    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn)}'""",
+    lens_seconds:$lt, scope_files:($sn|tonumber? // $sn), scope_mode:$sm, lens_remerged:$lr}'""",
         """'{iteration:$it, verdict:$v.verdict, findings:($s.findings // [])}'""",
         ["TestCheckerAndScoring.test_scoring_records_lens_timing",
          "TestCheckerAndScoring.test_scoring_timing_absence_is_not_fatal"],
@@ -107,6 +107,7 @@ set -a; . "$LOOP_DIR/params.env"; set +a
   "contract=$LOOP_DIR/checker-$PHASE-contract.json" \\
   "safety=$LOOP_DIR/checker-$PHASE-safety.json" \\
   "quality=$LOOP_DIR/checker-$PHASE-quality.json" > "$F" || {
+  : > "$LOOP_DIR/lens-remerge-$PHASE"   # 계측 표시 — 이 회차 소요는 되띄운 렌즈만 부풀어 표본에서 가른다
   echo "build: 렌즈 결과 병합 실패 — 위 메시지가 어느 축인지 말한다. 그 축만 다시 띄우거나 멈춰 사람 호출" >&2
   exit 65
 }''',
@@ -118,7 +119,7 @@ set -a; . "$LOOP_DIR/params.env"; set +a
         "초기화가 회차 스냅숏·마커를 남김",
         "skills/build/SKILL.md",
         '''  -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \\
-  -o -name 'narrowed-*' -o -name 'confirm-full-*' \\) -delete''',
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' \\) -delete''',
         '''  -o -name 'stall*.json' -o -name 'scope-open-*.txt' \\) -delete''',
         ["TestLoopRunSetup.test_setup_clears_cycle_scope_state"],
         "앞 루프의 회차 스냅숏이 남으면 새 루프의 첫 회차가 그것을 기준으로 좁힌다 — "
@@ -129,7 +130,7 @@ set -a; . "$LOOP_DIR/params.env"; set +a
         "skills/build/SKILL.md",
         '''find "$LOOP_DIR" -maxdepth 1 \\( -name 'gate.fail' -o -name 'history*.jsonl' \\
   -o -name 'stall*.json' -o -name 'scope-open-*.txt' -o -name 'scope-cycle-*.txt' \\
-  -o -name 'narrowed-*' -o -name 'confirm-full-*' \\) -delete''',
+  -o -name 'narrowed-*' -o -name 'confirm-full-*' -o -name 'lens-*' \\) -delete''',
         '''rm -f "$LOOP_DIR/gate.fail" "$LOOP_DIR"/history*.jsonl "$LOOP_DIR"/stall*.json \\
       "$LOOP_DIR"/scope-open-*.txt "$LOOP_DIR"/scope-cycle-*.txt \\
       "$LOOP_DIR"/narrowed-* "$LOOP_DIR"/confirm-full-*''',
