@@ -18,7 +18,7 @@ For a target codebase you point it at, this skill creates an `.ai-ready/` direct
 5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete. If the archive can't be written (the `history/` slot is taken by a file, permissions), the run prints a warning to stderr and omits the `archive:` line from its summary instead of claiming a file it didn't write; scoring itself still succeeds and the exit code stays 0 (v1.5.3).
 6. **`scaffolds/...`** — drafts for the missing docs (see "Layout-aware scaffolds" below)
 7. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history (clustered hotspots)
-8. **`hooks/freshness_check.sh`** (+ `hooks/freshness_check.py`) — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`; the `.py` runner is copied alongside so the hook works without `CLAUDE_PLUGIN_ROOT`
+8. **`hooks/freshness_check.sh`** (+ `hooks/freshness_check.py`) — copied from the plugin so a project's `.claude/settings.json` Stop hook can point at `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh` (wrapped in an existence guard — see "Installing the Freshness Hook"); the `.py` runner is copied alongside so the hook works without `CLAUDE_PLUGIN_ROOT`
 
 ### Layout-aware scaffolds
 
@@ -159,7 +159,7 @@ After reviewing the generated scaffold, add this to the target project's `.claud
       {
         "matcher": ".*",
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh" }
+          { "type": "command", "command": "[ -x \"$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh\" ] && exec \"$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh\"; exit 0" }
         ]
       }
     ]
@@ -168,6 +168,8 @@ After reviewing the generated scaffold, add this to the target project's `.claud
 ```
 
 The hook runs at session end, compares mtimes between source files and their nearest CLAUDE.md, and writes a warning if the source has drifted ahead by >7 days (configurable inside the script). The audit copies both `freshness_check.sh` and its `freshness_check.py` runner into `.ai-ready/hooks/`, so the hook is self-contained and does not depend on `CLAUDE_PLUGIN_ROOT`.
+
+The command is wrapped in an `[ -x … ]` guard rather than calling the script directly. When the script is not there — the session was opened from a parent folder so `$CLAUDE_PROJECT_DIR` points outside the repo, or `install_hook.py` ran before `audit.py` copied the script — a bare command prints `No such file or directory` at the end of *every* turn. The hook is advisory and blocks nothing, so that error buys nothing and only adds noise; the guard exits 0 silently instead. `exec` hands the hook JSON on stdin straight to the script. Written for `sh` (no bash-only syntax), and safe when `$CLAUDE_PROJECT_DIR` is unset. `install_hook.py` writes exactly this command — keep the two in sync.
 
 ## The 7-Category Rubric (100 points)
 

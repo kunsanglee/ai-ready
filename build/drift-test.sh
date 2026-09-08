@@ -75,16 +75,22 @@ for f in "$AUDIT_PY_SRC" "$AUDIT_PY_DEST"; do
     exit 1
   fi
 done
-if diff <(strip_adapter "$AUDIT_PY_SRC") <(strip_adapter "$AUDIT_PY_DEST") >/tmp/drift.$$.txt 2>&1; then
+# 프로세스 치환(<(...)) 대신 임시 파일로 비교한다 — 이 파일을 `sh build/drift-test.sh` 로 부르는
+# 사람이 있는데, macOS 의 /bin/sh 는 그 문법을 파싱하지 못해 여기서 죽는다. 그러면 앞의 검사만
+# OK 로 찍히고 아래 [version]·[changelog] 는 아예 돌지 않은 채 화면은 초록에 가까워 보인다(실측).
+strip_adapter "$AUDIT_PY_SRC" >/tmp/drift.src.$$.txt
+strip_adapter "$AUDIT_PY_DEST" >/tmp/drift.dest.$$.txt
+if diff /tmp/drift.src.$$.txt /tmp/drift.dest.$$.txt >/tmp/drift.$$.txt 2>&1; then
   echo "[audit-py] OK — 어댑터 구간을 뺀 나머지가 두 트리 동일"
 else
   echo "[audit-py] DRIFT 발견 — 어댑터 구간 밖에서 $AUDIT_PY_SRC 와 $AUDIT_PY_DEST 가 다르다:" >&2
   sed 's/^/    /' /tmp/drift.$$.txt >&2
   rm -f /tmp/drift.$$.txt
   echo "           claude 트리가 원본이다. 호스트마다 달라야 하는 코드면 마커로 감싸라." >&2
+  rm -f /tmp/drift.src.$$.txt /tmp/drift.dest.$$.txt
   exit 1
 fi
-rm -f /tmp/drift.$$.txt
+rm -f /tmp/drift.$$.txt /tmp/drift.src.$$.txt /tmp/drift.dest.$$.txt
 
 # freshness_check.py 는 codex 에서 audit 번들이 아니라 freshness 스킬에 산다. 위 디렉토리
 # 비교에서 뺐으니 여기서 따로 잠근다 — 안 그러면 이 파일만 검사 밖에 남는다.
@@ -152,13 +158,18 @@ echo "[description] OK — 매니페스트 셋 모두 ${DESC_MAX}자 이하"
 # 위 검사가 그 거짓말에 초록을 줬다. 문구는 자유롭게 두고 가리키는 대상만 본다.
 desc_bad=""
 for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json codex/plugins/ai-ready/.codex-plugin/plugin.json; do
+  # 프로세스 치환 대신 임시 파일 — 위 [audit-py] 와 같은 까닭이고(sh 로 부르면 파싱에서 죽는다),
+  # 파이프의 while 은 서브셸이라 desc_bad 가 밖으로 안 나온다. 일치가 없으면 grep 이 1 로 끝나
+  # set -e 에 걸리므로 빈 목록을 정상으로 받는다.
+  jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description]
+         | map(select(. != null)) | .[]' "$f" \
+    | grep -oE 'Release history lives in [A-Za-z0-9._/-]+' \
+    | sed 's/^Release history lives in //; s/\.$//' > /tmp/drift.desc.$$.txt || true
   while IFS= read -r target; do
     [ -z "$target" ] && continue
-    [ -f "$target" ] || desc_bad="$desc_bad $f→$target"
-  done < <(jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description]
-                  | map(select(. != null)) | .[]' "$f" \
-           | grep -oE 'Release history lives in [A-Za-z0-9._/-]+' \
-           | sed 's/^Release history lives in //; s/\.$//')
+    [ -f "$target" ] || desc_bad="$desc_bad ${f}→${target}"  # 변수 뒤에 →/한글이 붙으면 이름으로 읽힌다
+  done < /tmp/drift.desc.$$.txt
+  rm -f /tmp/drift.desc.$$.txt
 done
 if [ -n "$desc_bad" ]; then
   echo "[description] 설명문이 없는 파일을 이력으로 가리킨다 —$desc_bad" >&2

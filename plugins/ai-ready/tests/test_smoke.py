@@ -371,12 +371,90 @@ class TestConfigAwareScoring(unittest.TestCase):
             self.assertEqual(audit._ai_harness_verification_hooks(root), [])
 
     def test_install_hook_command_matches_documented_path(self):
-        # install_hook 이 써넣는 명령은 SKILL.md / 복사본이 안내하는 경로와 같아야 한다.
-        # 프로젝트 settings.json Stop hook 은 프로젝트 컨텍스트라 $CLAUDE_PROJECT_DIR 만 해석된다.
+        # install_hook 이 써넣는 명령은 SKILL.md / 복사본이 안내하는 경로를 담고,
+        # 그 경로를 [ -x 가드로 감싸야 한다. 프로젝트 settings.json Stop hook 은
+        # 프로젝트 컨텍스트라 $CLAUDE_PROJECT_DIR 만 해석된다.
         self.assertEqual(
-            install_hook.HOOK_COMMAND,
+            install_hook.HOOK_SCRIPT_PATH,
             "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh",
         )
+        self.assertIn(install_hook.HOOK_SCRIPT_PATH, install_hook.HOOK_COMMAND)
+        self.assertIn("[ -x ", install_hook.HOOK_COMMAND)
+
+    def _run_hook_command(self, project_dir, set_project_dir=True, stdin=""):
+        """settings.json 에 들어갈 명령을 실제 sh 로 돌린다 (훅 실행 환경 재현)."""
+        env = {"PATH": os.environ["PATH"]}
+        if set_project_dir:
+            env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+        return subprocess.run(
+            ["sh", "-c", install_hook.HOOK_COMMAND],
+            env=env, input=stdin, capture_output=True, text=True, timeout=60,
+        )
+
+    def test_hook_command_silent_when_script_absent(self):
+        # 실측 결함: 스크립트가 없으면 매 턴 끝에 "No such file or directory" 가 찍혔다.
+        with tempfile.TemporaryDirectory() as td:
+            proc = self._run_hook_command(Path(td))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout, "")
+            self.assertEqual(proc.stderr, "")
+
+    def test_hook_command_execs_script_with_stdin(self):
+        # 스크립트가 있으면 그것을 실행하고, 훅 JSON 이 실린 stdin 이 그대로 넘어가야 한다.
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            script = target / install_hook.HOOK_SCRIPT_RELPATH
+            script.parent.mkdir(parents=True)
+            script.write_text("#!/bin/sh\nprintf 'GOT:'\ncat\n", encoding="utf-8")
+            script.chmod(0o755)
+            proc = self._run_hook_command(target, stdin='{"hook":"Stop"}')
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout, 'GOT:{"hook":"Stop"}')
+
+    def test_hook_command_safe_without_project_dir(self):
+        # $CLAUDE_PROJECT_DIR 미설정(플러그인 밖 실행 등)에서도 조용히 넘어가야 한다.
+        with tempfile.TemporaryDirectory() as td:
+            proc = self._run_hook_command(Path(td), set_project_dir=False)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stderr, "")
+
+    def test_install_upgrades_legacy_command(self):
+        # 1.5.7 이전 설치분(가드 없는 맨 경로)은 갱신 대상이다 — 그 설치분이 매 턴 끝에
+        # "No such file or directory" 를 찍던 실측 결함의 당사자라, 그대로 두면 업그레이드가
+        # 아무것도 고치지 못한다.
+        legacy = "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh"
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            settings_path = target / ".claude" / "settings.json"
+            settings_path.parent.mkdir(parents=True)
+            settings_path.write_text(json.dumps(
+                {"hooks": {"Stop": [{"matcher": ".*", "hooks": [
+                    {"type": "command", "command": legacy}]}]}}), encoding="utf-8")
+
+            msg = install_hook.install(target)
+            self.assertIn("갱신", msg)
+            written = json.loads(settings_path.read_text(encoding="utf-8"))
+            cmds = [h["command"] for e in written["hooks"]["Stop"] for h in e["hooks"]]
+            self.assertEqual(cmds, [install_hook.HOOK_COMMAND])
+            # 갱신한 뒤 다시 부르면 멱등 — 문구가 갈린다.
+            again = install_hook.install(target)
+            self.assertIn("이미 설치됨", again)
+            self.assertNotIn("갱신", again)
+
+    def test_install_reports_missing_script(self):
+        # audit.py 전에 install_hook.py 만 돈 상태 — 설치는 하되 그 사실을 말해야 한다.
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td)
+            msg = install_hook.install(target)
+            self.assertIn("설치 완료", msg)
+            self.assertIn("audit.py", msg)
+            # 멱등 경로(이미 설치됨)에서도 같은 안내가 붙는다.
+            self.assertIn("audit.py", install_hook.install(target))
+            # 스크립트를 복사하면 안내가 사라진다.
+            script = target / install_hook.HOOK_SCRIPT_RELPATH
+            script.parent.mkdir(parents=True)
+            script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            self.assertNotIn("audit.py", install_hook.install(target))
 
 
 class TestManagedDocGuard(unittest.TestCase):

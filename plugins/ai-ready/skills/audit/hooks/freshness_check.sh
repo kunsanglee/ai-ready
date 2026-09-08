@@ -12,12 +12,19 @@
 #           "matcher": ".*",
 #           "hooks": [
 #             { "type": "command",
-#               "command": "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh" }
+#               "command": "[ -x \"$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh\" ] && exec \"$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh\"; exit 0" }
 #           ]
 #         }
 #       ]
 #     }
 #   }
+#
+# The `[ -x … ]` guard is not decoration. When this file is missing — the session was opened
+# from a parent folder so CLAUDE_PROJECT_DIR points outside the repo, or install_hook.py ran
+# before audit.py copied the script here — a bare command prints "No such file or directory"
+# at the end of every turn. This hook is advisory and blocks nothing, so that error stops
+# nothing and only leaves noise; the guard exits 0 silently instead. `exec` passes the hook
+# JSON on stdin straight through. install_hook.py writes exactly that command.
 #
 # Secondary option: you may instead point the command at the plugin bundle
 # ($CLAUDE_PLUGIN_ROOT/skills/audit/hooks/freshness_check.sh) — but
