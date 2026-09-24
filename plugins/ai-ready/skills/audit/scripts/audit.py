@@ -6,7 +6,8 @@
 1. 문서 존재 — 루트 AGENTS.md·CLAUDE.md, 모듈별 문서, docs/design 결정 기록 쌍, 검증 문서.
    있음·없음·길이 과다와, 두 문서의 구조(AGENTS.md 원본 + `@AGENTS.md` 를 가져오는 CLAUDE.md 가 기본값)를
    적는다. 옛 구조(CLAUDE.md 원본 + AGENTS.md 심볼릭 링크)는 전환을 제안만 하고 바꾸지 않는다.
-   apply 가 만들 문서 경로가 git 에서 무시되면(`git check-ignore`) 따로 적는다.
+   apply 가 만들 문서 경로가 git 에서 무시되면(`git check-ignore`) 따로 적는다. 무시되는 것이 `@AGENTS.md` 한
+   줄짜리 CLAUDE.md(다리 파일)뿐이면 참고로만 적는다 — 원본 AGENTS.md 는 커밋된다.
 2. 강제 수단 — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트·pre-commit·에이전트 hook·
    CI 설정. 그리고 CI 설정 파일 안에서 그 검사를 실제로 부르는 줄을 찾아 따로 적는다. CI·Dockerfile 에서
    테스트를 빼거나 실패를 무시하는 줄도 표시한다.
@@ -571,6 +572,18 @@ def _rule_file_order(target: Path, path: Path) -> tuple:
     return (rank, len(rel.parts), str(rel))
 
 
+def _link_target(target: Path, path: Path) -> Path:
+    """심볼릭 링크면 저장소 안의 본문 파일(고칠 곳), 아니면 그대로. 링크가 저장소 밖을 가리키면 링크 경로."""
+    if not path.is_symlink():
+        return path
+    try:
+        real = path.resolve()
+        real.relative_to(target.resolve())
+    except (OSError, ValueError):
+        return path
+    return target / real.relative_to(target.resolve())
+
+
 def rule_lines(target: Path, limit: int = MAX_RULE_LINES) -> tuple[list[dict], int]:
     """(규칙 줄 목록, 전체 개수). 목록은 limit 에서 자른다."""
     files = sorted((p for p in _walk_files(target) if _is_guidance_doc(target, p)),
@@ -585,6 +598,7 @@ def rule_lines(target: Path, limit: int = MAX_RULE_LINES) -> tuple[list[dict], i
         if key in seen:
             continue
         seen.add(key)
+        shown = _link_target(target, path)
         rule_heading = False
         for no, line in _outside_fences(text):
             if not line.strip():
@@ -599,7 +613,7 @@ def rule_lines(target: Path, limit: int = MAX_RULE_LINES) -> tuple[list[dict], i
                 continue
             total += 1
             if len(rows) < limit:
-                rows.append({"where": f"{_rel(target, path)}:{no}", "text": line.strip()[:200],
+                rows.append({"where": f"{_rel(target, shown)}:{no}", "text": line.strip()[:200],
                              "via": "문장" if hit else "규칙 제목 아래 항목"})
     return rows, total
 
@@ -671,16 +685,33 @@ def render(facts: dict) -> str:
         out.append("- 모듈 목록 없음")
 
     out += ["", "### git 이 무시하는 생성 대상 경로", ""]
-    if d["ignored"] is None:
+    ignored = d["ignored"]
+    if ignored is None:
         out.append("- 확인하지 못했다 (git 저장소가 아니라 `git check-ignore` 를 부를 수 없다)")
-    elif d["ignored"]:
-        out.append("apply 가 만들 파일이 무시 규칙에 걸린다. 만들어도 커밋되지 않고, 커밋된 옆 문서의 가져오기가 깨진다. "
-                   "apply 스크립트는 이 경로에 쓰기 전에 멈춘다.")
-        out.append("")
-        for rel, why in d["ignored"].items():
-            out.append(f"- `{_cell(rel)}` — `{_cell(why)}`")
-    else:
+    elif not ignored:
         out.append("- 없음")
+    else:
+        originals = {rel: why for rel, why in ignored.items() if not managed_doc.is_bridge_path(rel)}
+        bridges = {rel: why for rel, why in ignored.items() if managed_doc.is_bridge_path(rel)}
+        if originals:
+            out.append("apply 가 만들 원본 파일이 무시 규칙에 걸린다. 만들어도 커밋되지 않아 다른 클론에는 없고, 커밋된 "
+                       "문서의 가져오기·링크가 깨진다. apply 스크립트는 이 경로에 쓰기 전에 멈춘다(exit 6).")
+            out.append("")
+            out += [f"- `{_cell(rel)}` — `{_cell(why)}`" for rel, why in originals.items()]
+        if bridges:
+            if originals:
+                out.append("")
+            out.append("문제 없음(참고): 아래는 `@AGENTS.md` 한 줄짜리 `CLAUDE.md`(다리 파일)다. apply 는 이 파일만 건너뛰고 "
+                       "원본 `AGENTS.md` 는 쓴다. Claude Code v2.1.277 이상은 작업 폴더와 그 위에 `CLAUDE.md` 가 없으면 "
+                       "`AGENTS.md` 를 읽는다. 로컬에 개인 `CLAUDE.md` 가 있는 사람은 거기에 `@AGENTS.md` 를 넣어야 "
+                       "`AGENTS.md` 가 로드된다.")
+            if "CLAUDE.md" not in bridges:
+                out.append("")
+                out.append("주의: 루트 `CLAUDE.md` 는 무시되지 않는다. 기본 설정의 Claude Code 는 작업 폴더나 그 위에 "
+                           "`CLAUDE.md` 가 있으면 하위 폴더의 `AGENTS.md` 를 읽지 않는다. 모듈 `CLAUDE.md` 를 커밋할지 "
+                           "사람이 정한다.")
+            out.append("")
+            out += [f"- `{_cell(rel)}` — `{_cell(why)}`" for rel, why in bridges.items()]
 
     ds = d["design"]
     out += ["", "### 결정 기록 (`docs/design/`)", ""]

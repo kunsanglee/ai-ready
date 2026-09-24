@@ -275,12 +275,23 @@ class TestAgentsBridge(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("git"), "git 이 없다")
 class TestScaffoldIgnoredPaths(unittest.TestCase):
-    def test_ignored_module_doc_stops_before_writing(self):
+    def test_ignored_bridge_only_is_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             _mk(root, "mod-a/build.gradle.kts")
             _mk(root, "mod-a/src/Foo.kt")
             _mk(root, ".gitignore", "CLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_OK, "다리 파일만 무시되면 멈추지 않는다")
+            self.assertTrue((root / "mod-a/AGENTS.md").is_file())
+            self.assertFalse((root / "mod-a/CLAUDE.md").exists(), "무시되는 다리 파일은 쓰지 않는다")
+
+    def test_ignored_agents_md_stops_before_writing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "mod-a/build.gradle.kts")
+            _mk(root, "mod-a/src/Foo.kt")
+            _mk(root, ".gitignore", "AGENTS.md\n")
             subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
             self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_IGNORED)
             self.assertFalse((root / "mod-a/AGENTS.md").exists())

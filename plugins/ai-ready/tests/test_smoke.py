@@ -52,19 +52,37 @@ class TestManagedDocGuard(unittest.TestCase):
             self.assertFalse(managed_doc.guard_overwrite(p, force=False))
             self.assertTrue(managed_doc.guard_overwrite(p, force=True))
 
-    def test_new_signature_allows_overwrite(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "INDEX.md"
-            p.write_text("# 문서 인덱스\n\n_자동 생성 (`ai-ready:apply`) — 재생성 시 전체를 덮어씁니다._\n",
-                         encoding="utf-8")
-            self.assertTrue(managed_doc.is_ai_ready_generated(p))
-            self.assertTrue(managed_doc.guard_overwrite(p, force=False))
+    def test_signature_without_body_hash_is_treated_as_edited(self):
+        # 해시가 없는 옛 서명은 고쳤는지 알 수 없다. 안전한 쪽으로 고친 초안으로 보고 덮지 않는다.
+        for text in ("# 문서 인덱스\n\n_자동 생성 (`ai-ready:apply`) — 재생성 시 전체를 덮어씁니다._\n",
+                     "# 모듈 의존성\n\n_자동 생성: 2026-05-06 · 대상: `x`_\n"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as td:
+                p = Path(td) / "INDEX.md"
+                p.write_text(text, encoding="utf-8")
+                self.assertTrue(managed_doc.is_ai_ready_generated(p))
+                self.assertEqual(managed_doc.draft_state(p), "edited")
+                self.assertFalse(managed_doc.guard_overwrite(p, force=False))
+                self.assertTrue(managed_doc.guard_overwrite(p, force=True))
 
-    def test_legacy_signature_allows_overwrite(self):
+    def test_signed_draft_is_overwritable_until_its_body_changes(self):
         with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "ARCHITECTURE.md"
-            p.write_text("# 모듈 의존성\n\n_자동 생성: 2026-05-06 · 대상: `x`_\n", encoding="utf-8")
+            p = Path(td) / "AGENTS.md"
+            p.write_text(managed_doc.sign(managed_doc.SIGNATURE_MD + "\n# a\n- TODO\n"), encoding="utf-8")
+            self.assertEqual(managed_doc.draft_state(p), "draft")
             self.assertTrue(managed_doc.guard_overwrite(p, force=False))
+            p.write_text(p.read_text(encoding="utf-8").replace("- TODO", "- 주문을 받는다"), encoding="utf-8")
+            self.assertEqual(managed_doc.draft_state(p), "edited", "서명 줄을 남긴 채 채워도 고친 초안이다")
+            self.assertFalse(managed_doc.guard_overwrite(p, force=False))
+
+    def test_sign_is_stable_and_ignores_line_endings(self):
+        text = managed_doc.SIGNATURE_MD + "\n# a\nbody\n"
+        signed = managed_doc.sign(text)
+        self.assertEqual(managed_doc.sign(signed), signed, "다시 서명해도 같은 줄")
+        self.assertIn(managed_doc.HASH_KEY, signed.splitlines()[0])
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "a.md"
+            p.write_bytes(signed.replace("\n", "\r\n").encode("utf-8"))
+            self.assertEqual(managed_doc.draft_state(p), "draft", "CRLF 로 체크아웃돼도 고친 것이 아니다")
 
     def test_missing_file_allows_create(self):
         with tempfile.TemporaryDirectory() as td:

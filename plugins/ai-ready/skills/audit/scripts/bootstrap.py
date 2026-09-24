@@ -11,13 +11,16 @@
   verification  docs/VERIFICATION.md + scripts/verify.sh
   doc-check     scripts/check_docs.py (문서 정합 검사)
 
-모든 파일은 managed_doc 규칙을 따른다. 없으면 만들고, ai-ready 서명이 있으면 다시 쓰고, 서명이 없는
-(사람이 관리하는) 파일이 하나라도 있으면 아무것도 쓰지 않고 exit 3 이다. --force 로만 덮는다.
-서명이 있는 scripts/verify.sh 라도 CHECKS 가 이번에 만들 값과 다르면 사람이 고친 것으로 보고 같은 식으로 멈춘다.
-이미 `@AGENTS.md` 를 가져오는 CLAUDE.md 는 그대로 둔다. 만들 파일이 심볼릭 링크면(옛 구조: CLAUDE.md 원본 +
-AGENTS.md 링크) 따라 쓰지 않고 exit 3 이다. 만들 파일이 git 에서 무시되면 아무것도 쓰지 않고 exit 6 이다.
-둘 다 --force 로만 넘긴다(링크는 일반 파일로 바꿔 쓴다). .gitattributes 는 덮어쓰지 않고 빠진 줄만 더한다.
-0 이 아닌 종료 코드로 끝나면 stderr 마지막 줄에 `종료 코드 N` 을 적는다.
+모든 파일은 managed_doc 규칙을 따른다. 쓰는 파일의 서명 줄에는 본문 해시가 들어간다. 없으면 만들고, ai-ready 가
+쓴 그대로(해시가 맞는) 초안이면 다시 쓴다. 서명이 없는(사람이 관리하는) 파일이나, 서명은 있지만 본문이 고쳐진
+초안(해시가 다르거나 해시가 없는 옛 초안)이 하나라도 있으면 아무것도 쓰지 않고 exit 3 이다. scripts/verify.sh 가
+고쳐졌으면 지금 CHECKS 도 함께 알린다. 이미 `@AGENTS.md` 를 가져오는 CLAUDE.md 는 그대로 둔다. 만들 파일이 심볼릭
+링크면(옛 구조: CLAUDE.md 원본 + AGENTS.md 링크) 따라 쓰지 않고 exit 3 이다. 막는 이유가 여럿이면 모두 적는다.
+
+만들 파일이 git 에서 무시될 때: 무시되는 것이 `@AGENTS.md` 한 줄짜리 CLAUDE.md(다리 파일)뿐이면 그 파일만 건너뛰고
+나머지는 쓴다(원본 AGENTS.md 는 커밋된다). AGENTS.md·docs/·scripts/ 같은 원본이 무시되면 아무것도 쓰지 않고
+exit 6 이다. 막는 것은 모두 --force 로만 넘긴다(링크는 일반 파일로 바꿔 쓴다). .gitattributes 는 덮어쓰지 않고
+빠진 줄만 더한다. 0 이 아닌 종료 코드로 끝나면 stderr 마지막 줄에 `종료 코드 N` 을 적는다.
 
   python3 bootstrap.py --target <repo> --dry-run               # 무엇을 쓸지만 본다
   python3 bootstrap.py --target <repo> --only root,verification
@@ -45,14 +48,13 @@ PROJECT_FILES = _SCRIPT_DIR / "project"
 
 EXIT_OK = 0
 EXIT_USAGE = 2
-EXIT_REFUSED = 3       # managed_doc: 사람이 관리하는 파일이 있어 아무것도 쓰지 않았다
+EXIT_REFUSED = 3       # 사람이 관리하는 파일·고친 초안·심볼릭 링크(옛 구조)가 있어 아무것도 쓰지 않았다
 EXIT_NO_COMMANDS = 4   # verification 을 골랐는데 확인 명령을 하나도 정하지 못했다
-EXIT_IGNORED = 6       # 만들 파일이 git 에서 무시된다 — 써도 커밋되지 않는다
+EXIT_IGNORED = 6       # 만들 원본 파일이 git 에서 무시된다 — 써도 커밋되지 않는다
 
 KINDS = ("root", "design", "antipatterns", "verification", "doc-check")
 
-SIGNATURE_MD = ("<!-- ai-ready:apply 자동 생성 초안 — 다듬은 뒤 이 줄을 지우면 사람이 관리하는 문서가 되고, "
-                "ai-ready 는 이후 이 파일을 덮어쓰지 않는다 -->")
+SIGNATURE_MD = managed_doc.SIGNATURE_MD
 UNION_LINE = "docs/design/*.decisions.md merge=union"
 _DOMAIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _CHECKS_BLOCK = re.compile(r"^CHECKS=\($\n(.*?)^\)$", re.M | re.S)
@@ -211,9 +213,8 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
              "## 로컬에서", "", "한 번에 돌린다. 마지막 통과 이후 바뀐 것이 없으면 바로 끝난다.", "",
              "```", "scripts/verify.sh", "```", "", "`scripts/verify.sh` 가 차례로 돌리는 명령:", ""]
     lines += [f"- {ROLE_LABEL.get(role, '확인')}: `{cmd}`" for role, cmd in checks]
-    lines += ["", "명령을 바꾸려면 `scripts/verify.sh` 의 `CHECKS` 를 고치고 이 목록도 같이 고친다. 고친 뒤 ai-ready apply 를",
-              "다시 돌려도, `CHECKS` 가 새로 만들 값과 다르면 `scripts/verify.sh` 를 덮어쓰지 않고 멈춘다(exit 3).",
-              "새 값으로 덮어쓰려면 `--force` 를 준다.", "",
+    lines += ["", "명령을 바꾸려면 `scripts/verify.sh` 의 `CHECKS` 를 고치고 이 목록도 같이 고친다. 고친 파일은 첫머리 서명 줄을",
+              "남겨 둬도 ai-ready apply 가 다시 덮어쓰지 않고 멈춘다(exit 3). 다시 만들려면 파일을 지우고 돌린다.", "",
               "마지막 통과를 기억하는 지문에는 커밋·커밋 안 한 변경·추적 안 하는 파일·`CHECKS` 만 들어간다. gitignore 된 파일(`.env` 등),",
               "환경변수, 도구 버전만 바꿨다면 지문을 지우고 다시 돌린다.", "",
               "```", 'rm "$(git rev-parse --git-path verify-pass)"', "```", "",
@@ -292,6 +293,9 @@ def plan(target: Path, kinds: list[str], checks: list[tuple[str, str]], domain: 
         names = {p.rel for p in out}
         out[:0] = [Planned("AGENTS.md", render_root(target, checks, names)),
                    Planned("CLAUDE.md", managed_doc.BRIDGE_TEXT, bridge=True)]
+    for p in out:
+        if not p.bridge:
+            p.content = managed_doc.sign(p.content)
     return out
 
 
@@ -302,19 +306,52 @@ def _needs_union_line(target: Path) -> bool:
                    for line in text.splitlines())
 
 
-def _edited_checks(target: Path, items: list[Planned]) -> Planned | None:
-    """서명이 남은 기존 verify.sh 인데 CHECKS 가 이번에 만들 값과 다르면 그 항목."""
-    for p in items:
-        path = target / p.rel
-        if p.rel == "scripts/verify.sh" and path.is_file() and managed_doc.is_ai_ready_generated(path):
-            if checks_block(path.read_text(encoding="utf-8")) != checks_block(p.content):
-                return p
-    return None
-
-
 def _already_imports(target: Path, p: Planned) -> bool:
     path = target / p.rel
     return p.bridge and path.is_file() and not path.is_symlink() and managed_doc.imports_agents(path)
+
+
+def _checks_hint(target: Path, p: Planned) -> str:
+    """고쳐진 verify.sh 의 지금 CHECKS 와 이번에 만들 CHECKS."""
+    now = checks_block((target / p.rel).read_text(encoding="utf-8", errors="replace"))
+    new = checks_block(p.content)
+    keep = " ".join(f"--check {shlex.quote(c)}" for c in now) if now else "(CHECKS 를 읽지 못했다)"
+    return (f"  지금 CHECKS: {now}\n"
+            f"  만들 CHECKS: {new}\n"
+            f"  지금 파일을 두려면 --only 에서 verification 을 뺀다. 새로 만들되 지금 명령을 이어 쓰려면 파일을 지우고\n"
+            f"  이 인자로 돌린다: {keep}")
+
+
+def _refusals(target: Path, items: list[Planned]) -> list[str]:
+    """쓰지 못하게 막는 이유 전부(사람 파일·고친 초안·심볼릭 링크). 한 이유만 보고 멈추면 나머지를 모른다."""
+    out: list[str] = []
+    for p in items:
+        path = target / p.rel
+        if path.is_symlink():
+            out.append(f"중단: {p.rel} 는 심볼릭 링크다 — 따라 쓰면 링크가 가리키는 파일이 바뀐다.\n"
+                       f"  옛 구조(CLAUDE.md 원본 + AGENTS.md 링크)라면 audit 보고의 전환 제안을 보고 사람이 옮긴다.")
+            continue
+        state = managed_doc.draft_state(path)
+        if state == "human":
+            out.append(f"중단: {p.rel} 에 ai-ready 서명이 없다 — 사람이 관리하는 파일이라 덮어쓰지 않는다.\n"
+                       f"  이 파일은 apply 스킬에서 diff 로 고친다.")
+        elif state == "edited":
+            msg = f"중단: {p.rel} — {managed_doc.edited_reason(path)}. 덮어쓰지 않는다."
+            if p.rel == "scripts/verify.sh":
+                msg += "\n" + _checks_hint(target, p)
+            else:
+                msg += "\n  고친 내용은 apply 스킬에서 diff 로 다룬다. 다시 만들려면 파일을 지우고 돌린다."
+            out.append(msg)
+    return out
+
+
+def _checks_change(target: Path, p: Planned) -> str:
+    """ai-ready 가 쓴 그대로의 verify.sh 를 다시 쓰면서 CHECKS 가 바뀌면 그 사실 한 줄."""
+    path = target / p.rel
+    if p.rel != "scripts/verify.sh" or not path.is_file():
+        return ""
+    now, new = checks_block(path.read_text(encoding="utf-8", errors="replace")), checks_block(p.content)
+    return f" — CHECKS 가 바뀐다: {now} → {new}" if now != new else ""
 
 
 def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | None,
@@ -325,64 +362,54 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
               file=sys.stderr)
         return EXIT_NO_COMMANDS
     planned = plan(target, kinds, checks, domain)
-    kept = [p for p in planned if _already_imports(target, p)]
-    items = [p for p in planned if p not in kept]
-    links = [p for p in items if (target / p.rel).is_symlink()]
-    refused = [p for p in items if p not in links and (target / p.rel).exists()
-               and not managed_doc.is_ai_ready_generated(target / p.rel)]
-    if refused and not force:
-        for p in refused:
-            managed_doc.guard_overwrite(target / p.rel, force=False)
-        print(f"아무것도 쓰지 않았다 — 사람이 관리하는 파일 {len(refused)}개. 그 파일은 apply 스킬에서 diff 로 고친다.",
-              file=sys.stderr)
-        return EXIT_REFUSED
-    if links and not force:
-        for p in links:
-            print(f"중단: {p.rel} 는 심볼릭 링크다 — 따라 쓰면 링크가 가리키는 파일이 바뀐다.", file=sys.stderr)
-        print("  옛 구조(CLAUDE.md 원본 + AGENTS.md 링크)라면 audit 보고의 전환 제안을 보고 사람이 옮긴다.\n"
-              "  링크를 일반 파일로 바꿔 쓰려면 --force.\n"
-              "아무것도 쓰지 않았다.", file=sys.stderr)
-        return EXIT_REFUSED
-    edited = _edited_checks(target, items)
-    if edited and not force:
-        now = checks_block((target / edited.rel).read_text(encoding="utf-8"))
-        keep = " ".join(f"--check {shlex.quote(c)}" for c in now) if now else "(CHECKS 를 읽지 못했다)"
-        print(f"중단: {edited.rel} 의 CHECKS 가 이번에 만들 값과 다르다 — 사람이 고친 것으로 보고 덮어쓰지 않는다.\n"
-              f"  지금 값: {now}\n"
-              f"  만들 값: {checks_block(edited.content)}\n"
-              f"  지금 값을 두려면 --only 에서 verification 을 빼거나 이 인자로 다시 돌린다: {keep}\n"
-              f"  새 값으로 덮으려면 --force.\n"
-              f"아무것도 쓰지 않았다.", file=sys.stderr)
-        return EXIT_REFUSED
     ignored = managed_doc.ignored_paths(target, [p.rel for p in planned]) or {}
-    if ignored and not force:
-        print("중단: 만들 파일이 git 에서 무시된다 — 써도 커밋되지 않고, 커밋된 쪽의 링크·가져오기가 깨진다.",
-              file=sys.stderr)
-        for rel, why in ignored.items():
+    # 무시되는 다리 파일은 쓰지 않는다. 원본 AGENTS.md 는 커밋되니 멈출 이유가 없다.
+    skipped = [] if force else [p for p in planned if p.bridge and p.rel in ignored]
+    blocking_ignored = {rel: why for rel, why in ignored.items() if not managed_doc.is_bridge_path(rel)}
+    kept = [p for p in planned if p not in skipped and _already_imports(target, p)]
+    items = [p for p in planned if p not in kept and p not in skipped]
+
+    refusals = _refusals(target, items)
+    if refusals and not force:
+        for msg in refusals:
+            print(msg, file=sys.stderr)
+        print(f"아무것도 쓰지 않았다 — 막는 파일 {len(refusals)}개. 그래도 덮으려면 --force.", file=sys.stderr)
+        return EXIT_REFUSED
+    if blocking_ignored and not force:
+        print("중단: 만들 원본 파일이 git 에서 무시된다 — 써도 커밋되지 않아 다른 클론에는 없고, 커밋된 문서의 "
+              "가져오기·링크가 깨진다.", file=sys.stderr)
+        for rel, why in blocking_ignored.items():
             print(f"  {rel} ({why})", file=sys.stderr)
         print("  무시 규칙을 고칠지 사람에게 묻는다. 그래도 쓰려면 --force.\n"
               "아무것도 쓰지 않았다.", file=sys.stderr)
         return EXIT_IGNORED
     union = "design" in kinds and _needs_union_line(target)
+    note = managed_doc.bridge_skip_note("CLAUDE.md" not in ignored) if skipped else ""
 
     if dry_run:
         for p in kept:
             print(f"그대로 둠(이미 {managed_doc.AGENTS_IMPORT} 를 가져온다): {p.rel}")
+        for p in skipped:
+            print(f"건너뜀(git 이 무시한다 — {ignored[p.rel]}): {p.rel}")
         for p in items:
             path = target / p.rel
-            if p in links:
+            if path.is_symlink():
                 state = "심볼릭 링크를 일반 파일로 바꿔 씀(--force)"
             elif not path.exists():
                 state = "새로 만듦"
             else:
-                state = "덮어씀(사람 문서 — --force)" if p in refused else "덮어씀(자동 생성 초안)"
-            print(f"{state}: {p.rel}")
+                state = {"human": "덮어씀(사람 문서 — --force)", "edited": "덮어씀(고친 초안 — --force)"}.get(
+                    managed_doc.draft_state(path), "덮어씀(자동 생성 초안)")
+            print(f"{state}: {p.rel}{_checks_change(target, p)}")
         if union:
             print(f"줄 추가: .gitattributes ← {UNION_LINE}")
+        if note:
+            print(note)
         return EXIT_OK
 
     for p in items:
         path = target / p.rel
+        change = _checks_change(target, p)
         if path.is_symlink():
             print(f"경고: {p.rel} 는 심볼릭 링크지만 --force 로 일반 파일로 바꿔 쓴다.", file=sys.stderr)
             path.unlink()
@@ -391,7 +418,9 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
         path.write_text(p.content, encoding="utf-8")
         if p.executable:
             os.chmod(path, 0o755)
-        print(f"썼다: {p.rel}")
+        print(f"썼다: {p.rel}{change}")
+    for p in skipped:
+        print(f"건너뜀(git 이 무시한다 — {ignored[p.rel]}): {p.rel}")
     if union:
         ga = target / ".gitattributes"
         text = ga.read_text(encoding="utf-8") if ga.is_file() else ""
@@ -399,6 +428,8 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
             text += "\n"
         ga.write_text(text + UNION_LINE + "\n", encoding="utf-8")
         print(f"줄 추가: .gitattributes ← {UNION_LINE}")
+    if note:
+        print(note)
     return EXIT_OK
 
 

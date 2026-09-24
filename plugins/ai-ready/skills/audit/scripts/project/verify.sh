@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# ai-ready:apply 자동 생성 — 다듬은 뒤 이 줄을 지우면 사람이 관리하는 파일이 되고, ai-ready 는 이후 덮어쓰지 않는다.
+# ai-ready:apply 자동 생성 — 고치면 이 줄을 남겨 둬도 ai-ready 가 덮어쓰지 않는다. 다시 만들려면 파일을 지우고 apply 를 돌린다.
 #
 # 이 저장소의 확인 명령을 차례로 돌린다. 하나라도 실패하면 그 명령의 출력 마지막 20줄만 보여 주고 멈춘다.
 # 작업 트리(HEAD + 커밋 안 한 변경 + 추적 안 하는 파일)가 마지막으로 통과했을 때와 같으면 다시 돌리지 않는다.
 # 이 지문에는 gitignore 된 파일(.env 등)·환경변수·도구 버전이 들어가지 않는다. 그것만 바꿨으면 지문을 지우고 돌린다:
 #   rm "$(git rev-parse --git-path verify-pass)"
 # 실패한 작업 트리의 지문(verify-fail)과 그 지문으로 막은 횟수(verify-blocks)는 세션마다가 아니라 작업 트리에
-# 하나라, 같은 작업 트리의 세션들이 함께 센다.
+# 하나라, 같은 작업 트리의 세션들이 함께 센다. 확인 명령이 실패하면 통과 기록(verify-pass)을 지운다 — Stop hook
+# 설치기는 이 기록을 "지금 통과하는 상태" 의 근거로 쓴다.
 #
 #   scripts/verify.sh              사람·CI·에이전트가 직접 부를 때. 늘 확인 명령을 돌리고, 실패하면 exit 1
 #   scripts/verify.sh --stop-hook  Claude Code Stop hook 으로 부를 때. 실패하면 exit 2 로 턴을 막는다.
@@ -22,7 +23,8 @@ MAX_BLOCKS=3
 TAIL_LINES=20
 
 mode="${1:-}"
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || root="$(cd "$(dirname "$0")/.." && pwd)"
+# 루트는 부른 곳이 아니라 이 스크립트가 있는 저장소로 정한다. 다른 저장소 안에서 불러도 엉뚱한 곳을 검사하지 않는다.
+root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root" || exit 1
 
 if [ "${#CHECKS[@]}" -eq 0 ]; then
@@ -101,6 +103,7 @@ if report="$(run_checks)"; then
   exit 0
 fi
 
+rm -f "$pass_file"
 if [ "$mode" != "--stop-hook" ]; then
   printf '%s\n' "$report" >&2
   exit 1

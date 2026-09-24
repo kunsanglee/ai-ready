@@ -94,6 +94,44 @@ class TestModuleTemplate(unittest.TestCase):
             self.assertEqual(_quiet(scaffold.run, root, root, 5, dry_run=True), scaffold.EXIT_OK)
             self.assertFalse((root / "src/a/CLAUDE.md").exists())
 
+    def _two_node_modules(self, root: Path) -> None:
+        _mk(root, "package.json", "{}")
+        _mk(root, "src/a/x.ts")
+        _mk(root, "src/b/y.ts")
+
+    def test_filled_draft_is_left_out_of_top_and_refused_when_named(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._two_node_modules(root)
+            self.assertEqual(_quiet(scaffold.run, root, root, 5), scaffold.EXIT_OK)
+            agents = root / "src/a/AGENTS.md"
+            self.assertEqual(managed_doc.draft_state(agents), "draft")
+            filled = agents.read_text(encoding="utf-8").replace("의존해도 되는 것: TODO", "의존해도 되는 것: src/b")
+            agents.write_text(filled, encoding="utf-8")
+            r = subprocess.run([sys.executable, str(SCRIPTS / "scaffold.py"), "--target", str(root), "--out", str(root),
+                                "--top", "5", "--dry-run"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, scaffold.EXIT_OK, r.stderr)
+            self.assertIn("건너뜀: src/a (AGENTS.md: 초안이 고쳐졌다 —", r.stderr)
+            self.assertNotIn("src/a/AGENTS.md", r.stdout)
+            self.assertIn("src/b/AGENTS.md", r.stdout)
+            r = subprocess.run([sys.executable, str(SCRIPTS / "scaffold.py"), "--target", str(root), "--out", str(root),
+                                "--modules", "src/a"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, scaffold.EXIT_REFUSED)
+            self.assertIn("초안이 고쳐졌다", r.stderr)
+            self.assertEqual(agents.read_text(encoding="utf-8"), filled)
+
+    def test_claude_md_that_imports_agents_md_with_extra_lines_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._two_node_modules(root)
+            extra = "@AGENTS.md\n\n## Claude Code\n- plan mode 를 쓴다\n"
+            _mk(root, "src/a/CLAUDE.md", extra)
+            self.assertEqual(_quiet(scaffold.run, root, root, 5, ["src/a"]), scaffold.EXIT_OK)
+            self.assertEqual((root / "src/a/CLAUDE.md").read_text(encoding="utf-8"), extra)
+            self.assertEqual(managed_doc.draft_state(root / "src/a/AGENTS.md"), "draft")
+            self.assertEqual(_quiet(scaffold.run, root, root, 5), scaffold.EXIT_OK, "--top 에서도 후보다")
+            self.assertEqual((root / "src/a/CLAUDE.md").read_text(encoding="utf-8"), extra)
+
 
 class TestBootstrap(unittest.TestCase):
     def _node_repo(self, root: Path) -> None:
@@ -172,7 +210,8 @@ class TestBootstrap(unittest.TestCase):
             r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root), "--only", "root"],
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, bootstrap.EXIT_REFUSED)
-            self.assertIn("심볼릭 링크", r.stderr)
+            self.assertIn("AGENTS.md 는 심볼릭 링크다", r.stderr)
+            self.assertIn("CLAUDE.md — 초안이 고쳐졌다고 본다", r.stderr, "막는 이유를 모두 적는다")
             self.assertIn(f"종료 코드 {bootstrap.EXIT_REFUSED}", r.stderr)
             self.assertTrue((root / "AGENTS.md").is_symlink())
             self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), old)
@@ -182,23 +221,44 @@ class TestBootstrap(unittest.TestCase):
             self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
 
     @unittest.skipUnless(HAS_SHELL, "bash·git 이 없다")
-    def test_ignored_target_path_stops_before_writing(self):
+    def test_ignored_original_path_stops_before_writing(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             self._node_repo(root)
-            _mk(root, ".gitignore", "node_modules\nCLAUDE.md\n")
+            _mk(root, ".gitignore", "node_modules\nAGENTS.md\n")
             subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
             for extra in ([], ["--dry-run"]):
                 r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root),
                                     "--only", "root,antipatterns", *extra], capture_output=True, text=True)
                 self.assertEqual(r.returncode, bootstrap.EXIT_IGNORED, extra)
-                self.assertIn("CLAUDE.md", r.stderr)
-                self.assertIn(".gitignore:2", r.stderr)
+                self.assertIn("AGENTS.md (.gitignore:2", r.stderr)
                 self.assertIn(f"종료 코드 {bootstrap.EXIT_IGNORED}", r.stderr)
             for rel in ("AGENTS.md", "CLAUDE.md", "docs/ANTIPATTERNS.md"):
-                self.assertFalse((root / rel).exists(), f"무시되는 경로가 있으면 아무것도 쓰지 않는다: {rel}")
+                self.assertFalse((root / rel).exists(), f"원본이 무시되면 아무것도 쓰지 않는다: {rel}")
             self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None, force=True), bootstrap.EXIT_OK)
-            self.assertTrue((root / "CLAUDE.md").is_file())
+            self.assertTrue((root / "AGENTS.md").is_file())
+
+    @unittest.skipUnless(HAS_SHELL, "bash·git 이 없다")
+    def test_ignored_bridge_only_is_skipped_and_the_rest_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            _mk(root, ".gitignore", "node_modules\nCLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            args = [sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root), "--only", "root,antipatterns"]
+            r = subprocess.run([*args, "--dry-run"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, bootstrap.EXIT_OK, r.stderr)
+            self.assertIn("건너뜀(git 이 무시한다 — .gitignore:2: CLAUDE.md): CLAUDE.md", r.stdout)
+            r = subprocess.run(args, capture_output=True, text=True)
+            self.assertEqual(r.returncode, bootstrap.EXIT_OK, r.stderr)
+            self.assertTrue((root / "AGENTS.md").is_file())
+            self.assertTrue((root / "docs/ANTIPATTERNS.md").is_file())
+            self.assertFalse((root / "CLAUDE.md").exists(), "무시되는 다리 파일은 쓰지 않는다")
+            self.assertIn("개인 CLAUDE.md 가 있는 사람은 거기에 `@AGENTS.md` 를 넣어야", r.stdout)
+            # 무시되는 자리에 개인 CLAUDE.md 가 있어도 쓰지 않을 파일이라 막지 않는다.
+            _mk(root, "CLAUDE.md", "# 내 메모\n")
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None), bootstrap.EXIT_OK)
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), "# 내 메모\n")
 
     def test_signed_file_is_rewritten(self):
         with tempfile.TemporaryDirectory() as d:
@@ -239,11 +299,56 @@ class TestBootstrap(unittest.TestCase):
                                 "--only", "verification", "--check", "make a"], capture_output=True, text=True)
             self.assertEqual(r.returncode, bootstrap.EXIT_REFUSED)
             self.assertIn("--check 'make a' --check 'make b'", r.stderr)
-            # 같은 명령을 주면 CHECKS 가 같아 그대로 다시 쓴다.
+            self.assertIn("초안이 고쳐졌다", r.stderr)
+            # 고친 파일은 같은 명령을 줘도 덮지 않는다. 지우고 돌리면 다시 만든다.
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make a", "make b"], None),
+                             bootstrap.EXIT_REFUSED)
+            sh.unlink()
             self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make a", "make b"], None), bootstrap.EXIT_OK)
             self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make c"], None, force=True),
                              bootstrap.EXIT_OK)
             self.assertEqual(bootstrap.checks_block(sh.read_text(encoding="utf-8")), ["make c"])
+
+    def test_unedited_verify_sh_is_rewritten_and_a_checks_change_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make a"], None), bootstrap.EXIT_OK)
+            r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root),
+                                "--only", "verification", "--check", "make b"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, bootstrap.EXIT_OK, r.stderr)
+            self.assertIn("CHECKS 가 바뀐다: ['make a'] → ['make b']", r.stdout)
+            self.assertEqual(bootstrap.checks_block((root / "scripts/verify.sh").read_text(encoding="utf-8")), ["make b"])
+
+    def test_filled_draft_that_keeps_its_signature_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            self.assertEqual(_quiet(bootstrap.run, root, ["root", "verification"], [], None), bootstrap.EXIT_OK)
+            for rel in ("AGENTS.md", "docs/VERIFICATION.md", "scripts/verify.sh", ):
+                self.assertEqual(managed_doc.draft_state(root / rel), "draft", rel)
+            agents = root / "AGENTS.md"
+            filled = agents.read_text(encoding="utf-8").replace(
+                "TODO: 이 저장소가 무엇인지 한두 문장으로 적는다.", "주문 배치 작업을 모은 저장소다.")
+            agents.write_text(filled, encoding="utf-8")
+            for extra in ([], ["--dry-run"]):
+                r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root),
+                                    "--only", "root,verification", *extra], capture_output=True, text=True)
+                self.assertEqual(r.returncode, bootstrap.EXIT_REFUSED, extra)
+                self.assertIn("AGENTS.md — 초안이 고쳐졌다", r.stderr)
+                self.assertNotIn("docs/VERIFICATION.md —", r.stderr, "고치지 않은 초안은 막는 이유가 아니다")
+            self.assertEqual(agents.read_text(encoding="utf-8"), filled)
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], [], None), bootstrap.EXIT_OK,
+                             "고친 파일이 없는 종류는 그대로 다시 쓴다")
+
+    def test_every_written_file_but_the_bridge_carries_a_matching_body_hash(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            _quiet(bootstrap.run, root, list(bootstrap.KINDS), [], "order")
+            for rel in ("AGENTS.md", "docs/design/README.md", "docs/design/order.md", "docs/design/order.decisions.md",
+                        "docs/ANTIPATTERNS.md", "docs/VERIFICATION.md", "scripts/verify.sh", "scripts/check_docs.py"):
+                self.assertEqual(managed_doc.draft_state(root / rel), "draft", rel)
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
 
     def test_ci_line_that_excludes_the_test_task_is_written_as_excluded(self):
         with tempfile.TemporaryDirectory() as d:
@@ -462,6 +567,24 @@ class TestVerifySh(unittest.TestCase):
         self.assertEqual(self._verify("--stop-hook").returncode, 0, "수동 실행은 막은 횟수를 건드리지 않는다")
         self.assertEqual(self._runs(), 5)
 
+    def test_root_is_the_repository_that_holds_the_script(self):
+        # 다른 git 저장소 안에서 불러도 스크립트가 있는 저장소를 검사한다.
+        _mk(self.root, "scripts/verify.sh", bootstrap.render_verify_sh([("test", "test -f a.txt")]))
+        with tempfile.TemporaryDirectory() as other:
+            subprocess.run(["git", "init", "-q"], cwd=other, check=True, capture_output=True)
+            r = subprocess.run(["bash", str(self.root / "scripts/verify.sh")], cwd=other, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_failure_clears_the_pass_record(self):
+        pass_file = self.root / ".git" / "verify-pass"
+        self.assertEqual(self._verify().returncode, 0)
+        self.assertTrue(pass_file.is_file())
+        (self.root / "FAIL").write_text("")
+        self._git("add", "FAIL")
+        self._git("commit", "-qm", "break")
+        self.assertEqual(self._verify().returncode, 1)
+        self.assertFalse(pass_file.exists(), "실패하면 통과 기록을 지운다")
+
     def test_stop_hook_failure_tells_the_agent_not_to_fix_unrelated_violations(self):
         (self.root / "FAIL").write_text("")
         r = self._verify("--stop-hook")
@@ -497,6 +620,36 @@ class TestInstallVerifyHook(unittest.TestCase):
             self.assertTrue((root / ".claude/settings.json").is_file())
             _mk(root, ".git/verify-pass", "abc\n")
             self.assertEqual(self._run(root, "--uninstall").returncode, 0)
+
+    def test_pass_then_breaking_commit_refuses_install(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "scripts/verify.sh", bootstrap.render_verify_sh([("test", "test ! -f FAIL")]))
+            env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                   "GIT_COMMITTER_EMAIL": "t@t"}
+            for cmd in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-qm", "init"]):
+                subprocess.run(cmd, cwd=root, check=True, env=env, capture_output=True)
+            verify = ["bash", "scripts/verify.sh"]
+            self.assertEqual(subprocess.run(verify, cwd=root, capture_output=True).returncode, 0)
+            self.assertEqual(self._run(root, "--dry-run").returncode, 0, "통과한 뒤에는 걸 수 있다")
+            _mk(root, "FAIL", "")
+            for cmd in (["git", "add", "FAIL"], ["git", "commit", "-qm", "break"]):
+                subprocess.run(cmd, cwd=root, check=True, env=env, capture_output=True)
+            self.assertEqual(subprocess.run(verify, cwd=root, capture_output=True).returncode, 1)
+            r = self._run(root)
+            self.assertEqual(r.returncode, install_verify_hook.EXIT_NOT_PASSED, "옛 통과 기록으로 걸지 않는다")
+            self.assertFalse((root / ".claude/settings.json").exists())
+
+    def test_failed_stop_hook_record_refuses_install(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._passed_repo(root)
+            _mk(root, ".git/verify-fail", "def\n")
+            r = self._run(root)
+            self.assertEqual(r.returncode, install_verify_hook.EXIT_NOT_PASSED)
+            self.assertIn("verify-fail", r.stderr)
+            self.assertFalse((root / ".claude/settings.json").exists())
+            self.assertEqual(self._run(root, "--force").returncode, 0)
 
     def test_uninstall_does_not_need_a_pass(self):
         with tempfile.TemporaryDirectory() as d:

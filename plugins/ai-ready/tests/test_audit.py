@@ -119,6 +119,21 @@ class TestDocFacts(unittest.TestCase):
             text = audit.render(audit.collect(root))
             self.assertIn("git 이 무시하는", text)
             self.assertIn("`CLAUDE.md` — `.gitignore:2", text)
+            self.assertIn("문제 없음(참고)", text, "다리 파일만 무시되면 참고로만 적는다")
+            self.assertNotIn("exit 6", text)
+
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_ignored_original_is_reported_as_a_stop(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _gradle_repo(root)
+            _mk(root, ".gitignore", "docs/\n*/CLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            text = audit.render(audit.collect(root))
+            self.assertIn("원본 파일이 무시 규칙에 걸린다", text)
+            self.assertIn("`docs/VERIFICATION.md` — `.gitignore:1", text)
+            self.assertIn("문제 없음(참고)", text)
+            self.assertIn("루트 `CLAUDE.md` 는 무시되지 않는다", text, "모듈 다리 파일만 무시되면 읽히지 않는 경우를 알린다")
 
     def test_ignored_check_says_so_outside_git(self):
         with tempfile.TemporaryDirectory() as d:
@@ -350,6 +365,7 @@ class TestRuleLines(unittest.TestCase):
             os.symlink("CLAUDE.md", root / "AGENTS.md")
             rows, total = audit.rule_lines(root)
             self.assertEqual(total, 1)
+            self.assertEqual(rows[0]["where"], "CLAUDE.md:1", "고칠 곳인 본문 파일 경로로 적는다")
 
     def test_limit_keeps_entry_docs_first(self):
         with tempfile.TemporaryDirectory() as d:
