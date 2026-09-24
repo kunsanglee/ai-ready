@@ -134,12 +134,28 @@ RULE_PATTERNS = (
 RULE_HEADING = re.compile(
     r"규칙|원칙|금지|제약|불변식|안티\s*패턴|하지\s*말|\b(?:rules?|constraints?|invariants?|anti-?patterns?|"
     r"don'?ts|do not|never|must)\b", re.I)
-_FENCE = re.compile(r"^\s*(```|~~~)")
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
 
 
 # --- 공통 -----------------------------------------------------------------
+
+def _outside_fences(text: str):
+    """(줄 번호, 줄) — 코드 블록 안과 펜스 줄은 뺀다. 여는 펜스와 같은 문자로, 그 길이 이상일 때만 닫힌다
+    (`~~~` 블록 안의 ``` 줄은 본문이다). project/check_docs.py 의 같은 이름 함수와 같은 규칙이다 — 그쪽은
+    대상 저장소로 복사되는 파일이라 import 하지 않고 따로 둔다(tests/test_audit.py 가 두 결과를 맞춰 본다)."""
+    fence = ""
+    for no, line in enumerate(text.splitlines(), 1):
+        m = _FENCE.match(line)
+        if not fence:
+            if m:
+                fence = m.group(1)
+            else:
+                yield no, line
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
+            fence = ""
+
 
 def _read(path: Path) -> str:
     try:
@@ -508,13 +524,9 @@ def rule_lines(target: Path, limit: int = MAX_RULE_LINES) -> tuple[list[dict], i
         if key in seen:
             continue
         seen.add(key)
-        in_fence = False
         rule_heading = False
-        for no, line in enumerate(text.splitlines(), 1):
-            if _FENCE.match(line):
-                in_fence = not in_fence
-                continue
-            if in_fence or not line.strip():
+        for no, line in _outside_fences(text):
+            if not line.strip():
                 continue
             h = _HEADING.match(line)
             if h:

@@ -243,6 +243,41 @@ class TestRuleLines(unittest.TestCase):
             self.assertNotIn("- src/ 아래에 코드가 있다.", rules)
             self.assertNotIn("never inside a fence", rules)
 
+    def test_fence_closes_only_with_its_own_marker(self):
+        # ~~~ 블록 안의 ``` 와 ```` 블록 안의 ``` 는 펜스를 닫지 않는다. 토글로 세면 안과 밖이 뒤집혀
+        # 코드 블록 안의 줄을 규칙으로 뽑고 블록 뒤의 규칙을 놓친다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "CLAUDE.md", "\n".join([
+                "~~~markdown", "```", "never inside tilde", "```", "~~~",
+                "never after tilde",
+                "````", "```", "never inside quad", "````",
+                "never after quad",
+                "```", "never inside info-closed", "``` not a close", "```",
+                "never after info",
+            ]))
+            self.assertEqual(self._rules(root), ["never after tilde", "never after quad", "never after info"])
+
+    def test_fence_rule_matches_check_docs(self):
+        # audit.py 와 project/check_docs.py 는 번들 경계상 서로 import 하지 않고 같은 펜스 규칙을 따로 갖는다.
+        # 같은 입력에 같은 줄을 남기는지 본다.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_check_docs_for_parity", SCRIPTS / "project" / "check_docs.py")
+        check_docs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check_docs)
+        samples = [
+            "a\n```\nb\n```\nc",
+            "~~~markdown\n```\nin\n```\n~~~\nout",
+            "````\n```\nin\n````\nout",
+            "```\nin\n``` trailing\nstill in\n```\nout",
+            "  ~~~~\nin\n~~~\nstill in\n  ~~~~~\nout",
+            "```\nnever closed\nx",
+            "~~~\n````\nin\n~~~ \nout",
+        ]
+        for text in samples:
+            with self.subTest(text=text):
+                self.assertEqual(list(audit._outside_fences(text)), list(check_docs._outside_fences(text)))
+
     def test_symlinked_agents_md_is_counted_once(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
