@@ -3,8 +3,10 @@
 
 점수는 없다. 세 절을 낸다.
 
-1. 문서 존재 — 루트 CLAUDE.md(+AGENTS.md), 모듈별 CLAUDE.md, docs/design 결정 기록 쌍, 검증 문서.
-   있음·없음·길이 과다만 적는다.
+1. 문서 존재 — 루트 AGENTS.md·CLAUDE.md, 모듈별 문서, docs/design 결정 기록 쌍, 검증 문서.
+   있음·없음·길이 과다와, 두 문서의 구조(AGENTS.md 원본 + `@AGENTS.md` 를 가져오는 CLAUDE.md 가 기본값)를
+   적는다. 옛 구조(CLAUDE.md 원본 + AGENTS.md 심볼릭 링크)는 전환을 제안만 하고 바꾸지 않는다.
+   apply 가 만들 문서 경로가 git 에서 무시되면(`git check-ignore`) 따로 적는다.
 2. 강제 수단 — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트·pre-commit·에이전트 hook·
    CI 설정. 그리고 CI 설정 파일 안에서 그 검사를 실제로 부르는 줄을 찾아 따로 적는다. CI·Dockerfile 에서
    테스트를 빼거나 실패를 무시하는 줄도 표시한다.
@@ -34,11 +36,18 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+import managed_doc  # noqa: E402
 import stacks  # noqa: E402
 
 # 루트 CLAUDE.md 는 매 세션 통째로 읽힌다. 이 크기를 넘으면 "길이 과다" 로 적는다.
 # 기준은 판정이 아니라 보고용 문턱이다 — 넘었다는 사실과 실제 크기를 함께 적는다.
 ROOT_DOC_MAX_BYTES = 8_000
+
+# apply(bootstrap.py)가 대상 저장소 루트 기준으로 만드는 파일. 모듈마다 AGENTS.md·CLAUDE.md 가 더해진다.
+GENERATED_ROOT_PATHS = (
+    "AGENTS.md", "CLAUDE.md", "docs/design/README.md", "docs/ANTIPATTERNS.md", "docs/VERIFICATION.md",
+    "scripts/verify.sh", "scripts/check_docs.py",
+)
 MODULE_DOC_MAX_LINES = 80
 MAX_RULE_LINES = 400
 
@@ -185,33 +194,84 @@ def _doc_size(path: Path) -> dict:
 
 # --- 1. 문서 존재 -----------------------------------------------------------
 
+TRANSITION_PROPOSAL = (
+    "옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)다. `AGENTS.md` 를 원본(일반 파일)으로 옮기고 "
+    "`CLAUDE.md` 를 `@AGENTS.md` 한 줄로 바꾸기를 제안한다 — 심볼릭 링크는 Windows 클론에서 한 줄짜리 파일로 "
+    "풀리고, Edit·Write 도구가 링크를 따라 쓰지 않는다. 자동으로 바꾸지 않는다.")
+SEPARATE_PROPOSAL = (
+    "`CLAUDE.md` 와 `AGENTS.md` 가 따로 있는데 `CLAUDE.md` 가 `@AGENTS.md` 를 가져오지 않는다. Claude Code 는 한 "
+    "폴더에 둘이 있으면 `CLAUDE.md` 만 읽는다. 두 내용을 `AGENTS.md` 로 합치고 `CLAUDE.md` 맨 위에 `@AGENTS.md` 를 "
+    "두기를 제안한다. 자동으로 바꾸지 않는다.")
+
+
+def _points_to(link: Path, other: Path) -> bool:
+    try:
+        return link.resolve() == other.resolve()
+    except OSError:
+        return False
+
+
 def _agents_bridge(directory: Path) -> str:
     agents = directory / "AGENTS.md"
     if agents.is_symlink():
-        try:
-            same = agents.resolve() == (directory / "CLAUDE.md").resolve()
-        except OSError:
-            same = False
-        return "CLAUDE.md 심링크" if same else "다른 파일을 가리키는 심링크"
+        return "CLAUDE.md 심링크" if _points_to(agents, directory / "CLAUDE.md") else "다른 파일을 가리키는 심링크"
     if agents.is_file():
+        claude = directory / "CLAUDE.md"
+        if claude.is_file() and not claude.is_symlink() and managed_doc.imports_agents(claude):
+            return "원본 (CLAUDE.md 가 `@AGENTS.md` 로 가져온다)"
         return "별도 파일"
     return "없음"
 
 
+def _doc_pair(directory: Path) -> dict:
+    """한 폴더의 AGENTS.md·CLAUDE.md 구조. 본문이 든 파일(body)로 길이를 잰다."""
+    agents, claude = directory / "AGENTS.md", directory / "CLAUDE.md"
+    has_agents, has_claude = agents.is_file(), claude.is_file()
+    agents_link, claude_link = agents.is_symlink(), claude.is_symlink()
+    imports = has_claude and not claude_link and managed_doc.imports_agents(claude)
+    if has_agents and not agents_link and imports:
+        layout, body = "AGENTS.md 원본 + `@AGENTS.md` 를 가져오는 CLAUDE.md", "AGENTS.md"
+    elif agents_link and has_claude and not claude_link and _points_to(agents, claude):
+        layout, body = "CLAUDE.md 원본 + AGENTS.md 심볼릭 링크 (옛 구조)", "CLAUDE.md"
+    elif claude_link and has_agents and not agents_link and _points_to(claude, agents):
+        layout, body = "AGENTS.md 원본 + CLAUDE.md 심볼릭 링크", "AGENTS.md"
+    elif has_claude and has_agents:
+        layout, body = "CLAUDE.md 와 AGENTS.md 가 따로 있다", "CLAUDE.md"
+    elif has_claude:
+        layout, body = "CLAUDE.md 만 있다", "CLAUDE.md"
+    elif has_agents:
+        layout, body = "AGENTS.md 만 있다", "AGENTS.md"
+    else:
+        layout, body = "없음", None
+    proposal = None
+    if layout.endswith("(옛 구조)"):
+        proposal = TRANSITION_PROPOSAL
+    elif layout == "CLAUDE.md 와 AGENTS.md 가 따로 있다":
+        proposal = SEPARATE_PROPOSAL
+    return {"claude_md": has_claude, "agents_md": _agents_bridge(directory), "layout": layout,
+            "body": body, "proposal": proposal}
+
+
+def _ignored_generated(target: Path, module_rels: list[str]) -> dict[str, str] | None:
+    rels = list(GENERATED_ROOT_PATHS)
+    for m in module_rels:
+        rels += [f"{m}/AGENTS.md", f"{m}/CLAUDE.md"]
+    return managed_doc.ignored_paths(target, rels)
+
+
 def doc_facts(target: Path) -> dict:
-    root_claude = target / "CLAUDE.md"
-    root = {"claude_md": root_claude.is_file(), "agents_md": _agents_bridge(target)}
-    if root_claude.is_file():
-        root.update(_doc_size(root_claude))
+    root = _doc_pair(target)
+    if root["body"]:
+        root.update(_doc_size(target / root["body"]))
         root["too_long"] = root["bytes"] > ROOT_DOC_MAX_BYTES
 
     ml = stacks.logical_modules(target)
     modules = []
     for rel in ml.modules:
         d = target / rel
-        entry = {"path": str(rel), "claude_md": (d / "CLAUDE.md").is_file(), "agents_md": _agents_bridge(d)}
-        if entry["claude_md"]:
-            entry["lines"] = _doc_size(d / "CLAUDE.md")["lines"]
+        entry = {"path": str(rel), **_doc_pair(d)}
+        if entry["body"]:
+            entry["lines"] = _doc_size(d / entry["body"])["lines"]
             entry["too_long"] = entry["lines"] > MODULE_DOC_MAX_LINES
         modules.append(entry)
 
@@ -239,7 +299,8 @@ def doc_facts(target: Path) -> dict:
         "antipatterns": next((p for p in ("docs/ANTIPATTERNS.md", "ANTIPATTERNS.md") if (target / p).is_file()), None),
     }
     return {"root": root, "module_mode": ml.mode, "modules": modules, "design": design,
-            "verification": verification}
+            "verification": verification,
+            "ignored": _ignored_generated(target, [str(m) for m in ml.modules])}
 
 
 # --- 2. 강제 수단 -----------------------------------------------------------
@@ -572,29 +633,54 @@ def render(facts: dict) -> str:
 
     out += ["## 1. 문서 존재", ""]
     r = d["root"]
-    if r["claude_md"]:
+    if r["body"]:
         size = f"{r['bytes']:,}바이트 · {r['lines']}줄"
         flag = f" — **길이 과다** (기준 {ROOT_DOC_MAX_BYTES:,}바이트)" if r["too_long"] else ""
-        out.append(f"- 루트 `CLAUDE.md`: 있음 ({size}){flag}")
+        out.append(f"- 루트 문서 본문 `{r['body']}`: 있음 ({size}){flag}")
+        out.append(f"- 루트 문서 구조: {r['layout']}")
+        out.append(f"- 루트 `CLAUDE.md`: {'있음' if r['claude_md'] else '없음'} · 루트 `AGENTS.md`: {r['agents_md']}")
     else:
-        out.append("- 루트 `CLAUDE.md`: **없음**")
-    out.append(f"- 루트 `AGENTS.md`: {r['agents_md']}")
+        out.append("- 루트 `AGENTS.md`·`CLAUDE.md`: **없음**")
+    if r["proposal"]:
+        out.append(f"- 제안(루트): {r['proposal']}")
 
     mode_label = {"multi": "멀티 모듈(하위 빌드 매니페스트)", "single": "단일 모듈(스택 기준점의 하위 디렉토리)",
                   "no-adapter": "모듈 기준점을 못 찾음 — 맞는 스택 어댑터 없음",
                   "no-code": "모듈 기준점 아래 코드 디렉토리 없음"}[d["module_mode"]]
-    out += ["", f"### 모듈 CLAUDE.md — {mode_label}", ""]
+    out += ["", f"### 모듈 문서 — {mode_label}", ""]
     if d["modules"]:
-        out += ["| 모듈 | CLAUDE.md | AGENTS.md |", "|---|---|---|"]
+        out += ["| 모듈 | 본문 | CLAUDE.md | AGENTS.md |", "|---|---|---|---|"]
         for m in d["modules"]:
-            if m["claude_md"]:
-                doc = f"있음 ({m['lines']}줄)" + (f" — **길이 과다** (기준 {MODULE_DOC_MAX_LINES}줄)"
-                                                  if m["too_long"] else "")
+            if m["body"]:
+                doc = f"`{m['body']}` ({m['lines']}줄)" + (f" — **길이 과다** (기준 {MODULE_DOC_MAX_LINES}줄)"
+                                                          if m["too_long"] else "")
             else:
                 doc = "**없음**"
-            out.append(f"| `{_cell(m['path'])}` | {doc} | {m['agents_md']} |")
+            out.append(f"| `{_cell(m['path'])}` | {doc} | {'있음' if m['claude_md'] else '없음'} | {m['agents_md']} |")
+        proposals = [m for m in d["modules"] if m["proposal"]]
+        if proposals:
+            out.append("")
+            seen = []
+            for m in proposals:
+                if m["proposal"] not in seen:
+                    seen.append(m["proposal"])
+            for text in seen:
+                where = ", ".join(f"`{_cell(m['path'])}`" for m in proposals if m["proposal"] == text)
+                out.append(f"- 제안({where}): {text}")
     else:
         out.append("- 모듈 목록 없음")
+
+    out += ["", "### git 이 무시하는 생성 대상 경로", ""]
+    if d["ignored"] is None:
+        out.append("- 확인하지 못했다 (git 저장소가 아니라 `git check-ignore` 를 부를 수 없다)")
+    elif d["ignored"]:
+        out.append("apply 가 만들 파일이 무시 규칙에 걸린다. 만들어도 커밋되지 않고, 커밋된 옆 문서의 가져오기가 깨진다. "
+                   "apply 스크립트는 이 경로에 쓰기 전에 멈춘다.")
+        out.append("")
+        for rel, why in d["ignored"].items():
+            out.append(f"- `{_cell(rel)}` — `{_cell(why)}`")
+    else:
+        out.append("- 없음")
 
     ds = d["design"]
     out += ["", "### 결정 기록 (`docs/design/`)", ""]
@@ -681,7 +767,7 @@ def main() -> int:
     args = ap.parse_args()
     target = Path(args.target).resolve()
     if not target.is_dir():
-        print(f"오류: 대상이 디렉토리가 아니다: {target}", file=sys.stderr)
+        print(f"오류: 대상이 디렉토리가 아니다: {target}\n종료 코드 2", file=sys.stderr)
         return 2
     facts = collect(target, args.max_rules)
     text = json.dumps(facts, ensure_ascii=False, indent=2) + "\n" if args.json else render(facts)

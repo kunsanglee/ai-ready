@@ -16,7 +16,7 @@ tools: Read, Grep, Glob, Bash
 3. **근거에 묶는다.** 후보마다 출처(대화에서 사람이 한 말, PR 코멘트 링크·작성자·위치)와 코드 위치(`파일:줄`)를 적는다.
    코드 위치는 `grep`·`git log` 로 확인한 것만 쓴다. 확인하지 못했으면 "확인 필요" 라고 쓴다.
 4. **일반화되는 것만 올린다.** 이번 한 번만 해당하는 실수는 "버림" 으로 추천한다. 억지로 후보를 만들지 않는다.
-5. **중복을 만들지 않는다.** 이미 lint 규칙·테스트·`docs/ANTIPATTERNS.md`·모듈 `CLAUDE.md`·결정 카드에 있는 규칙이면
+5. **중복을 만들지 않는다.** 이미 lint 규칙·테스트·`docs/ANTIPATTERNS.md`·모듈 `AGENTS.md`/`CLAUDE.md`·결정 카드에 있는 규칙이면
    새 후보 대신 "기존 <위치> 와 중복 — 보강만 제안" 으로 표시한다.
 
 ## 입력 (부르는 쪽이 프롬프트로 넘긴다)
@@ -30,7 +30,7 @@ tools: Read, Grep, Glob, Bash
 ## 먼저 읽을 것
 
 1. 기존 강제 수단: lint 설정(eslint·detekt·ruff·clippy 등), 아키텍처 테스트, CI 설정. 이미 막힌 규칙인지 본다.
-2. `docs/ANTIPATTERNS.md`, 후보가 닿는 모듈의 `CLAUDE.md`, 관련 `docs/design/*.decisions.md` 카드 제목
+2. `docs/ANTIPATTERNS.md`, 후보가 닿는 모듈의 `AGENTS.md`(없으면 `CLAUDE.md`), 관련 `docs/design/*.decisions.md` 카드 제목
    (`grep -n '^## '` 로 제목만).
 3. 후보가 가리키는 코드. 같은 실수가 다른 곳에도 있는지 `grep` 으로 본다(있으면 강제 초안에 기준 파일이 필요하다).
 
@@ -68,7 +68,7 @@ tools: Read, Grep, Glob, Bash
 ```
 ### 후보 N — <짧은 제목>  [안티패턴]
 - 출처: ...
-- 목적지: docs/ANTIPATTERNS.md | <모듈>/CLAUDE.md "강제할 수 없는 규칙"
+- 목적지: docs/ANTIPATTERNS.md | <모듈>/AGENTS.md "강제할 수 없는 규칙"
 - 초안:
   - DO NOT: ...
   - 이유: ...

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,70 @@ class TestDocFacts(unittest.TestCase):
             _mk(root, "CLAUDE.md", "# x\n")
             os.symlink("CLAUDE.md", root / "AGENTS.md")
             self.assertEqual(audit.doc_facts(root)["root"]["agents_md"], "CLAUDE.md 심링크")
+
+    def test_agents_original_with_import_line_is_measured_on_agents_md(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "AGENTS.md", "가" * (audit.ROOT_DOC_MAX_BYTES // 3 + 10))
+            _mk(root, "CLAUDE.md", "@AGENTS.md\n")
+            r = audit.doc_facts(root)["root"]
+            self.assertEqual(r["body"], "AGENTS.md")
+            self.assertTrue(r["too_long"], "길이는 가져오는 한 줄이 아니라 본문으로 잰다")
+            self.assertIsNone(r["proposal"])
+            self.assertIn("@AGENTS.md", r["layout"])
+
+    def test_old_symlink_layout_gets_a_transition_proposal(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "CLAUDE.md", "# x\n")
+            os.symlink("CLAUDE.md", root / "AGENTS.md")
+            _gradle_repo(root)
+            _mk(root, "app/CLAUDE.md", "# app\n")
+            os.symlink("CLAUDE.md", root / "app" / "AGENTS.md")
+            facts = audit.doc_facts(root)
+            self.assertIn("`@AGENTS.md`", facts["root"]["proposal"])
+            app = next(m for m in facts["modules"] if m["path"] == "app")
+            self.assertIn("`@AGENTS.md`", app["proposal"])
+            text = audit.render(audit.collect(root))
+            self.assertIn("제안", text)
+            self.assertIn("자동으로 바꾸지 않는다", text)
+            self.assertTrue((root / "AGENTS.md").is_symlink(), "audit 은 바꾸지 않는다")
+
+    def test_separate_files_without_import_are_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "CLAUDE.md", "# claude\n")
+            _mk(root, "AGENTS.md", "# agents\n")
+            self.assertIn("CLAUDE.md` 만 읽는다", audit.doc_facts(root)["root"]["proposal"])
+
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_ignored_generated_paths_are_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _gradle_repo(root)
+            _mk(root, ".gitignore", "build/\nCLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            ignored = audit.doc_facts(root)["ignored"]
+            self.assertIn("CLAUDE.md", ignored)
+            self.assertIn("app/CLAUDE.md", ignored)
+            self.assertIn(".gitignore:2", ignored["CLAUDE.md"])
+            self.assertNotIn("AGENTS.md", ignored)
+            text = audit.render(audit.collect(root))
+            self.assertIn("git 이 무시하는", text)
+            self.assertIn("`CLAUDE.md` — `.gitignore:2", text)
+
+    def test_ignored_check_says_so_outside_git(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertIsNone(audit.doc_facts(root)["ignored"])
+            self.assertIn("git 저장소가 아니라", audit.render(audit.collect(root)))
+
+    def test_generated_paths_cover_everything_bootstrap_writes(self):
+        import bootstrap  # noqa: E402 — audit 을 import 하므로 여기서만 부른다
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            planned = {p.rel for p in bootstrap.plan(root, list(bootstrap.KINDS), [("test", "make")], None)}
+            self.assertLessEqual(planned, set(audit.GENERATED_ROOT_PATHS))
 
     def test_module_docs_follow_logical_modules(self):
         with tempfile.TemporaryDirectory() as d:

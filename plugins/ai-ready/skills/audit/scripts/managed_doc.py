@@ -8,6 +8,13 @@ ai-ready 생성 스크립트(scaffold.py)는 대상 파일을 *전체 덮어쓴�
 이 모듈은 출력 대상이 (1) 없거나 (2) ai-ready 자동 생성 서명을 그대로 가진 경우에만 덮어쓰기를
 허용하고, 그 외(= 사람이 인수)에는 거부한다. `--force` 로만 강제한다.
 
+문서 구조의 기본값도 여기 둔다. `AGENTS.md` 가 원본(서명이 든 일반 파일)이고, 옆의 `CLAUDE.md` 는
+`@AGENTS.md` 한 줄로 그것을 가져온다. Claude Code 는 한 폴더에 둘이 있으면 `CLAUDE.md` 만 읽고, 가져오기
+경로는 가져오는 파일 기준으로 푼다. 심볼릭 링크는 Windows 클론에서 한 줄짜리 파일로 풀리고 Edit·Write 도구가
+링크를 따라 쓰지 않아 쓰지 않는다.
+
+만들 파일이 git 에서 무시되면 커밋되지 않아 저장소에 남지 않는다. `ignored_paths` 가 그것을 쓰기 전에 알린다.
+
 확인 대화는 스크립트가 하지 않는다 — 결정론·헤드리스 도구이기 때문이다. 대화형 diff 확인은
 apply 스킬이 맡고, 이 가드는 "사람이 인수한 파일을 말없이 덮어쓰는" 사고만 막는 마지막 장치다.
 
@@ -15,10 +22,16 @@ stdlib-only.
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
-__all__ = ["is_ai_ready_generated", "guard_overwrite", "add_force_arg"]
+__all__ = ["is_ai_ready_generated", "guard_overwrite", "add_force_arg", "AGENTS_IMPORT", "BRIDGE_TEXT",
+           "imports_agents", "is_bridge", "ignored_paths"]
+
+AGENTS_IMPORT = "@AGENTS.md"
+BRIDGE_TEXT = AGENTS_IMPORT + "\n"
+_IMPORT_FORMS = (AGENTS_IMPORT, "@./AGENTS.md")
 
 # ai-ready 생성물이 헤더에 박는 시그니처 (신형).
 AUTO_SIGNATURES = (
@@ -80,3 +93,45 @@ def add_force_arg(parser) -> None:
         "--force", action="store_true",
         help="사람이 인수한(자동 생성 시그니처 없는) 문서도 덮어쓰기 강제",
     )
+
+
+def _lines(path: Path) -> list[str] | None:
+    try:
+        return [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines()]
+    except OSError:
+        return None
+
+
+def imports_agents(path: Path) -> bool:
+    """이 CLAUDE.md 가 옆의 AGENTS.md 를 가져오는 줄(`@AGENTS.md`)을 가졌나."""
+    return any(line in _IMPORT_FORMS for line in _lines(path) or [])
+
+
+def is_bridge(path: Path) -> bool:
+    """가져오는 줄 하나만 있는 CLAUDE.md. ai-ready 가 만든 것과 같아 다시 써도 잃을 것이 없다."""
+    lines = [line for line in _lines(path) or [] if line]
+    return len(lines) == 1 and lines[0] in _IMPORT_FORMS
+
+
+def ignored_paths(root: Path, rels: list[str]) -> dict[str, str] | None:
+    """rels 중 git 이 무시하는 경로 → 근거(`.gitignore:43: CLAUDE.md`). git 저장소가 아니면 None.
+
+    이미 추적 중인 파일은 무시 규칙에 걸려도 커밋되므로 빠진다(`git check-ignore` 의 기본 동작).
+    """
+    if not rels:
+        return {}
+    try:
+        r = subprocess.run(["git", "check-ignore", "-v", "-z", "--stdin"], cwd=root,
+                           input="\0".join(rels).encode("utf-8") + b"\0", capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode not in (0, 1):
+        return None
+    fields = r.stdout.decode("utf-8", errors="replace").split("\0")
+    out: dict[str, str] = {}
+    for i in range(0, len(fields) - 3, 4):
+        source, line, pattern, path = fields[i:i + 4]
+        if pattern.startswith("!"):
+            continue
+        out[path] = f"{source}:{line}: {pattern}"
+    return out

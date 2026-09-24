@@ -3,7 +3,8 @@
 
 만들 수 있는 것(--only 로 고른다, 기본은 전부):
 
-  root          루트 CLAUDE.md (확인 명령 · 문서 지도 · 강제할 수 없는 규칙 자리) + AGENTS.md 심링크
+  root          루트 AGENTS.md (확인 명령 · 문서 지도 · 강제할 수 없는 규칙 자리) + 그것을 가져오는
+                한 줄짜리 CLAUDE.md(`@AGENTS.md`)
   design        docs/design/README.md + .gitattributes 의 union merge 한 줄
                 (--design-domain 을 주면 docs/design/{domain}.md 와 {domain}.decisions.md 도)
   antipatterns  docs/ANTIPATTERNS.md — 빈 원장과 항목 형식
@@ -13,7 +14,10 @@
 모든 파일은 managed_doc 규칙을 따른다. 없으면 만들고, ai-ready 서명이 있으면 다시 쓰고, 서명이 없는
 (사람이 관리하는) 파일이 하나라도 있으면 아무것도 쓰지 않고 exit 3 이다. --force 로만 덮는다.
 서명이 있는 scripts/verify.sh 라도 CHECKS 가 이번에 만들 값과 다르면 사람이 고친 것으로 보고 같은 식으로 멈춘다.
-.gitattributes 는 덮어쓰지 않고 빠진 줄만 더한다.
+이미 `@AGENTS.md` 를 가져오는 CLAUDE.md 는 그대로 둔다. 만들 파일이 심볼릭 링크면(옛 구조: CLAUDE.md 원본 +
+AGENTS.md 링크) 따라 쓰지 않고 exit 3 이다. 만들 파일이 git 에서 무시되면 아무것도 쓰지 않고 exit 6 이다.
+둘 다 --force 로만 넘긴다(링크는 일반 파일로 바꿔 쓴다). .gitattributes 는 덮어쓰지 않고 빠진 줄만 더한다.
+0 이 아닌 종료 코드로 끝나면 stderr 마지막 줄에 `종료 코드 N` 을 적는다.
 
   python3 bootstrap.py --target <repo> --dry-run               # 무엇을 쓸지만 본다
   python3 bootstrap.py --target <repo> --only root,verification
@@ -43,6 +47,7 @@ EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_REFUSED = 3       # managed_doc: 사람이 관리하는 파일이 있어 아무것도 쓰지 않았다
 EXIT_NO_COMMANDS = 4   # verification 을 골랐는데 확인 명령을 하나도 정하지 못했다
+EXIT_IGNORED = 6       # 만들 파일이 git 에서 무시된다 — 써도 커밋되지 않는다
 
 KINDS = ("root", "design", "antipatterns", "verification", "doc-check")
 
@@ -60,6 +65,7 @@ class Planned:
     rel: str
     content: str
     executable: bool = False
+    bridge: bool = False   # AGENTS.md 를 가져오는 CLAUDE.md — 이미 가져오고 있으면 그대로 둔다
 
 
 # --- 내용 ------------------------------------------------------------------
@@ -84,7 +90,7 @@ def render_root(target: Path, checks: list[tuple[str, str]], planned: set[str]) 
     else:
         lines.append("- TODO: 빌드·lint·테스트 명령을 적는다. 매니페스트에서 추론하지 못했다.")
     lines += ["", "## 문서 지도", "", "| 이럴 때 | 읽을 문서 |", "|---|---|",
-              "| 모듈 하나를 고칠 때 | 그 모듈 폴더의 `CLAUDE.md` |"]
+              "| 모듈 하나를 고칠 때 | 그 모듈 폴더의 `AGENTS.md` |"]
     rows = [
         ("docs/design/README.md", "설계 결정의 배경이 궁금할 때"),
         ("docs/ANTIPATTERNS.md", "하면 안 되는 것과 그 이유를 볼 때"),
@@ -284,7 +290,8 @@ def plan(target: Path, kinds: list[str], checks: list[tuple[str, str]], domain: 
                            (PROJECT_FILES / "check_docs.py").read_text(encoding="utf-8"), executable=True))
     if "root" in kinds:
         names = {p.rel for p in out}
-        out.insert(0, Planned("CLAUDE.md", render_root(target, checks, names)))
+        out[:0] = [Planned("AGENTS.md", render_root(target, checks, names)),
+                   Planned("CLAUDE.md", managed_doc.BRIDGE_TEXT, bridge=True)]
     return out
 
 
@@ -305,6 +312,11 @@ def _edited_checks(target: Path, items: list[Planned]) -> Planned | None:
     return None
 
 
+def _already_imports(target: Path, p: Planned) -> bool:
+    path = target / p.rel
+    return p.bridge and path.is_file() and not path.is_symlink() and managed_doc.imports_agents(path)
+
+
 def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | None,
         force: bool = False, dry_run: bool = False) -> int:
     checks = _checks(target, extra_checks)
@@ -312,13 +324,24 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
         print("중단: 확인 명령을 하나도 정하지 못했다. 매니페스트에서 추론이 안 되면 --check 로 준다.",
               file=sys.stderr)
         return EXIT_NO_COMMANDS
-    items = plan(target, kinds, checks, domain)
-    refused = [p for p in items if (target / p.rel).exists() and not managed_doc.is_ai_ready_generated(target / p.rel)]
+    planned = plan(target, kinds, checks, domain)
+    kept = [p for p in planned if _already_imports(target, p)]
+    items = [p for p in planned if p not in kept]
+    links = [p for p in items if (target / p.rel).is_symlink()]
+    refused = [p for p in items if p not in links and (target / p.rel).exists()
+               and not managed_doc.is_ai_ready_generated(target / p.rel)]
     if refused and not force:
         for p in refused:
             managed_doc.guard_overwrite(target / p.rel, force=False)
         print(f"아무것도 쓰지 않았다 — 사람이 관리하는 파일 {len(refused)}개. 그 파일은 apply 스킬에서 diff 로 고친다.",
               file=sys.stderr)
+        return EXIT_REFUSED
+    if links and not force:
+        for p in links:
+            print(f"중단: {p.rel} 는 심볼릭 링크다 — 따라 쓰면 링크가 가리키는 파일이 바뀐다.", file=sys.stderr)
+        print("  옛 구조(CLAUDE.md 원본 + AGENTS.md 링크)라면 audit 보고의 전환 제안을 보고 사람이 옮긴다.\n"
+              "  링크를 일반 파일로 바꿔 쓰려면 --force.\n"
+              "아무것도 쓰지 않았다.", file=sys.stderr)
         return EXIT_REFUSED
     edited = _edited_checks(target, items)
     if edited and not force:
@@ -331,22 +354,38 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
               f"  새 값으로 덮으려면 --force.\n"
               f"아무것도 쓰지 않았다.", file=sys.stderr)
         return EXIT_REFUSED
+    ignored = managed_doc.ignored_paths(target, [p.rel for p in planned]) or {}
+    if ignored and not force:
+        print("중단: 만들 파일이 git 에서 무시된다 — 써도 커밋되지 않고, 커밋된 쪽의 링크·가져오기가 깨진다.",
+              file=sys.stderr)
+        for rel, why in ignored.items():
+            print(f"  {rel} ({why})", file=sys.stderr)
+        print("  무시 규칙을 고칠지 사람에게 묻는다. 그래도 쓰려면 --force.\n"
+              "아무것도 쓰지 않았다.", file=sys.stderr)
+        return EXIT_IGNORED
     union = "design" in kinds and _needs_union_line(target)
-    agents_link = "root" in kinds and not (target / "AGENTS.md").exists() and not (target / "AGENTS.md").is_symlink()
 
     if dry_run:
+        for p in kept:
+            print(f"그대로 둠(이미 {managed_doc.AGENTS_IMPORT} 를 가져온다): {p.rel}")
         for p in items:
-            state = "새로 만듦" if not (target / p.rel).exists() else (
-                "덮어씀(사람 문서 — --force)" if p in refused else "덮어씀(자동 생성 초안)")
+            path = target / p.rel
+            if p in links:
+                state = "심볼릭 링크를 일반 파일로 바꿔 씀(--force)"
+            elif not path.exists():
+                state = "새로 만듦"
+            else:
+                state = "덮어씀(사람 문서 — --force)" if p in refused else "덮어씀(자동 생성 초안)"
             print(f"{state}: {p.rel}")
         if union:
             print(f"줄 추가: .gitattributes ← {UNION_LINE}")
-        if agents_link:
-            print("심링크: AGENTS.md → CLAUDE.md")
         return EXIT_OK
 
     for p in items:
         path = target / p.rel
+        if path.is_symlink():
+            print(f"경고: {p.rel} 는 심볼릭 링크지만 --force 로 일반 파일로 바꿔 쓴다.", file=sys.stderr)
+            path.unlink()
         managed_doc.guard_overwrite(path, force=force)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(p.content, encoding="utf-8")
@@ -360,9 +399,6 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
             text += "\n"
         ga.write_text(text + UNION_LINE + "\n", encoding="utf-8")
         print(f"줄 추가: .gitattributes ← {UNION_LINE}")
-    if agents_link:
-        (target / "AGENTS.md").symlink_to("CLAUDE.md")
-        print("심링크: AGENTS.md → CLAUDE.md")
     return EXIT_OK
 
 
@@ -392,5 +428,12 @@ def main() -> int:
     return run(target, kinds, args.check, args.design_domain, force=args.force, dry_run=args.dry_run)
 
 
+def _main_with_code() -> int:
+    rc = main()
+    if rc != EXIT_OK:
+        print(f"종료 코드 {rc}", file=sys.stderr)
+    return rc
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main_with_code())

@@ -83,7 +83,8 @@ class TestModuleTemplate(unittest.TestCase):
             self.assertTrue((root / "src/b/CLAUDE.md").is_file())
             self.assertEqual(_quiet(scaffold.run, root, root, 5, ["src/a"]), scaffold.EXIT_REFUSED)
             self.assertEqual(_quiet(scaffold.run, root, root, 5, ["src/a"], force=True), scaffold.EXIT_OK)
-            self.assertTrue(managed_doc.is_ai_ready_generated(root / "src/a/CLAUDE.md"))
+            self.assertTrue(managed_doc.is_ai_ready_generated(root / "src/a/AGENTS.md"))
+            self.assertEqual((root / "src/a/CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
 
     def test_dry_run_writes_nothing(self):
         with tempfile.TemporaryDirectory() as d:
@@ -105,11 +106,13 @@ class TestBootstrap(unittest.TestCase):
             self._node_repo(root)
             rc = _quiet(bootstrap.run, root, list(bootstrap.KINDS), [], "order")
             self.assertEqual(rc, bootstrap.EXIT_OK)
-            for rel in ("CLAUDE.md", "docs/design/README.md", "docs/design/order.md",
+            for rel in ("AGENTS.md", "CLAUDE.md", "docs/design/README.md", "docs/design/order.md",
                         "docs/design/order.decisions.md", "docs/ANTIPATTERNS.md", "docs/VERIFICATION.md",
                         "scripts/verify.sh", "scripts/check_docs.py"):
                 self.assertTrue((root / rel).is_file(), rel)
-            self.assertTrue((root / "AGENTS.md").is_symlink())
+            self.assertFalse((root / "AGENTS.md").is_symlink())
+            self.assertTrue(managed_doc.is_ai_ready_generated(root / "AGENTS.md"))
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
             self.assertTrue(os.access(root / "scripts/verify.sh", os.X_OK))
             self.assertIn("'npm run lint'", (root / "scripts/verify.sh").read_text(encoding="utf-8"))
             self.assertIn(bootstrap.UNION_LINE, (root / ".gitattributes").read_text(encoding="utf-8"))
@@ -122,7 +125,7 @@ class TestBootstrap(unittest.TestCase):
             root = Path(d)
             self._node_repo(root)
             _quiet(bootstrap.run, root, ["root"], [], None)
-            text = (root / "CLAUDE.md").read_text(encoding="utf-8")
+            text = (root / "AGENTS.md").read_text(encoding="utf-8")
             for head in ("## 확인 명령", "## 문서 지도", "## 강제할 수 없는 규칙"):
                 self.assertIn(head, text)
             self.assertIn("`npm test`", text)
@@ -135,8 +138,67 @@ class TestBootstrap(unittest.TestCase):
             _mk(root, "docs/ANTIPATTERNS.md", "# 우리 팀 원장\n")
             rc = _quiet(bootstrap.run, root, ["root", "antipatterns"], [], None)
             self.assertEqual(rc, bootstrap.EXIT_REFUSED)
+            self.assertFalse((root / "AGENTS.md").exists(), "거부되면 다른 파일도 쓰지 않는다")
             self.assertFalse((root / "CLAUDE.md").exists(), "거부되면 다른 파일도 쓰지 않는다")
             self.assertEqual((root / "docs/ANTIPATTERNS.md").read_text(encoding="utf-8"), "# 우리 팀 원장\n")
+
+    def test_rerun_keeps_the_import_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None), bootstrap.EXIT_OK)
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None), bootstrap.EXIT_OK)
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
+
+    def test_human_claude_md_is_refused_unless_it_already_imports_agents_md(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            _mk(root, "CLAUDE.md", "# 우리 문서\n")
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None), bootstrap.EXIT_REFUSED)
+            self.assertFalse((root / "AGENTS.md").exists())
+            _mk(root, "CLAUDE.md", "@AGENTS.md\n\n## Claude Code\n- plan mode 를 쓴다\n")
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None), bootstrap.EXIT_OK)
+            self.assertIn("## Claude Code", (root / "CLAUDE.md").read_text(encoding="utf-8"), "이미 가져오면 그대로 둔다")
+            self.assertTrue(managed_doc.is_ai_ready_generated(root / "AGENTS.md"))
+
+    def test_old_symlink_layout_is_refused_until_force(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            old = bootstrap.SIGNATURE_MD + "\n# old\n"
+            _mk(root, "CLAUDE.md", old)
+            (root / "AGENTS.md").symlink_to("CLAUDE.md")
+            r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root), "--only", "root"],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, bootstrap.EXIT_REFUSED)
+            self.assertIn("심볼릭 링크", r.stderr)
+            self.assertIn(f"종료 코드 {bootstrap.EXIT_REFUSED}", r.stderr)
+            self.assertTrue((root / "AGENTS.md").is_symlink())
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), old)
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None, force=True), bootstrap.EXIT_OK)
+            self.assertFalse((root / "AGENTS.md").is_symlink())
+            self.assertTrue(managed_doc.is_ai_ready_generated(root / "AGENTS.md"))
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
+
+    @unittest.skipUnless(HAS_SHELL, "bash·git 이 없다")
+    def test_ignored_target_path_stops_before_writing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._node_repo(root)
+            _mk(root, ".gitignore", "node_modules\nCLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            for extra in ([], ["--dry-run"]):
+                r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root),
+                                    "--only", "root,antipatterns", *extra], capture_output=True, text=True)
+                self.assertEqual(r.returncode, bootstrap.EXIT_IGNORED, extra)
+                self.assertIn("CLAUDE.md", r.stderr)
+                self.assertIn(".gitignore:2", r.stderr)
+                self.assertIn(f"종료 코드 {bootstrap.EXIT_IGNORED}", r.stderr)
+            for rel in ("AGENTS.md", "CLAUDE.md", "docs/ANTIPATTERNS.md"):
+                self.assertFalse((root / rel).exists(), f"무시되는 경로가 있으면 아무것도 쓰지 않는다: {rel}")
+            self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None, force=True), bootstrap.EXIT_OK)
+            self.assertTrue((root / "CLAUDE.md").is_file())
 
     def test_signed_file_is_rewritten(self):
         with tempfile.TemporaryDirectory() as d:

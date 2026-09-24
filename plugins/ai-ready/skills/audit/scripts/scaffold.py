@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""모듈 CLAUDE.md 초안을 만든다.
+"""모듈 문서 초안을 만든다 — 원본 `AGENTS.md` 와, 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`.
 
 대상 모듈은 stacks.logical_modules 가 정한다(audit.py 와 같은 답). 모듈이 많으면 최근 변경이 잦은
-모듈부터 --top 개만 고른다. 이미 사람이 관리하는 CLAUDE.md(자동 생성 서명이 없는 파일)가 있는 모듈은
-후보에서 뺀다. --modules 로 직접 고른 모듈의 문서가 사람 소유면 managed_doc 규칙대로 exit 3 이다.
+모듈부터 --top 개만 고른다. 이미 사람이 관리하는 문서(자동 생성 서명이 없는 AGENTS.md, 또는 가져오는 줄
+하나가 아닌 CLAUDE.md)가 있거나 둘 중 하나가 심볼릭 링크인(옛 구조) 모듈은 후보에서 뺀다. --modules 로 직접
+고른 모듈이 그렇다면 exit 3 이다. 제자리에 쓸 때(--out 이 대상 저장소) 만들 파일이 git 에서 무시되면
+아무것도 쓰지 않고 exit 6 이다. 셋 다 --force 로만 넘긴다.
 
 초안의 절: 이 모듈이 하는 일 / 경계 / 변경 방법 / 강제할 수 없는 규칙 / 강제되는 규칙(포인터만).
 파일 수·줄 수·변경 횟수 같은 숫자는 적지 않는다 — 문서에 박힌 숫자는 다음 커밋부터 틀린다.
@@ -36,6 +38,7 @@ EXIT_OK = 0
 EXIT_REFUSED = 3       # managed_doc: 사람이 관리하는 문서라 덮어쓰지 않았다 (--force 로만)
 EXIT_NO_PACKAGES = 4   # 기준점은 찾았는데 그 아래에 코드가 없다
 EXIT_NO_ADAPTER = 5    # 등록된 스택 어댑터 중 맞는 것이 없다
+EXIT_IGNORED = 6       # 만들 파일이 git 에서 무시된다 — 써도 커밋되지 않는다 (--force 로만)
 
 
 def walk(target: Path):
@@ -144,16 +147,17 @@ def detect_layered_pattern(module_dir: Path) -> list[str]:
 
 
 def module_summary_from_root_claude_md(target: Path, module_path: str) -> str | None:
-    """루트 CLAUDE.md 의 module map 줄에서 모듈 1줄 설명을 cherry-pick.
+    """루트 AGENTS.md·CLAUDE.md 의 module map 줄에서 모듈 1줄 설명을 cherry-pick.
 
     매칭: `[`mod`](path)` 또는 `` `mod` `` 다음에 ' — ', ' - ', ': ' 로 이어지는 줄.
     """
-    root = target / "CLAUDE.md"
-    if not root.exists():
-        return None
-    try:
-        text = root.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = ""
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        try:
+            text += (target / name).read_text(encoding="utf-8", errors="replace") + "\n"
+        except OSError:
+            continue
+    if not text:
         return None
     escaped = re.escape(module_path)
     # 형태: `[`module`](path)` — 설명  /  `[module](path)` — 설명  /  `module` — 설명
@@ -201,23 +205,32 @@ TEMPLATE = """{signature}
 """
 
 
-def link_agents_beside(claude_path: Path) -> Path | None:
-    """CLAUDE.md 옆에 AGENTS.md 상대 심링크를 둔다.
+def doc_state(directory: Path) -> str:
+    """모듈 폴더 문서의 상태: none(없음) · ours(ai-ready 초안) · human(사람이 관리) · symlink(옛 구조)."""
+    agents, claude = directory / "AGENTS.md", directory / "CLAUDE.md"
+    if agents.is_symlink() or claude.is_symlink():
+        return "symlink"
+    if agents.exists() and not managed_doc.is_ai_ready_generated(agents):
+        return "human"
+    if claude.exists() and not managed_doc.is_ai_ready_generated(claude) and not managed_doc.is_bridge(claude):
+        return "human"
+    return "ours" if agents.exists() or claude.exists() else "none"
 
-    Codex 처럼 AGENTS.md 만 찾는 도구가 같은 본문을 읽게 한다. 복사본을
-    두면 한쪽만 고치고 다른 쪽이 낡는다. 사람이 이미 쓴 AGENTS.md 는 덮지 않는다.
-    """
-    if claude_path.name != "CLAUDE.md":
-        raise ValueError(f"expected CLAUDE.md, got {claude_path.name}")
-    agents = claude_path.with_name("AGENTS.md")
-    if agents.exists() or agents.is_symlink():
-        return None
-    agents.symlink_to("CLAUDE.md")
-    return agents
+
+def write_module_docs(out_dir: Path, content: str) -> None:
+    """AGENTS.md 에 초안을, CLAUDE.md 에 가져오는 한 줄을 쓴다. 심볼릭 링크는 일반 파일로 바꾼다(--force 로만 온다)."""
+    agents, claude = out_dir / "AGENTS.md", out_dir / "CLAUDE.md"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for p in (agents, claude):
+        if p.is_symlink():
+            p.unlink()
+    agents.write_text(content, encoding="utf-8")
+    if not managed_doc.is_bridge(claude):
+        claude.write_text(managed_doc.BRIDGE_TEXT, encoding="utf-8")
 
 
 def render_what_block(module_path: str, summary: str | None) -> str:
-    """루트 CLAUDE.md 의 모듈 목록에 한 줄 설명이 있으면 가져온다."""
+    """루트 AGENTS.md·CLAUDE.md 의 모듈 목록에 한 줄 설명이 있으면 가져온다."""
     return f"- {summary}" if summary else f"- TODO: `{module_path}` 의 책임을 한 문장으로 적는다."
 
 
@@ -282,10 +295,6 @@ def select_top_modules(target: Path, modules: list[Path], top_n: int) -> list[Pa
     return [m for _, _, _, m in scored[:top_n]]
 
 
-def _is_human_owned(path: Path) -> bool:
-    return path.exists() and not managed_doc.is_ai_ready_generated(path)
-
-
 def render_module(target: Path, module: Path) -> str:
     m = str(module)
     return TEMPLATE.format(
@@ -320,40 +329,64 @@ def run(target: Path, out_dir: Path, top_n: int, modules_arg: list[str] | None =
             return 2
         selected = [Path(m) for m in modules_arg]
     else:
-        # 사람이 이미 관리하는 문서가 있는 모듈은 후보가 아니다. 초안이 필요한 곳만 고른다.
-        candidates = [m for m in ml.modules if not _is_human_owned(target / m / "CLAUDE.md")]
+        # 사람이 이미 관리하는 문서가 있거나 옛 구조(심볼릭 링크)인 모듈은 후보가 아니다. 초안이 필요한 곳만 고른다.
+        candidates = []
         for m in ml.modules:
-            if m not in candidates:
-                print(f"건너뜀: {m} (사람이 관리하는 CLAUDE.md 가 있다)", file=sys.stderr)
+            state = doc_state(out_dir / m)
+            if state == "human":
+                print(f"건너뜀: {m} (사람이 관리하는 AGENTS.md·CLAUDE.md 가 있다)", file=sys.stderr)
+            elif state == "symlink":
+                print(f"건너뜀: {m} (AGENTS.md·CLAUDE.md 가 심볼릭 링크다 — audit 보고의 전환 제안 참고)", file=sys.stderr)
+            else:
+                candidates.append(m)
         selected = select_top_modules(target, candidates, top_n)
 
-    plans = [(m, out_dir / m / "CLAUDE.md") for m in selected]
-    refused = [out for _, out in plans if _is_human_owned(out) and not force]
-    if refused:
-        for out in refused:
-            managed_doc.guard_overwrite(out, force=False)
+    plans = [(m, out_dir / m) for m in selected]
+    blocked = [(d, doc_state(d)) for _, d in plans if doc_state(d) in ("human", "symlink")]
+    if blocked and not force:
+        for d, state in blocked:
+            if state == "human":
+                for name in ("AGENTS.md", "CLAUDE.md"):
+                    p = d / name
+                    if p.exists() and not managed_doc.is_ai_ready_generated(p) and not managed_doc.is_bridge(p):
+                        managed_doc.guard_overwrite(p, force=False)
+            else:
+                print(f"중단: {d} 의 AGENTS.md·CLAUDE.md 가 심볼릭 링크다 — 따라 쓰면 링크가 가리키는 파일이 바뀐다.\n"
+                      f"  audit 보고의 전환 제안을 보고 사람이 옮긴다. 링크를 일반 파일로 바꿔 쓰려면 --force.",
+                      file=sys.stderr)
         return EXIT_REFUSED
+    if out_dir == target:
+        rels = [f"{m}/{name}" for m in selected for name in ("AGENTS.md", "CLAUDE.md")]
+        ignored = managed_doc.ignored_paths(target, rels) or {}
+        if ignored and not force:
+            print("중단: 만들 파일이 git 에서 무시된다 — 써도 커밋되지 않고, 커밋된 쪽의 가져오기가 깨진다.",
+                  file=sys.stderr)
+            for rel, why in ignored.items():
+                print(f"  {rel} ({why})", file=sys.stderr)
+            print("  무시 규칙을 고칠지 사람에게 묻는다. 그래도 쓰려면 --force. 아무것도 쓰지 않았다.", file=sys.stderr)
+            return EXIT_IGNORED
     if dry_run:
-        for m, out in plans:
-            state = "덮어씀(자동 생성 초안)" if out.exists() else "새로 만듦"
-            print(f"{state}: {out}")
+        for m, d in plans:
+            state = "덮어씀(자동 생성 초안)" if (d / "AGENTS.md").exists() else "새로 만듦"
+            print(f"{state}: {d / 'AGENTS.md'} (+ CLAUDE.md 에 {managed_doc.AGENTS_IMPORT})")
         return EXIT_OK
 
     written = []
-    for m, out_path in plans:
-        managed_doc.guard_overwrite(out_path, force=force)  # --force 로 사람 문서를 덮을 때 경고를 남긴다
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(render_module(target, m), encoding="utf-8")
-        link_agents_beside(out_path)
-        written.append(out_path)
-    print(f"모듈 CLAUDE.md 초안 {len(written)}개 (옆에 AGENTS.md 심링크): {out_dir}")
+    for m, d in plans:
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            p = d / name
+            if p.exists() and not p.is_symlink() and not managed_doc.is_bridge(p):
+                managed_doc.guard_overwrite(p, force=force)  # --force 로 사람 문서를 덮을 때 경고를 남긴다
+        write_module_docs(d, render_module(target, m))
+        written.append(d / "AGENTS.md")
+    print(f"모듈 문서 초안 {len(written)}개 (AGENTS.md + 그것을 가져오는 CLAUDE.md): {out_dir}")
     for p in written:
         print(f"  - {p}")
     return EXIT_OK
 
 
 def main():
-    ap = argparse.ArgumentParser(description="모듈 CLAUDE.md 초안 생성")
+    ap = argparse.ArgumentParser(description="모듈 문서 초안 생성 (AGENTS.md + 가져오는 CLAUDE.md)")
     ap.add_argument("--target", required=True)
     ap.add_argument("--out", required=True, help="쓸 루트. 대상 저장소 자체면 제자리에 쓴다")
     ap.add_argument("--top", type=int, default=5, help="--modules 가 없을 때 고를 모듈 수")
@@ -367,7 +400,10 @@ def main():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
     modules = [m.strip().strip("/") for m in args.modules.split(",") if m.strip()] if args.modules else None
-    sys.exit(run(target, out_dir, args.top, modules, force=args.force, dry_run=args.dry_run))
+    rc = run(target, out_dir, args.top, modules, force=args.force, dry_run=args.dry_run)
+    if rc != EXIT_OK:
+        print(f"종료 코드 {rc}", file=sys.stderr)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
