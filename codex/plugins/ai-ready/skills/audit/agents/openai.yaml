@@ -1,4 +1,0 @@
-interface:
-  display_name: "AI-Ready Audit"
-  short_description: "에이전트 작업에 필요한 문서·강제 수단의 빈틈을 점수 없이 보고합니다"
-  default_prompt: "Use $audit to report documentation and enforcement gaps in this repository."
