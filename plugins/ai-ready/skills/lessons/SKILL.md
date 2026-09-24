@@ -1,6 +1,7 @@
 ---
 name: lessons
 description: 작업 세션에서 사람이 바로잡은 실수와 PR 리뷰 코멘트를 모아 같은 실수가 다시 나지 않게 하는 후보를 만들고, 한 번에 하나씩 사람의 승인을 받아 반영한다. 후보마다 먼저 도구로 강제할 수 있는지 따져 강제 초안(lint 규칙·아키텍처 테스트)을, 안 되면 이유를 붙인 안티패턴 원장 항목을, 설계 결정이면 docs/design 결정 카드를 낸다. 호출 /lessons [PR 번호]. Use when the user says "/lessons", "교훈 정리", "lesson 종합", "PR 코멘트에서 규칙 뽑아", "안티패턴 후보", or wants review feedback turned into lint rules or anti-pattern entries. 자동 반영 없음 — 사람 승인이 필수.
+allowed-tools: Bash(python3:*) Bash(bash scripts/verify.sh:*) Bash(scripts/verify.sh:*)
 ---
 
 # lessons — 교훈을 강제 수단이나 문서로
@@ -27,13 +28,19 @@ description: 작업 세션에서 사람이 바로잡은 실수와 PR 리뷰 코�
 
 - **세션 지적**: 이 대화에서 사람이 바로잡은 말("그렇게 하지 말고…", "이건 틀렸다", 되돌리라는 요청)을 찾아 원문과
   맥락(어떤 파일·어떤 변경이었나)을 텍스트로 정리한다. 에이전트는 대화를 볼 수 없어서 여기서 정리한 텍스트만 받는다.
-- **PR 코멘트**(PR 번호를 받았을 때): GitHub 이고 `gh` 가 있으면 읽기만 한다.
+- **PR 코멘트**(PR 번호를 받았을 때): GitHub 이고 `gh` 가 있으면 읽기만 한다. 대화 코멘트·리뷰 요약은 첫 명령,
+  줄 단위 리뷰 코멘트(파일·줄 포함)는 둘째 명령으로 읽는다. 명령마다 한 줄로 따로 부르고 `echo $?` 를 붙이지 않는다.
   ```bash
-  gh pr view <번호> --comments                                   # 대화 코멘트·리뷰 요약
-  gh api "repos/{owner}/{repo}/pulls/<번호>/comments" --paginate   # 줄 단위 리뷰 코멘트(파일·줄 포함)
+  gh pr view <번호> --comments
+  ```
+  ```bash
+  gh api "repos/{owner}/{repo}/pulls/<번호>/comments" --paginate
   ```
   GitHub 이 아니거나 `gh` 가 없으면 사용자에게 코멘트를 붙여 달라고 한다. 토큰을 찾아 쓰지 않는다.
 - 대상 저장소 경로와, 있으면 `docs/ANTIPATTERNS.md`·`docs/design/`·`docs/VERIFICATION.md` 경로.
+- **확인 명령**(강제 초안을 돌려 볼 typecheck·lint·test 명령)은 추정하지 않는다. `docs/VERIFICATION.md` 나
+  `scripts/verify.sh` 의 `CHECKS`, 없으면 패키지 매니페스트(`package.json` 의 scripts, `build.gradle(.kts)`,
+  `pyproject.toml`, `Makefile` 등)에서 읽은 명령만 쓰고, 읽은 파일을 함께 적는다. 어디에도 없으면 사용자에게 묻는다.
 
 입력이 하나도 없으면 "바로잡은 실수가 없다" 고 알리고 끝낸다.
 
@@ -50,13 +57,17 @@ description: 작업 세션에서 사람이 바로잡은 실수와 PR 리뷰 코�
 
 - **강제 초안**: `ai-ready:apply` 의 "강제 초안" 절차를 따른다(설정·테스트 추가 → 돌려서 기존 위반 확인 → 필요하면
   기준 파일 → 관련 문서 줄을 "→ <규칙·테스트>" 로 줄이기 → CI 에 없으면 넣는 한 줄 제안). 각 단계의 파일 변경도
-  diff 를 보여 주고 승인받는다.
+  diff 를 보여 주고 승인받는다. 검사를 돌릴 수 없었으면(권한 거부·도구 없음) CI 설정 변경은 적용하지 않고 보류로
+  보고한다.
 - **안티패턴 원장 항목**: `docs/ANTIPATTERNS.md` 의 "항목" 절 끝에 덧붙인다(DO NOT / 이유 / 대신 / 강제 불가 /
   출처). 파일이 없으면 어디에 둘지 묻는다 — `ai-ready:apply` 의 `bootstrap.py --only antipatterns` 로 빈 원장을 만들 수
-  있다. 모듈 하나에만 해당하면 그 모듈 `CLAUDE.md` 의 "강제할 수 없는 규칙" 에 이유와 함께 넣는다.
+  있다. 모듈 하나에만 해당하면 그 모듈 문서(원본인 `AGENTS.md`, 없으면 `CLAUDE.md`)의 "강제할 수 없는 규칙" 에 이유와
+  함께 넣는다.
 - **결정 카드**: `docs/design/<도메인>.decisions.md` 맨 위에 새 카드를 더한다. 옛 카드 본문은 고치지 않고, 결정이
   바뀐 경우에만 옛 카드 제목의 라벨을 `[superseded]` 로 바꾼다.
 - 반영한 파일과 항목을 한 줄씩 보고한다. 커밋은 하지 않는다.
+- 비대화 실행(`claude -p` 처럼 사람이 중간에 답할 수 없는 실행)에서는 사람에게 `!` 로 명령을 대신 돌려 달라고 요청하지
+  않는다. 돌리지 못한 것은 이유와 함께 보류로 보고한다.
 
 ## 하지 않는 것
 

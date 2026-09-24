@@ -14,6 +14,8 @@ description: "Collect the mistakes a human corrected during a work session and i
    - 이 세션에서 사람이 바로잡은 말과 그 맥락(어느 파일·어떤 변경).
    - PR 번호를 받았고 GitHub 이며 `gh` 가 있으면 `gh pr view <번호> --comments` 로 리뷰 코멘트를 읽는다. 아니면
      사용자에게 붙여 달라고 한다. 토큰을 찾아 쓰지 않는다.
+   - 강제 초안을 돌려 볼 확인 명령은 추정하지 않는다. `docs/VERIFICATION.md`·`scripts/verify.sh` 의 `CHECKS` 나 패키지
+     매니페스트(`package.json` scripts, `build.gradle(.kts)`, `pyproject.toml`, `Makefile` 등)에서 읽고, 없으면 묻는다.
    - 입력이 없으면 "바로잡은 실수가 없다" 고 알리고 끝낸다.
 2. 같은 원인끼리 묶고, 묶음마다 먼저 **도구로 강제할 수 있는지** 따진다(표현 불가 → lint·금지 API → 정석 헬퍼 →
    런타임 검사 → 테스트 → 문서 순). 넷 중 하나로 초안을 쓴다.

@@ -1,6 +1,7 @@
 ---
 name: audit
-description: 저장소를 AI 에이전트로 작업하기 좋은 상태인지 점검해 점수 없는 빈틈 보고서를 만든다. 스크립트가 사실(루트·모듈 CLAUDE.md, docs/design 결정 기록, 검증 문서, lint·타입체커·테스트·아키텍처 테스트·pre-commit·CI 설정, CI 가 그 검사를 실제로 돌리는지, 문서 속 규칙 문장)을 모으고, 모델이 규칙 문장마다 이미 강제됨 / 싸게 강제 가능 / 강제 불가 / 코드와 어긋남 으로 나눠 권고를 낸다. Use when the user asks for an ai-ready audit, AI 준비도 점검, 에이전트용 문서 점검, "which of our documented rules are actually enforced", "문서 규칙 중 lint 로 옮길 것", "CI 가 테스트를 돌리나", module CLAUDE.md gaps, or a gap report before running ai-ready:apply.
+description: 저장소를 AI 에이전트로 작업하기 좋은 상태인지 점검해 점수 없는 빈틈 보고서를 만든다. 스크립트가 사실(루트·모듈 AGENTS.md·CLAUDE.md 와 그 구조, git 이 무시하는 생성 대상 경로, docs/design 결정 기록, 검증 문서, lint·타입체커·테스트·아키텍처 테스트·pre-commit·CI 설정, CI 가 그 검사를 실제로 돌리는지, 문서 속 규칙 문장)을 모으고, 모델이 규칙 문장마다 이미 강제됨 / 싸게 강제 가능 / 강제 불가 / 코드와 어긋남 으로 나눠 권고를 낸다. Use when the user asks for an ai-ready audit, AI 준비도 점검, 에이전트용 문서 점검, "which of our documented rules are actually enforced", "문서 규칙 중 lint 로 옮길 것", "CI 가 테스트를 돌리나", module CLAUDE.md gaps, or a gap report before running ai-ready:apply.
+allowed-tools: Bash(python3:*)
 ---
 
 # ai-ready audit — 빈틈 보고서
@@ -30,13 +31,14 @@ description: 저장소를 AI 에이전트로 작업하기 좋은 상태인지 �
 ## 실행
 
 ```bash
-set -euo pipefail
-# Bash 도구의 셸에는 $CLAUDE_PLUGIN_ROOT 가 없다. 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 넣는다.
-SKILL_DIR="<이 스킬 본문 첫머리의 Base directory>"
-[ -f "$SKILL_DIR/scripts/audit.py" ] || { echo "audit: $SKILL_DIR 아래 스크립트가 없다 — base directory 확인" >&2; exit 65; }
-TARGET="<대상 저장소 절대 경로>"
-python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$TARGET/.ai-ready/gaps.md"
+python3 <SKILL>/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md
 ```
+
+- `<SKILL>` 은 이 스킬 본문 첫머리의 "Base directory for this skill" 절대 경로, `<T>` 는 대상 저장소 절대 경로다.
+  Bash 도구의 셸에는 `$CLAUDE_PLUGIN_ROOT` 가 없으니 두 경로를 글자 그대로 넣는다.
+- 한 줄로 부른다. 변수 대입·`set -euo pipefail`·`{ ...; exit ...; }` 묶음을 앞에 붙이지 않는다 — 권한 검사가 그런
+  명령을 멈춰 세운다. 스크립트가 있는지 먼저 보려면 `test -f <SKILL>/scripts/audit.py && python3 ...` 꼴까지만 쓴다.
+- `echo $?` 를 이어 붙이지 않는다. 스크립트가 실패하면 이유와 `종료 코드 N` 을 stderr 에 출력한다.
 
 - 규칙 문장은 기본 400줄에서 자른다. 잘렸다고 보고서 끝에 적히면 `--max-rules` 로 늘린다. 잘릴 때는 루트·모듈의
   `CLAUDE.md`/`AGENTS.md` → `docs/` → 나머지 → `.claude/` 같은 도구 폴더 순으로 남는다.
@@ -44,10 +46,16 @@ python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$TARGET/.ai-read
 
 ## 스크립트가 보는 것
 
-**1. 문서 존재** — 있음·없음·길이 과다만 적는다.
+**1. 문서 존재** — 있음·없음·길이 과다와 문서 구조를 적는다.
 
-- 루트 `CLAUDE.md` (8,000바이트를 넘으면 길이 과다), `AGENTS.md` 가 `CLAUDE.md` 심링크인지
-- 모듈별 `CLAUDE.md` (80줄을 넘으면 길이 과다). 모듈은 아래 "모듈을 어떻게 정하나" 로 정한다
+- 루트 문서(8,000바이트를 넘으면 길이 과다)와 모듈별 문서(80줄을 넘으면 길이 과다). 모듈은 아래 "모듈을 어떻게
+  정하나" 로 정한다. 길이는 본문이 든 파일로 잰다(`@AGENTS.md` 한 줄짜리 `CLAUDE.md` 가 아니라 `AGENTS.md`).
+- 문서 구조. 기본값은 `AGENTS.md` 가 원본(일반 파일)이고 옆의 `CLAUDE.md` 가 `@AGENTS.md` 한 줄로 그것을 가져오는
+  구조다. Claude Code 는 한 폴더에 둘이 있으면 `CLAUDE.md` 만 읽고, 가져오기 경로는 가져오는 파일 기준으로 푼다.
+  옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)나, 가져오기 없이 두 파일이 따로 있는 구조는 **전환 제안**으로
+  적는다. 스크립트도 apply 도 이 전환을 자동으로 하지 않는다.
+- git 이 무시하는 생성 대상 경로. apply 가 만들 `AGENTS.md`·`CLAUDE.md`(루트·모듈), `docs/…`, `scripts/verify.sh`
+  등을 `git check-ignore` 로 확인한다. 무시되면 만들어도 커밋되지 않고, 커밋된 옆 문서의 가져오기가 깨진다.
 - `docs/design/{domain}.md` ↔ `{domain}.decisions.md` 짝, `docs/design/README.md`,
   `.gitattributes` 의 `docs/design/*.decisions.md merge=union`
 - 검증 문서(`docs/VERIFICATION.md`), `scripts/verify.sh`, `scripts/check_docs.py`, Stop hook 이 verify.sh 를
@@ -92,6 +100,9 @@ python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$TARGET/.ai-read
 `gaps.md` 를 읽은 뒤, 3절의 규칙 줄마다 아래 넷 중 하나로 나눈다. **문장만 보고 정하지 않는다.** A 와 D 는 코드·
 설정을 `Grep`/`Read` 로 확인한 근거가 있어야 하고, 확인하지 못했으면 "확인 필요" 로 남긴다.
 
+한 줄에 규칙이 여럿 들어 있으면 `R4a`·`R4b` 처럼 나눠 행을 따로 두고, 행마다 A/B/C/D 중 **하나만** 붙인다.
+`A/C`·`B+D` 같은 섞인 라벨은 쓰지 않는다. apply 가 행 하나를 승인 단위로 삼기 때문이다.
+
 | 분류 | 뜻 | 근거로 적을 것 | 권고 |
 |---|---|---|---|
 | **A 이미 강제됨** | lint 규칙·테스트·타입·CI 가 이미 이 규칙을 어기면 실패한다 | 규칙 이름이나 테스트 경로, 그리고 CI 가 그것을 돌리는지(2절) | 문서에서는 본문을 줄이고 "→ <규칙·테스트>" 한 줄만 남긴다. CI 가 안 돌리면 그 사실을 따로 권고 |
@@ -108,21 +119,31 @@ python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$TARGET/.ai-read
 # ai-ready 점검 결과 — <대상>
 
 ## 빈틈 요약
-- (gaps.md 1·2절에서 중요한 것부터: 없는 문서, CI 가 돌리지 않는 검사, 테스트 제외 줄, 깨진 hook)
+- (gaps.md 1·2절에서 중요한 것부터: 없는 문서, git 이 무시하는 생성 대상 경로, CI 가 돌리지 않는 검사,
+  테스트 제외 줄, 깨진 hook)
 
 ## 규칙 분류
 | ID | 위치 | 규칙(요약) | 분류 | 근거 | 권고 |
 |---|---|---|---|---|---|
 | R3 | `AGENTS.md:12` | ... | B | eslint no-restricted-imports 로 잡힌다 | 강제 초안 |
+| R4a | `AGENTS.md:15` | (한 줄의 첫째 규칙) | A | ... | ... |
+| R4b | `AGENTS.md:15` | (같은 줄의 둘째 규칙) | C | ... | ... |
 
 ## 권고
 1. B — 강제 초안 후보 (도구·규칙 이름)
 2. D — 수정 후보 (위치)
 3. 없는 문서·장치 (apply 가 만들 것)
+4. 문서 구조 전환 제안 (옛 구조가 있을 때만. 자동으로 바꾸지 않는다)
+
+## 보류
+- (이번 실행에서 확인하지 못한 것: 권한 거부·도구 없음으로 돌리지 못한 명령과 그 이유)
 ```
 
 보고서를 쓴 뒤 사용자에게는 빈틈 요약과 분류별 개수, B·D 상위 항목만 짧게 알리고, 다음 단계로
 `ai-ready:apply` 를 안내한다.
+
+비대화 실행(`claude -p` 처럼 사람이 중간에 답할 수 없는 실행)에서는 사람에게 `!` 로 명령을 대신 돌려 달라고
+요청하지 않는다. 돌리지 못한 명령은 이유와 함께 보고서의 "보류" 절에 적고 넘어간다.
 
 ## 하지 않는 것
 

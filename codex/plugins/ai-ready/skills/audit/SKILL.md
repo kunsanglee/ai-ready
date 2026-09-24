@@ -1,6 +1,6 @@
 ---
 name: audit
-description: "Produce a score-free gap report on whether a repository is set up for AI-agent work: which guidance documents exist (root and module AGENTS.md/CLAUDE.md, docs/design decision records, verification doc), which lint/typecheck/test/architecture checks exist and whether CI actually runs them, and which documented rules are already enforced, cheaply enforceable, not enforceable, or out of date. Use for an AI-ready audit, AI 준비도 점검, 문서 규칙 중 lint 로 옮길 것 찾기, or before running the apply skill."
+description: "Produce a score-free gap report on whether a repository is set up for AI-agent work: which guidance documents exist (root and module AGENTS.md/CLAUDE.md and their layout, generated paths that git ignores, docs/design decision records, verification doc), which lint/typecheck/test/architecture checks exist and whether CI actually runs them, and which documented rules are already enforced, cheaply enforceable, not enforceable, or out of date. Use for an AI-ready audit, AI 준비도 점검, 문서 규칙 중 lint 로 옮길 것 찾기, or before running the apply skill."
 ---
 
 # AI-Ready Audit — 빈틈 보고서
@@ -25,10 +25,15 @@ description: "Produce a score-free gap report on whether a repository is set up 
 python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
 ```
 
+한 줄로 부른다. 변수 대입·`{ ...; exit ...; }` 묶음을 앞에 붙이지 않고, `echo $?` 를 이어 붙이지 않는다 — 스크립트가
+실패하면 이유와 `종료 코드 N` 을 출력한다.
+
 `gaps.md` 는 세 절이다.
 
 1. 문서 존재 — 루트·모듈 문서, `docs/design/` 결정 기록 쌍과 union merge 설정, 검증 문서·`scripts/verify.sh`·
-   `scripts/check_docs.py`, 안티패턴 원장. 있음·없음·길이 과다만 적는다.
+   `scripts/check_docs.py`, 안티패턴 원장. 있음·없음·길이 과다와 문서 구조를 적는다. 기본 구조는 `AGENTS.md` 원본 +
+   `@AGENTS.md` 한 줄짜리 `CLAUDE.md` 다. 옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)나 가져오기 없이 따로 있는
+   두 파일은 전환 제안으로 적고 바꾸지 않는다. apply 가 만들 문서 경로가 `git check-ignore` 에 걸리면 따로 적는다.
 2. 강제 수단 — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트, 매니페스트에서 추론한 확인 명령,
    CI 설정 파일 안에서 그 검사를 부르는 줄(`예`·`아니오`·`간접`·`아니오(제외됨)` — 같은 줄의 `-x test`·`-DskipTests`
    가 그 태스크를 빼면 제외됨), CI·Dockerfile 의 테스트 제외·실패 무시 줄,
@@ -38,7 +43,8 @@ python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
 ## 분류와 권고 (모델이 한다)
 
 3절의 규칙 줄마다 넷 중 하나로 나눈다. A 와 D 는 코드·설정을 읽어 확인한 근거가 있어야 하고, 확인하지 못했으면
-"확인 필요" 로 남긴다.
+"확인 필요" 로 남긴다. 한 줄에 규칙이 여럿이면 `R4a`·`R4b` 처럼 행을 나눠 행마다 A/B/C/D 중 하나만 붙인다.
+`A/C` 같은 섞인 라벨은 쓰지 않는다.
 
 | 분류 | 뜻 | 권고 |
 |---|---|---|
@@ -48,7 +54,8 @@ python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
 | D 어긋남·낡음 | 코드가 규칙과 다르거나 가리키는 대상이 없다 | 수정 후보 (문서·코드 중 어느 쪽을 고칠지는 사람이 정한다) |
 
 결과를 `<target>/.ai-ready/audit-report.md` 에 쓴다: 빈틈 요약 → 규칙 분류 표(ID·위치·요약·분류·근거·권고) →
-권고 목록(B 강제 초안 후보, D 수정 후보, 없는 문서·장치). 사용자에게는 요약과 분류별 개수, B·D 상위 항목만
+권고 목록(B 강제 초안 후보, D 수정 후보, 없는 문서·장치, 무시되는 생성 대상 경로, 문서 구조 전환 제안) → 보류
+(돌리지 못한 명령과 이유). 사용자에게는 요약과 분류별 개수, B·D 상위 항목만
 알리고 다음 단계로 `apply` 를 안내한다.
 
 ## 하지 않는 것
@@ -57,3 +64,4 @@ python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
 - `.ai-ready/` 밖에 쓰지 않는다. 문서 수정·CI 수정은 `apply` 에서 사람이 승인한 뒤에 한다.
 - 규칙 분류를 정규식에 맡기지 않는다.
 - 사람이 쓴 `AGENTS.md`·`CLAUDE.md`·문서를 덮어쓰지 않는다. 원격 호출·자격 증명 사용은 하지 않는다.
+- 사람이 중간에 답할 수 없는 비대화 실행에서는 사람에게 명령을 대신 돌려 달라고 요청하지 않고 보류로 적는다.

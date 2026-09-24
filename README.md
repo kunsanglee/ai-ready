@@ -68,8 +68,9 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 스크립트가 사실을 모으고, 모델이 규칙을 나눕니다. 대상 저장소의 `.ai-ready/` 아래 두 파일만 씁니다.
 
 - `.ai-ready/gaps.md` (스크립트)
-  1. **문서 존재** — 루트 `CLAUDE.md`(길이 과다 표시), `AGENTS.md` 심링크, 모듈별 `CLAUDE.md`,
-     `docs/design` 의 결정 기록 쌍과 union merge 설정, 검증 문서, `verify.sh`, Stop hook, 안티패턴 원장
+  1. **문서 존재** — 루트·모듈별 `AGENTS.md`·`CLAUDE.md`(길이 과다 표시)와 둘의 구조, git 이 무시하는 생성 대상
+     경로(`git check-ignore`), `docs/design` 의 결정 기록 쌍과 union merge 설정, 검증 문서, `verify.sh`, Stop hook,
+     안티패턴 원장. 옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)는 전환 제안으로만 적고 바꾸지 않습니다
   2. **강제 수단** — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트·pre-commit·CI 설정, 그리고 CI
      설정 안에서 그 검사를 실제로 부르는 줄. CI·Dockerfile 에서 테스트를 빼거나(`-x test`, `-DskipTests`) 실패를
      삼키는(`|| true`, `continue-on-error`) 줄
@@ -89,17 +90,22 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 
 | 만드는 것 | 내용 |
 |---|---|
-| 루트 `CLAUDE.md` + `AGENTS.md` 심링크 | 확인 명령, 문서 지도(이럴 때 → 이 문서), 강제할 수 없는 규칙. 짧게 둔다 |
-| 모듈 `CLAUDE.md` | 이 모듈이 하는 일 / 경계 / 변경 방법 / 강제할 수 없는 규칙(왜) / 강제되는 규칙(포인터만). 최근 변경이 잦은 모듈부터 몇 개만 |
+| 루트 `AGENTS.md` + `CLAUDE.md` | `AGENTS.md` 가 원본이다: 확인 명령, 문서 지도(이럴 때 → 이 문서), 강제할 수 없는 규칙. 짧게 둔다. `CLAUDE.md` 는 `@AGENTS.md` 한 줄로 그것을 가져온다 |
+| 모듈 `AGENTS.md` + `CLAUDE.md` | 이 모듈이 하는 일 / 경계 / 변경 방법 / 강제할 수 없는 규칙(왜) / 강제되는 규칙(포인터만). 최근 변경이 잦은 모듈부터 몇 개만 |
 | `docs/design/{domain}.md` + `{domain}.decisions.md` | 지금 동작은 고쳐 쓰고, 결정은 카드를 맨 위에 더한다. 카드 제목은 `## 제목 · (티켓) · [accepted\|proposed\|rejected\|superseded]`, 읽을 때는 `grep -n '^## '`. `.gitattributes` 의 `merge=union` 으로 병합 충돌을 피한다 |
 | `docs/ANTIPATTERNS.md` | 빈 원장과 항목 형식(DO NOT / 이유 / 대신 / 강제 수단 또는 강제 불가 / 출처) |
 | `docs/VERIFICATION.md` + `scripts/verify.sh` | 매니페스트에서 추론한 typecheck·lint·test 를 차례로 돌린다. 실패하면 마지막 20줄만 보여 준다. 작업 트리가 마지막 통과 때와 같으면 다시 돌리지 않는다 |
-| Stop hook | `.claude/settings.json` 에 `verify.sh --stop-hook` 을 병합한다. 실패하면 에이전트가 턴을 끝내지 못하고, 연속 3번 막은 뒤에는 통과시킨다 |
+| Stop hook | `verify.sh` 가 한 번 통과한 뒤에만 `.claude/settings.json` 에 `verify.sh --stop-hook` 을 병합한다. 실패하면 에이전트가 턴을 끝내지 못한다. 같은 작업 트리로 3번 막은 뒤에는 검사를 다시 돌리지 않고 통과시키고, 트리가 바뀌면 다시 센다 |
 | `scripts/check_docs.py` | 깨진 상대 링크, 결정 카드 제목 형식, union merge 로 생긴 중복 카드, frontmatter 필수 키. CI 에 한 줄로 넣는다 |
 | 강제 초안 | audit 의 B 항목을 ArchUnit·detekt·eslint(`no-restricted-imports`)·dependency-cruiser·ruff(`banned-api`)·import-linter·clippy 규칙이나 테스트로. 오류 메시지에 "대신 X" 를 넣고, 기존 위반은 기준 파일로 묶는다 |
 
 사람이 서명을 지운(직접 관리하는) 파일은 덮어쓰지 않습니다. 그런 파일이 있으면 스크립트가 아무것도 쓰지 않고
-멈추고, 그 파일은 필요한 부분만 고친 diff 로 제안합니다.
+멈추고, 그 파일은 필요한 부분만 고친 diff 로 제안합니다. 만들 파일이 git 에서 무시되거나 심볼릭 링크일 때도
+아무것도 쓰지 않고 멈춥니다.
+
+`AGENTS.md` 를 원본으로 두고 `CLAUDE.md` 에서 가져오는 까닭은 [Claude Code 문서](https://code.claude.com/docs/en/memory)에
+있습니다. 한 폴더에 둘이 있으면 Claude Code 는 `CLAUDE.md` 만 읽고, `@AGENTS.md` 가져오기를 권하며, 가져오기 경로는
+가져오는 파일 기준으로 풉니다. 심볼릭 링크는 Windows 클론과 Edit·Write 도구에서 제약이 있어 쓰지 않습니다.
 
 ### `ai-ready:lessons` — 교훈을 강제 수단이나 문서로
 
@@ -163,7 +169,7 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 │   │   │   └── scripts/
 │   │   │       ├── audit.py              # gaps.md
 │   │   │       ├── stacks.py             # 모듈 기준점 · 확인 명령 추론
-│   │   │       ├── scaffold.py           # 모듈 CLAUDE.md 초안
+│   │   │       ├── scaffold.py           # 모듈 AGENTS.md 초안 + 가져오는 CLAUDE.md
 │   │   │       ├── bootstrap.py          # 루트 문서 · 결정 기록 · 원장 · 검증 문서 초안
 │   │   │       ├── install_verify_hook.py
 │   │   │       ├── managed_doc.py        # 사람이 관리하는 파일을 덮지 않는 규칙
@@ -178,6 +184,10 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 
 시험은 `plugins/ai-ready` 에서 `python3 -m unittest discover -s tests -t .`, `codex` 에서
 `python3 -m unittest discover -s tests`, 그리고 저장소 루트에서 `bash build/drift-test.sh` 입니다.
+
+실제 세션으로 확인할 때는 대상 저장소를 `~/.claude` 밖 경로(예: `/tmp/ai-ready-e2e/`)에 복사해 두고
+`claude -p --plugin-dir <이 저장소>/plugins/ai-ready ...` 로 돌립니다. `~/.claude` 아래에서 돌리면 권한 검사가 그
+경로의 쓰기를 따로 막아 결과가 실제 사용과 달라집니다.
 
 ---
 

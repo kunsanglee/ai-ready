@@ -11,25 +11,36 @@ audit 결과를 읽어 없는 문서와 검증 장치를 만들고, 문서에만
 ## 준비
 
 1. `<target>/.ai-ready/gaps.md` 와 `audit-report.md` 를 읽는다. 없으면 `audit` 을 먼저 안내하고 멈춘다.
-2. 루트와 모듈의 `AGENTS.md`/`CLAUDE.md` 중 어느 것이 원본인지 정한다. 한쪽이 심링크면 원본만 고친다.
+2. 루트와 모듈의 `AGENTS.md`/`CLAUDE.md` 중 어느 것이 원본인지 정한다. 기본 구조는 `AGENTS.md` 가 원본이고
+   `CLAUDE.md` 가 `@AGENTS.md` 한 줄로 그것을 가져오는 것이다. 한쪽이 심볼릭 링크면 원본만 고친다.
 3. 할 일을 표로 보여 준다: 항목 · 파일 · 방법(스크립트 / 모델 초안) · 근거. 사용자가 고른 것만 진행한다.
 
 ## 만드는 것
 
-audit 스킬 폴더의 스크립트를 쓴다(`../audit/scripts/`).
+audit 스킬 폴더의 스크립트를 쓴다(`../audit/scripts/`). 명령은 `python3 <audit 스킬 폴더>/scripts/<스크립트> ...`
+한 줄로 부른다. 변수 대입·`{ ...; exit ...; }` 묶음을 앞에 붙이지 않고, 있는지 보려면 `test -f ... && python3 ...`
+꼴까지만 쓴다. `echo $?` 를 이어 붙이지 않는다 — 스크립트가 실패하면 이유와 `종료 코드 N` 을 출력한다.
 
 - `bootstrap.py --target <target> --only <종류> --dry-run` 으로 먼저 보여 주고, 승인 뒤 `--dry-run` 없이 돌린다.
-  종류: `root`(짧은 루트 문서 + AGENTS.md 심링크), `design`(`docs/design/README.md` + `.gitattributes` 의
+  종류: `root`(짧은 루트 `AGENTS.md` + 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`. 심볼릭 링크는 만들지
+  않는다), `design`(`docs/design/README.md` + `.gitattributes` 의
   union merge 한 줄, `--design-domain` 으로 도메인 문서 쌍), `antipatterns`(빈 원장과 형식), `verification`
   (`docs/VERIFICATION.md` + `scripts/verify.sh`), `doc-check`(`scripts/check_docs.py`).
 - 사람이 관리하는 파일(ai-ready 서명이 없는 파일)이 있으면 스크립트는 아무것도 쓰지 않고 exit 3 이다. 덮어쓰지
   말고 diff 를 보여 준 뒤 필요한 부분만 고친다. 서명이 남은 `scripts/verify.sh` 라도 `CHECKS` 가 이번에 만들 값과
   다르면 같은 exit 3 이다. stderr 에 나온 지금 값을 `--check` 로 그대로 주거나 `verification` 을 뺀다.
+- 만들 파일이 심볼릭 링크면(옛 구조: `CLAUDE.md` 원본 + `AGENTS.md` 링크) exit 3, git 에서 무시되면(`.gitignore` 에
+  `CLAUDE.md` 가 있는 저장소 등) exit 6 이다. 둘 다 아무것도 쓰지 않는다. 전환이나 무시 규칙 수정은 사람이 정하고,
+  `--force` 로 넘기지 않는다.
 - 확인 명령을 추론하지 못하면 exit 4 다. 사용자에게 물어 `--check "<명령>"` 으로 준다. 명령을 지어내지 않는다.
-- `scaffold.py --target <target> --out <target> --dry-run` 으로 모듈 문서 초안을 만든다. 절은 하는 일 / 경계 /
-  변경 방법 / 강제할 수 없는 규칙 / 강제되는 규칙(포인터만)이고, 숫자는 적지 않는다.
+- `scaffold.py --target <target> --out <target> --dry-run` 으로 모듈 문서 초안(`AGENTS.md` + 가져오는 `CLAUDE.md`)을
+  만든다. 절은 하는 일 / 경계 / 변경 방법 / 강제할 수 없는 규칙 / 강제되는 규칙(포인터만)이고, 숫자는 적지 않는다.
+- TODO 를 채울 때는 파일을 통째로 다시 쓰지 않고 TODO 자리만 고친다. 첫 줄의 서명(`<!-- ai-ready:apply 자동 생성
+  초안 ...`)은 기본으로 남긴다. 남겨 두면 다음 apply 가 초안으로 보고 다시 만들 수 있고, 지우면 사람이 관리하는
+  파일이 되어 덮어쓰지 않는다. 하위 에이전트에 넘길 때도 이 두 조건을 그대로 전달한다.
 - audit 의 B 항목은 `references/enforcement-drafts.md` 를 따라 강제 초안을 만든다. 오류 메시지에 "대신 X" 를 넣고,
   기존 위반이 있으면 기준 파일(baseline·freeze) 방식을 제안한다. 적용 뒤 문서 줄은 "→ <규칙·테스트>" 로 줄인다.
+  검사를 돌릴 수 없었으면(권한 거부·도구 없음) CI 설정 변경은 적용하지 않고 보류 항목으로 보고한다.
 - C 항목은 이유와 함께 모듈 문서나 안티패턴 원장으로, 설계 결정은 `docs/design/<도메인>.decisions.md` 맨 위의 새
   카드(`## 제목 · (티켓) · [proposed]`)로 낸다. D 항목은 수정 후보로 보고만 한다.
 
@@ -38,4 +49,6 @@ audit 스킬 폴더의 스크립트를 쓴다(`../audit/scripts/`).
 - `.claude/settings.json` 을 고치거나 Claude Stop hook 을 흉내 내지 않는다. `scripts/verify.sh` 를 자동으로 돌리고
   싶으면 프로젝트의 CI 나 pre-commit 에 넣는 방법을 설명하고, 사용자가 승인하면 그 설정 diff 를 낸다.
 - 전역 Codex 설정·플러그인 설치·원격 호출·자격 증명은 건드리지 않는다.
+- 사람이 중간에 답할 수 없는 비대화 실행에서는 사람에게 명령을 대신 돌려 달라고 요청하지 않는다. 돌리지 못한 것은
+  이유와 함께 보류 항목으로 보고한다.
 - 끝나면 `audit.py` 를 다시 돌려 `gaps.md` 가 어떻게 바뀌었는지 보고한다.
