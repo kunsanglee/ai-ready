@@ -13,6 +13,10 @@ from the plugin root, or:
 """
 from __future__ import annotations
 
+import contextlib
+import io
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -195,7 +199,7 @@ class TestScaffoldExitCodes(unittest.TestCase):
             out = root / "out"
             self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_NO_PACKAGES)
 
-    def test_success_exits_zero_and_writes_catalog(self):
+    def test_single_module_scaffolds_each_logical_module(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             _mk(root, "package.json", "{}")
@@ -203,85 +207,120 @@ class TestScaffoldExitCodes(unittest.TestCase):
             _mk(root, "src/store/row.ts")
             out = root / "out"
             self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_OK)
-            self.assertTrue((out / "PACKAGES.md").is_file())
+            self.assertTrue((out / "src/domain/CLAUDE.md").is_file())
+            self.assertTrue((out / "src/store/CLAUDE.md").is_file())
 
 
 class TestAgentsBridge(unittest.TestCase):
-    """모듈 초안은 CLAUDE.md 하나만 쓰면 Codex 가 그 폴더를 빈 것으로 본다."""
+    """모듈 초안은 AGENTS.md 가 원본이고, 옆의 CLAUDE.md 는 `@AGENTS.md` 한 줄로 그것을 가져온다.
 
-    def test_module_scaffold_pairs_agents_md_symlink(self):
+    Codex 는 AGENTS.md 를 읽고, Claude Code 는 한 폴더에 둘이 있으면 CLAUDE.md 만 읽는다. 심볼릭 링크는
+    Windows 클론에서 한 줄짜리 파일로 풀리고 Edit·Write 도구가 링크를 따라 쓰지 않아 쓰지 않는다.
+    """
+
+    def _two_modules(self, root: Path) -> None:
+        _mk(root, "mod-a/build.gradle.kts")
+        _mk(root, "mod-a/src/Foo.kt")
+        _mk(root, "mod-b/build.gradle.kts")
+        _mk(root, "mod-b/src/Bar.kt")
+
+    def test_module_scaffold_writes_agents_md_and_import_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._two_modules(root)
+            out = root / "out"
+            self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_OK)
+            agents = out / "mod-a" / "AGENTS.md"
+            claude = out / "mod-a" / "CLAUDE.md"
+            self.assertFalse(agents.is_symlink())
+            self.assertFalse(claude.is_symlink())
+            self.assertTrue(agents.read_text(encoding="utf-8").startswith("<!-- ai-ready:apply"))
+            self.assertEqual(claude.read_text(encoding="utf-8"), "@AGENTS.md\n")
+
+    def test_rerun_keeps_the_import_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._two_modules(root)
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_OK)
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_OK)
+            self.assertEqual((root / "mod-a/CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
+
+    def test_authored_agents_md_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._two_modules(root)
+            _mk(root, "mod-a/AGENTS.md", "# authored\n")
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_OK)
+            self.assertEqual((root / "mod-a/AGENTS.md").read_text(encoding="utf-8"), "# authored\n")
+            self.assertFalse((root / "mod-a/CLAUDE.md").exists())
+            self.assertTrue((root / "mod-b/AGENTS.md").is_file())
+            self.assertEqual(scaffold.run(root, root, 5, ["mod-a"]), scaffold.EXIT_REFUSED)
+            self.assertEqual((root / "mod-a/AGENTS.md").read_text(encoding="utf-8"), "# authored\n")
+
+    def test_old_symlink_layout_is_not_rewritten_without_force(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._two_modules(root)
+            signed = scaffold.SIGNATURE + "\n# old\n"
+            _mk(root, "mod-a/CLAUDE.md", signed)
+            (root / "mod-a/AGENTS.md").symlink_to("CLAUDE.md")
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_OK)
+            self.assertTrue((root / "mod-a/AGENTS.md").is_symlink(), "자동 선택에서는 건너뛴다")
+            self.assertEqual((root / "mod-a/CLAUDE.md").read_text(encoding="utf-8"), signed)
+            self.assertEqual(scaffold.run(root, root, 5, ["mod-a"]), scaffold.EXIT_REFUSED)
+            self.assertTrue((root / "mod-a/AGENTS.md").is_symlink())
+            self.assertEqual(scaffold.run(root, root, 5, ["mod-a"], force=True), scaffold.EXIT_OK)
+            self.assertFalse((root / "mod-a/AGENTS.md").is_symlink())
+            self.assertTrue((root / "mod-a/AGENTS.md").read_text(encoding="utf-8").startswith("<!-- ai-ready:apply"))
+            self.assertEqual((root / "mod-a/CLAUDE.md").read_text(encoding="utf-8"), "@AGENTS.md\n")
+
+
+@unittest.skipUnless(shutil.which("git"), "git 이 없다")
+class TestScaffoldIgnoredPaths(unittest.TestCase):
+    def test_ignored_bridge_only_is_skipped(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             _mk(root, "mod-a/build.gradle.kts")
             _mk(root, "mod-a/src/Foo.kt")
-            _mk(root, "mod-b/build.gradle.kts")
-            _mk(root, "mod-b/src/Bar.kt")
-            out = root / "out"
-            self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_OK)
-            claude = out / "mod-a" / "CLAUDE.md"
-            agents = out / "mod-a" / "AGENTS.md"
-            self.assertTrue(claude.is_file())
-            self.assertTrue(agents.is_symlink())
-            self.assertEqual(agents.readlink(), Path("CLAUDE.md"))
-            self.assertEqual(
-                agents.read_text(encoding="utf-8"),
-                claude.read_text(encoding="utf-8"),
-            )
+            _mk(root, ".gitignore", "CLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_OK, "다리 파일만 무시되면 멈추지 않는다")
+            self.assertTrue((root / "mod-a/AGENTS.md").is_file())
+            self.assertFalse((root / "mod-a/CLAUDE.md").exists(), "무시되는 다리 파일은 쓰지 않는다")
 
-    def test_authored_agents_md_is_left_alone(self):
-        with tempfile.TemporaryDirectory() as d:
-            claude = Path(d) / "CLAUDE.md"
-            claude.write_text("# body\n", encoding="utf-8")
-            agents = Path(d) / "AGENTS.md"
-            agents.write_text("# authored\n", encoding="utf-8")
-            self.assertIsNone(scaffold.link_agents_beside(claude))
-            self.assertFalse(agents.is_symlink())
-            self.assertEqual(agents.read_text(encoding="utf-8"), "# authored\n")
-
-    def test_existing_symlink_is_a_noop(self):
-        with tempfile.TemporaryDirectory() as d:
-            claude = Path(d) / "CLAUDE.md"
-            claude.write_text("# body\n", encoding="utf-8")
-            agents = Path(d) / "AGENTS.md"
-            agents.symlink_to("CLAUDE.md")
-            self.assertIsNone(scaffold.link_agents_beside(claude))
-            self.assertTrue(agents.is_symlink())
-            self.assertEqual(agents.readlink(), Path("CLAUDE.md"))
-
-
-class TestCatalogTemplateIsStackNeutral(unittest.TestCase):
-    """초안 문구가 한 스택의 어휘를 쓰면, 그 스택이 아닌 사람은 채울 수 없는 자리를 받는다."""
-
-    SPRING_ONLY = ("Controller → Service", "@Profile", "ServiceTestSupport",
-                   "IntegrationTestSupport", "부작용 빈")
-
-    def test_placeholders_name_no_framework(self):
+    def test_root_claude_warning_only_when_root_claude_exists(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            _mk(root, "package.json", "{}")
-            _mk(root, "src/domain/turn.ts")
-            out = root / "out"
-            self.assertEqual(scaffold.run(root, out, 5), scaffold.EXIT_OK)
-            text = (out / "PACKAGES.md").read_text(encoding="utf-8")
-            for term in self.SPRING_ONLY:
-                self.assertNotIn(term, text, f"스택 중립이어야 할 자리에 {term!r}")
+            _mk(root, "mod-a/build.gradle.kts")
+            _mk(root, "mod-a/src/Foo.kt")
+            _mk(root, ".gitignore", "mod-a/CLAUDE.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(scaffold.run(root, root, 5, ["mod-a"]), scaffold.EXIT_OK)
+            self.assertNotIn("주의: 루트 CLAUDE.md", out.getvalue(), "루트 CLAUDE.md 가 없으면 경고하지 않는다")
+            _mk(root, "CLAUDE.md", "# 개인\n")
+            (root / "mod-a/AGENTS.md").unlink()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(scaffold.run(root, root, 5, ["mod-a"]), scaffold.EXIT_OK)
+            self.assertIn("주의: 루트 CLAUDE.md", out.getvalue())
 
-    def test_role_is_not_asserted_when_stack_has_no_such_convention(self):
-        """이름 규칙을 안 쓰는 스택에서 아무것도 안 잡힌 것은 '횡단' 이 아니라 '모른다' 다."""
+    def test_ignored_agents_md_stops_before_writing(self):
         with tempfile.TemporaryDirectory() as d:
-            pkg = Path(d) / "domain"
-            pkg.mkdir()
-            (pkg / "turn.ts").write_text("x", encoding="utf-8")
-            self.assertIn("TODO", scaffold.detect_package_role(pkg, "node"))
-            self.assertEqual(scaffold.detect_package_role(pkg, "jvm"), "횡단 / 설정 / 유틸")
-
-    def test_role_still_reads_name_conventions_on_any_stack(self):
-        """이름 규칙이 실제로 잡히면 스택과 무관하게 그대로 쓴다."""
-        with tempfile.TemporaryDirectory() as d:
-            pkg = Path(d) / "billing"
-            pkg.mkdir()
-            (pkg / "BillingService.ts").write_text("x", encoding="utf-8")
-            self.assertIn("도메인", scaffold.detect_package_role(pkg, "node"))
+            root = Path(d)
+            _mk(root, "mod-a/build.gradle.kts")
+            _mk(root, "mod-a/src/Foo.kt")
+            _mk(root, ".gitignore", "AGENTS.md\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            self.assertEqual(scaffold.run(root, root, 5), scaffold.EXIT_IGNORED)
+            self.assertFalse((root / "mod-a/AGENTS.md").exists())
+            self.assertFalse((root / "mod-a/CLAUDE.md").exists())
+            self.assertEqual(scaffold.run(root, root, 5, dry_run=True), scaffold.EXIT_IGNORED)
+            # 초안 폴더에 쓸 때는 대상 저장소의 무시 규칙과 상관없다.
+            self.assertEqual(scaffold.run(root, root / ".ai-ready" / "drafts", 5), scaffold.EXIT_OK)
+            self.assertEqual(scaffold.run(root, root, 5, force=True), scaffold.EXIT_OK)
+            self.assertTrue((root / "mod-a/AGENTS.md").is_file())
 
 
 if __name__ == "__main__":

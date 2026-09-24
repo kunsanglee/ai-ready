@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""
-Generate module-level CLAUDE.md scaffolds for the top N hot modules.
+"""모듈 문서 초안을 만든다 — 원본 `AGENTS.md` 와, 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`.
 
-A "hot module" is one with the most recent activity (git commits in the last
-90 days), with file count as a fallback. Each generated draft uses the
-5-question template:
-  1) What — what this module does
-  2) How — typical change patterns
-  3) Anti-patterns — what NEVER to do
-  4) Dependencies — what this module touches
-  5) Tribal knowledge — non-obvious facts
+대상 모듈은 stacks.logical_modules 가 정한다(audit.py 와 같은 답). 모듈이 많으면 최근 변경이 잦은
+모듈부터 --top 개만 고른다. AGENTS.md 의 서명 줄에는 본문 해시가 들어간다. 사람이 관리하는 문서(서명이 없는
+AGENTS.md, 또는 `@AGENTS.md` 를 가져오지 않는 사람의 CLAUDE.md)가 있거나, 서명은 남았지만 고친 초안(해시가
+다르거나 해시가 없는 옛 초안)이거나, 둘 중 하나가 심볼릭 링크인(옛 구조) 모듈은 후보에서 뺀다. --modules 로
+직접 고른 모듈이 그렇다면 exit 3 이다. `@AGENTS.md` 를 가져오는 CLAUDE.md 는 다른 줄이 더 있어도 그대로 둔다.
 
-The script writes drafts to <out>/<module-path>/CLAUDE.md and an AGENTS.md
-relative symlink beside it. You then review, edit, and copy them into the
-actual module directories.
+제자리에 쓸 때(--out 이 대상 저장소) 만들 파일이 git 에서 무시되면: 무시되는 것이 CLAUDE.md(다리 파일)뿐이면
+그 파일만 건너뛰고 AGENTS.md 는 쓴다. AGENTS.md 가 무시되면 아무것도 쓰지 않고 exit 6 이다. 막는 것은 모두
+--force 로만 넘긴다. 맞는 스택 어댑터가 없으면 exit 5, 기준점 아래 코드 디렉토리가 없으면 exit 4 다.
+
+초안의 절: 이 모듈이 하는 일 / 경계 / 변경 방법 / 강제할 수 없는 규칙 / 강제되는 규칙(포인터만).
+파일 수·줄 수·변경 횟수 같은 숫자는 적지 않는다 — 문서에 박힌 숫자는 다음 커밋부터 틀린다.
+
+  python3 scaffold.py --target <repo> --out <repo>                  # 제자리에 쓴다
+  python3 scaffold.py --target <repo> --out <repo>/.ai-ready/drafts # 초안 폴더에 쓴다
+  python3 scaffold.py --target <repo> --out <repo> --dry-run        # 쓸 파일만 보여 준다
 """
 from __future__ import annotations
 
@@ -22,40 +25,24 @@ import os
 import re
 import subprocess
 import sys
-from collections import Counter
-from datetime import datetime
 from pathlib import Path
 
 # 논리 모듈 기준점은 스택마다 다르다. 그 답을 여기 두지 않고 어댑터에 묻는다 — 종전에는
 # 이 파일과 audit.py 가 각자 JVM 으로만 하드코딩해 두 벌로 갈라져 있었다.
+import managed_doc
 import stacks
 
-BUILD_MANIFESTS = {
-    "build.gradle.kts", "build.gradle", "pom.xml",
-    "package.json", "Cargo.toml", "go.mod", "pyproject.toml", "setup.py",
-}
-
-EXCLUDE_DIRS = {
-    ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
-    "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
-    ".pytest_cache", ".mypy_cache",
-    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
-    ".ai-ready",  # 자기 산출물 자기참조 차단
-}
-
-CODE_EXTS = {
-    ".kt", ".java", ".scala", ".groovy",
-    ".ts", ".tsx", ".js", ".jsx", ".mjs",
-    ".py", ".rs", ".go", ".rb", ".php", ".cs", ".swift",
-}
-
-# 단일 모듈 프로젝트의 패키지(=논리 모듈) 탐색 기준점은 stacks.py 의 어댑터가 답한다.
+# 모듈 목록·제외 디렉토리·코드 확장자는 audit.py 와 같은 답을 쓰도록 stacks.py 한 곳에 둔다.
+EXCLUDE_DIRS = stacks.EXCLUDE_DIRS
+CODE_EXTS = stacks.CODE_EXTS
 
 # 종료코드. 0 이 아닌 값을 쓰는 이유는 "안 만들어졌다" 를 호출한 쪽이 셀 수 있게 하기
 # 위해서다. 안내문은 사람만 읽고 스크립트는 못 읽는다.
 EXIT_OK = 0
-EXIT_NO_ADAPTER = 3    # 등록된 스택 어댑터 중 맞는 것이 없다
+EXIT_REFUSED = 3       # 사람이 관리하는 문서·고친 초안·심볼릭 링크라 덮어쓰지 않았다 (--force 로만)
 EXIT_NO_PACKAGES = 4   # 기준점은 찾았는데 그 아래에 코드가 없다
+EXIT_NO_ADAPTER = 5    # 등록된 스택 어댑터 중 맞는 것이 없다
+EXIT_IGNORED = 6       # 만들 AGENTS.md 가 git 에서 무시된다 — 써도 커밋되지 않는다 (--force 로만)
 
 
 def walk(target: Path):
@@ -64,30 +51,15 @@ def walk(target: Path):
         yield Path(dirpath), dirnames, filenames
 
 
-def find_modules(target: Path) -> list[Path]:
-    seen = set()
-    out = []
-    for dirpath, _, filenames in walk(target):
-        for f in filenames:
-            if f in BUILD_MANIFESTS:
-                rel = dirpath.relative_to(target)
-                if rel not in seen:
-                    seen.add(rel)
-                    out.append(rel)
-                break
-    return sorted(out, key=str)
-
-
 def git_changed_paths(target: Path, days: int = 90) -> list[str]:
-    """최근 N일의 fix류·일반 commit에서 변경된 파일 경로 목록 반환 (raw, 미분배)."""
+    """최근 N일 커밋에서 바뀐 파일 경로 목록. 모듈을 고르는 순서에만 쓰고 문서에는 적지 않는다."""
     try:
         result = subprocess.run(
             ["git", "-C", str(target), "log", f"--since={days}.days.ago", "--name-only", "--pretty=format:"],
             capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
-        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
-        # extract_antipatterns / gen_index 의 git 래퍼와 동일 폭(PermissionError 미처리 크래시 차단).
+        # OSError = git 부재·권한 오류, SubprocessError = 시간 초과. git 이 없으면 변경 이력 없이 고른다.
         return []
     if result.returncode != 0:
         return []
@@ -139,41 +111,6 @@ def file_counts_attributed(target: Path, modules: list[Path]) -> dict[str, int]:
     return counter
 
 
-def detect_stack_hint(module_dir: Path) -> str:
-    """Return a short label describing the language/framework for this module."""
-    files = list(module_dir.iterdir()) if module_dir.is_dir() else []
-    names = {f.name for f in files}
-    if "build.gradle.kts" in names or "build.gradle" in names:
-        # Spring Boot? check for application.yml or src/main/kotlin
-        if (module_dir / "src" / "main" / "kotlin").is_dir():
-            return "Kotlin / Gradle"
-        if (module_dir / "src" / "main" / "java").is_dir():
-            return "Java / Gradle"
-        return "JVM / Gradle"
-    if "pom.xml" in names:
-        return "Java / Maven"
-    if "package.json" in names:
-        # Detect framework
-        try:
-            pkg = (module_dir / "package.json").read_text(encoding="utf-8", errors="replace")
-            if "next" in pkg:
-                return "Next.js"
-            if "react" in pkg:
-                return "React"
-            if "express" in pkg or "fastify" in pkg:
-                return "Node.js (server)"
-            return "Node.js"
-        except OSError:
-            return "Node.js"
-    if "Cargo.toml" in names:
-        return "Rust"
-    if "go.mod" in names:
-        return "Go"
-    if "pyproject.toml" in names or "setup.py" in names:
-        return "Python"
-    return "unknown"
-
-
 def detect_layered_pattern(module_dir: Path) -> list[str]:
     """H-3 fix: 와일드카드 매칭으로 일반적인 아키텍처 패턴 마커 탐지.
 
@@ -214,16 +151,17 @@ def detect_layered_pattern(module_dir: Path) -> list[str]:
 
 
 def module_summary_from_root_claude_md(target: Path, module_path: str) -> str | None:
-    """루트 CLAUDE.md 의 module map 줄에서 모듈 1줄 설명을 cherry-pick.
+    """루트 AGENTS.md·CLAUDE.md 의 module map 줄에서 모듈 1줄 설명을 cherry-pick.
 
     매칭: `[`mod`](path)` 또는 `` `mod` `` 다음에 ' — ', ' - ', ': ' 로 이어지는 줄.
     """
-    root = target / "CLAUDE.md"
-    if not root.exists():
-        return None
-    try:
-        text = root.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = ""
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        try:
+            text += (target / name).read_text(encoding="utf-8", errors="replace") + "\n"
+        except OSError:
+            continue
+    if not text:
         return None
     escaped = re.escape(module_path)
     # 형태: `[`module`](path)` — 설명  /  `[module](path)` — 설명  /  `module` — 설명
@@ -242,106 +180,92 @@ def module_summary_from_root_claude_md(target: Path, module_path: str) -> str | 
     return None
 
 
-def git_hot_files(target: Path, module_path: str, days: int = 90, top: int = 5) -> list[tuple[str, int]]:
-    """모듈 내 최근 N일 변경 빈도 Top K 파일."""
-    if module_path == ".":
-        return []
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(target), "log", f"--since={days}.days.ago",
-             "--name-only", "--pretty=format:", "--", module_path],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
-        # extract_antipatterns / gen_index 의 git 래퍼와 동일 폭(PermissionError 미처리 크래시 차단).
-        return []
-    if result.returncode != 0:
-        return []
-    counts = Counter(line.strip() for line in result.stdout.splitlines() if line.strip())
-    return counts.most_common(top)
-
-
-_FIX_RE = re.compile(
-    r"^(fix|hotfix|revert|bugfix|chore\(fix\)|버그|핫픽스|롤백|되돌림)[\(\s:]",
-    re.IGNORECASE,
-)
-
-
-def git_fix_subjects(target: Path, module_path: str, days: int = 180, top: int = 5) -> list[str]:
-    """모듈 내 최근 fix/hotfix/revert 커밋 subject Top K — 안티패턴 후보 시드."""
-    if module_path == ".":
-        return []
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(target), "log", f"--since={days}.days.ago",
-             "--pretty=format:%s", "--", module_path],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        # OSError = FileNotFoundError(git 부재) + PermissionError 등, SubprocessError = TimeoutExpired 등.
-        # extract_antipatterns / gen_index 의 git 래퍼와 동일 폭(PermissionError 미처리 크래시 차단).
-        return []
-    if result.returncode != 0:
-        return []
-    subjects = []
-    for s in result.stdout.splitlines():
-        s = s.strip()
-        if s and _FIX_RE.match(s):
-            subjects.append(s)
-        if len(subjects) >= top:
-            break
-    return subjects
-
-
 # --- Template -------------------------------------------------------------
 
-# 이 골격에 "사용 시점" 절과 의존성·검토일 절이 없는 것은 의도다. 사용 시점을 TODO 로 찍으면
-# 채우기 전 키워드가 채점 게이트에 걸려 거짓 점수가 되고, 의존성은 빌드 매니페스트가·검토
-# 이력은 git 이 정본이라 문서에 복사하면 낡는 순간 거짓이 된다.
-TEMPLATE = """# CLAUDE.md — `{module_path}`
+SIGNATURE = managed_doc.SIGNATURE_MD
 
-## 스택
-- {stack_hint}
+TEMPLATE = """{signature}
+# `{module_path}`
 
 ## 이 모듈이 하는 일
 {what_block}
 {design_pointer_block}
-## 일반적인 변경 방법
+## 경계
+- 의존해도 되는 것: TODO{manifest_hint}
+- 이 모듈에 의존하는 것: TODO
+- 의존하면 안 되는 것: TODO — 도구로 막을 수 있으면 아키텍처 테스트로 옮기고 아래 "강제되는 규칙" 에 포인터만 남긴다.
+
+## 변경 방법
 {how_block}
 
-## 절대 금지 (이 모듈 고유 안티패턴)
-{antipattern_block}
+## 강제할 수 없는 규칙
+<!-- lint·타입·테스트로 잡을 수 없는 것만 적는다. 항목마다 왜를 붙인다. -->
+- TODO: <규칙> — 왜: <이유>
 
-## 핫 파일 (최근 90일 변경 빈도 Top 5)
-{hot_files_block}
-
-## 암묵지 (코드에 드러나지 않는 것)
-- TODO: 팀이 암묵적으로 따르지만 코드엔 없는 규칙 하나.
-- TODO: AI가 자주 놓치는 필드/값 네이밍 불일치.
-- TODO: 알아둘 가치가 있는 과거 의사결정 (ADR이 있으면 링크).
+## 강제되는 규칙
+<!-- 규칙 본문은 도구에 있다. 여기에는 찾아갈 곳만 한 줄씩 적는다. -->
+- TODO: <규칙 요약> → <lint 규칙 이름 또는 테스트 경로>
 """
 
 
-def link_agents_beside(claude_path: Path) -> Path | None:
-    """CLAUDE.md 옆에 AGENTS.md 상대 심링크를 둔다.
-
-    Codex 처럼 AGENTS.md 만 찾는 도구가 같은 본문을 읽게 한다. 복사본을
-    두면 한쪽만 고치고 다른 쪽이 낡는다. 사람이 이미 쓴 AGENTS.md 는 덮지 않는다.
-    """
-    if claude_path.name != "CLAUDE.md":
-        raise ValueError(f"expected CLAUDE.md, got {claude_path.name}")
-    agents = claude_path.with_name("AGENTS.md")
-    if agents.exists() or agents.is_symlink():
-        return None
-    agents.symlink_to("CLAUDE.md")
-    return agents
+def _keeps_claude(claude: Path) -> bool:
+    """이미 `@AGENTS.md` 를 가져오는 일반 파일 CLAUDE.md. 다른 줄이 더 있어도 그대로 둔다."""
+    return claude.is_file() and not claude.is_symlink() and managed_doc.imports_agents(claude)
 
 
-def render_what_block(module_path: str, stack_hint: str, file_count: int, summary: str | None) -> str:
-    """T-10: 루트 CLAUDE.md 의 module map 1줄 설명을 자동으로 cherry-pick."""
-    head = f"- {summary}" if summary else f"- TODO: `{module_path}` 의 책임을 한 문장으로 적으세요."
-    return f"{head}\n- {stack_hint} 소스 파일 {file_count}개."
+def doc_state(directory: Path, skip_claude: bool = False) -> str:
+    """모듈 폴더 문서의 상태: none(없음) · ours(ai-ready 가 쓴 그대로의 초안) · edited(고친 초안) ·
+    human(사람이 관리) · symlink(옛 구조). skip_claude 면 CLAUDE.md 는 쓰지 않으므로 보지 않는다."""
+    agents, claude = directory / "AGENTS.md", directory / "CLAUDE.md"
+    if agents.is_symlink() or (claude.is_symlink() and not skip_claude):
+        return "symlink"
+    states = [managed_doc.draft_state(agents)]
+    if not skip_claude and claude.exists() and not _keeps_claude(claude):
+        states.append(managed_doc.draft_state(claude))
+    if "human" in states:
+        return "human"
+    if "edited" in states:
+        return "edited"
+    return "ours" if agents.exists() or (claude.exists() and not skip_claude) else "none"
+
+
+def _edited_reason(directory: Path) -> str:
+    """고친 초안으로 본 첫 파일과 그 이유."""
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        p = directory / name
+        if managed_doc.draft_state(p) == "edited":
+            return f"{name}: {managed_doc.edited_reason(p)}"
+    return "초안이 고쳐졌다"
+
+
+def write_module_docs(out_dir: Path, content: str, skip_claude: bool = False) -> None:
+    """AGENTS.md 에 초안을, CLAUDE.md 에 가져오는 한 줄을 쓴다. 이미 가져오는 CLAUDE.md 는 그대로 둔다.
+    심볼릭 링크는 일반 파일로 바꾼다(--force 로만 온다)."""
+    agents, claude = out_dir / "AGENTS.md", out_dir / "CLAUDE.md"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for p in (agents,) if skip_claude else (agents, claude):
+        if p.is_symlink():
+            p.unlink()
+    agents.write_text(content, encoding="utf-8")
+    if not skip_claude and not _keeps_claude(claude):
+        claude.write_text(managed_doc.BRIDGE_TEXT, encoding="utf-8")
+
+
+def render_what_block(module_path: str, summary: str | None) -> str:
+    """루트 AGENTS.md·CLAUDE.md 의 모듈 목록에 한 줄 설명이 있으면 가져온다."""
+    return f"- {summary}" if summary else f"- TODO: `{module_path}` 의 책임을 한 문장으로 적는다."
+
+
+_MANIFESTS_IN_ORDER = ("build.gradle.kts", "build.gradle", "pom.xml", "package.json",
+                       "Cargo.toml", "go.mod", "pyproject.toml", "setup.py")
+
+
+def render_manifest_hint(target: Path, module_path: str) -> str:
+    """현재 의존의 정본(빌드 매니페스트)을 가리킨다. 목록을 문서에 복사하지 않는다 — 복사본은 낡는다."""
+    for name in _MANIFESTS_IN_ORDER:
+        if (target / module_path / name).is_file():
+            return f" (지금 의존하는 것의 정본은 `{name}`)"
+    return ""
 
 
 def render_design_pointer_block(target: Path, module_path: str) -> str:
@@ -364,154 +288,13 @@ def render_design_pointer_block(target: Path, module_path: str) -> str:
 
 def render_how_block(layer_hints: list[str]) -> str:
     if not layer_hints:
-        return "- TODO: 이 모듈에 새 기능을 추가할 때의 일반적인 흐름을 적으세요.\n- TODO: 요청이 어디로 들어와서 어디로 나가는지 적으세요."
-    out = ["- 감지된 레이어 / 패턴:"]
+        return ("- TODO: 이 모듈에 기능을 더할 때 보통 어느 파일부터 고치는지 적는다.\n"
+                "- TODO: 요청이 어디로 들어와서 어디로 나가는지 적는다.")
+    out = ["- 코드에서 본 레이어·패턴:"]
     for h in layer_hints:
         out.append(f"  - {h}")
-    out.append("- TODO: 진입 → 서비스 → 출구의 일반적인 end-to-end 흐름을 적으세요.")
+    out.append("- TODO: 진입 → 처리 → 출구 순서로 기능 하나를 더할 때의 흐름을 적는다.")
     return "\n".join(out)
-
-
-def render_antipattern_block(fix_subjects: list[str]) -> str:
-    """T-10: 모듈 내 fix 커밋 subject 를 안티패턴 후보로 시드."""
-    if not fix_subjects:
-        return ("- TODO: 합리적으로 보이지만 이 모듈을 깨뜨리는 것 3~5개를 적으세요.\n"
-                "- TODO: AI가 가장 최근에 했던 실수와 그것이 왜 잘못인지 한 줄로 적으세요.")
-    out = ["> 최근 fix/revert 커밋 (안티패턴 후보 — 검토 후 절대 금지 항목으로 승격):"]
-    for s in fix_subjects[:5]:
-        # 길이 제한
-        snippet = s[:140].replace("\n", " ").replace("|", "│")
-        out.append(f"- `{snippet}`")
-    out.append("- TODO: 위 fix 커밋 패턴을 보고 '절대 금지 — X. 이유 — Y. 대신 — Z' 형식으로 정리하세요.")
-    return "\n".join(out)
-
-
-def render_hot_files_block(hot_files: list[tuple[str, int]]) -> str:
-    """T-10: git log 기반 핫 파일 Top 5."""
-    if not hot_files:
-        return "- _최근 90일간 git 변경 없음 (또는 git 미사용 모듈)._"
-    out = []
-    for path, n in hot_files:
-        out.append(f"- `{path}` — {n}회 변경")
-    return "\n".join(out)
-
-
-# --- Single-module package detection -------------------------------------
-
-def find_base_package(target: Path) -> Path | None:
-    """논리 모듈의 부모 디렉토리를 찾는다. 스택별 판정은 stacks.py 가 한다.
-
-    JVM 이면 base package(Application 클래스가 있는 디렉토리), Node 면 `src/`,
-    Python 이면 배포 패키지 디렉토리가 나온다.
-    """
-    layout = stacks.detect_layout(target)
-    return layout.source_root if layout is not None else None
-
-
-def find_packages(base_package: Path) -> list[Path]:
-    """base package 의 직속 자식 디렉토리 = 패키지(논리 모듈)."""
-    if not base_package.is_dir():
-        return []
-    out = []
-    for child in sorted(base_package.iterdir(), key=lambda p: p.name):
-        if not child.is_dir():
-            continue
-        if child.name in EXCLUDE_DIRS or child.name.startswith("."):
-            continue
-        # 코드 파일이 1개라도 있는 경우만
-        has_code = any(p.suffix in CODE_EXTS for p in child.rglob("*") if p.is_file())
-        if has_code:
-            out.append(child)
-    return out
-
-
-def detect_package_role(pkg_dir: Path, stack: str = "jvm") -> str:
-    """패키지 역할 추정 — Controller/Service/Repository 이름으로 도메인 / 횡단 구분.
-
-    이름 규칙이 잡히면 어느 스택이든 그대로 쓴다. 문제는 **아무것도 안 잡혔을 때**다.
-    JVM 웹 스택에서 그 셋이 없으면 실제로 횡단·설정·유틸일 확률이 높지만, 그 이름
-    규칙을 애초에 안 쓰는 스택에서는 아무 정보도 없는 것이지 횡단이라는 뜻이 아니다.
-    단정하면 사람이 그 라벨을 믿고 넘어가, 채워야 할 자리가 채워진 것처럼 보인다.
-    """
-    has_controller = next(pkg_dir.rglob("*Controller.*"), None) is not None
-    has_service = next(pkg_dir.rglob("*Service.*"), None) is not None
-    has_repository = next(pkg_dir.rglob("*Repository.*"), None) is not None
-    if has_controller and (has_service or has_repository):
-        return "도메인 (Controller + Service/Repository)"
-    if has_controller:
-        return "도메인 (Controller 만)"
-    if has_service or has_repository:
-        return "도메인 (Service/Repository — Controller 없음)"
-    if stack == "jvm":
-        return "횡단 / 설정 / 유틸"
-    return "TODO — 이 패키지의 역할을 적으세요"
-
-
-def collect_endpoints(pkg_dir: Path) -> list[str]:
-    """패키지의 Controller 파일에서 @RequestMapping / @GetMapping / @PostMapping 등 추출."""
-    endpoints: list[str] = []
-    pattern = re.compile(r'@(?:RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping)\(\s*"([^"]+)"')
-    try:
-        for ctrl in pkg_dir.rglob("*Controller.*"):
-            text = ctrl.read_text(encoding="utf-8", errors="replace")
-            for m in pattern.finditer(text):
-                endpoints.append(m.group(1))
-    except OSError:
-        pass
-    return endpoints
-
-
-PACKAGE_CATALOG_TEMPLATE = """# PACKAGES.md — 패키지 카탈로그
-
-> **읽기 트리거**: 패키지 진입 / 새 도메인 추가 / 책임 경계 확인 / 트랜잭션·이벤트 흐름 파악.
->
-> 이 프로젝트는 *패키지가 곧 논리 모듈* 이다. **TODO** 로 시작하는 줄은 사람이 채운다.
-
-베이스 패키지: `{base_package}` ({total} 개 패키지 감지)
-
----
-
-{sections}
-
----
-
-## 새 도메인 패키지 추가 시 체크리스트
-
-1. 새 패키지 디렉토리 생성 + 표준 레이아웃 (`controller/`, `service/`, `domain/`, `repository/`).
-2. 본 문서에 새 도메인 섹션 추가 + 루트 `CLAUDE.md` 의 모듈 맵 갱신.
-3. TODO: 프로젝트 별 추가 체크리스트를 적으세요 (ADR / 테스트 패턴 / DDL 등).
-"""
-
-PACKAGE_SECTION_TEMPLATE = """### `{name}/` — {role}
-
-- **목적**: TODO — 이 패키지의 책임을 1~2줄로 적으세요.
-- **엔드포인트**: {endpoints}
-- **흐름**: TODO — 이 패키지를 지나는 호출·이벤트의 경계를 적으세요 (어디서 들어와 어디로 나가나).
-- **외부 IO**: TODO — 이 패키지가 건드리는 바깥 자원을 적으세요 (데이터베이스 / 큐 / 외부 API / 파일).
-- **테스트 진입점**: TODO — 이 패키지를 검증할 때 무엇부터 보나.
-- **함정**: TODO — 이 패키지 특유의 주의사항 3개 이내.
-- **관련 설계 문서 / 결정 기록**: TODO.
-"""
-
-
-def render_package_catalog(target: Path, base_package: Path, packages: list[Path],
-                           stack: str = "jvm") -> str:
-    sections = []
-    for pkg in packages:
-        role = detect_package_role(pkg, stack)
-        endpoints = collect_endpoints(pkg)
-        endpoints_str = ", ".join(f"`{e}`" for e in endpoints) if endpoints else "TODO — 패키지의 외부 노출 endpoint 를 적으세요."
-        sections.append(PACKAGE_SECTION_TEMPLATE.format(
-            name=pkg.name,
-            role=role,
-            endpoints=endpoints_str,
-        ))
-    base_rel = base_package.relative_to(target)
-    return PACKAGE_CATALOG_TEMPLATE.format(
-        base_package=base_rel,
-        total=len(packages),
-        sections="\n".join(sections),
-    )
 
 
 # --- Main -----------------------------------------------------------------
@@ -534,82 +317,155 @@ def select_top_modules(target: Path, modules: list[Path], top_n: int) -> list[Pa
     return [m for _, _, _, m in scored[:top_n]]
 
 
-def run(target: Path, out_dir: Path, top_n: int):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    modules = find_modules(target)
-    # 단일 모듈 분기 — 빌드 매니페스트가 루트에만 있는 경우 패키지 카탈로그 스캐폴드 생성
-    non_root = [m for m in modules if m != Path(".")]
-    if not non_root:
-        layout = stacks.detect_layout(target)
-        if layout is None:
-            # 안내문만 찍고 0으로 끝내지 않는다. 그러면 산출물 0개인 실행과 성공한 실행이
-            # 호출한 쪽에서 똑같아 보인다.
-            print(stacks.unsupported_message(target), file=sys.stderr)
-            return EXIT_NO_ADAPTER
-        base_package = layout.source_root
-        packages = find_packages(base_package)
-        if not packages:
-            print(f"단일 모듈({layout.stack}) — 기준점 {base_package.relative_to(target)} 아래 "
-                  f"코드가 든 디렉토리가 없다. 근거: {layout.evidence}", file=sys.stderr)
-            return EXIT_NO_PACKAGES
-        catalog_path = out_dir / "PACKAGES.md"
-        catalog_path.write_text(
-            render_package_catalog(target, base_package, packages, layout.stack), encoding="utf-8")
-        print(f"단일 모듈({layout.stack}) — 패키지 카탈로그 스캐폴드 생성: {catalog_path}")
-        print(f"  기준점: {base_package.relative_to(target)} (근거: {layout.evidence})")
-        print(f"  감지된 패키지 {len(packages)}개: {', '.join(p.name for p in packages)}")
-        print(f"  → 검토 후 docs/PACKAGES.md 로 복사하세요.")
+def render_module(target: Path, module: Path) -> str:
+    m = str(module)
+    return managed_doc.sign(TEMPLATE.format(
+        signature=SIGNATURE,
+        module_path=m,
+        what_block=render_what_block(m, module_summary_from_root_claude_md(target, m)),
+        design_pointer_block=render_design_pointer_block(target, m),
+        manifest_hint=render_manifest_hint(target, m),
+        how_block=render_how_block(detect_layered_pattern(target / module)),
+    ))
+
+
+def run(target: Path, out_dir: Path, top_n: int, modules_arg: list[str] | None = None,
+        force: bool = False, dry_run: bool = False) -> int:
+    ml = stacks.logical_modules(target)
+    if ml.mode == "no-adapter":
+        # 안내문만 찍고 0으로 끝내지 않는다. 그러면 산출물 0개인 실행과 성공한 실행이
+        # 호출한 쪽에서 똑같아 보인다.
+        print(stacks.unsupported_message(target), file=sys.stderr)
+        return EXIT_NO_ADAPTER
+    if ml.mode == "no-code":
+        layout = ml.layout
+        print(f"단일 모듈({layout.stack}) — 기준점 {layout.source_root.relative_to(target)} 아래 "
+              f"코드가 든 디렉토리가 없다. 근거: {layout.evidence}", file=sys.stderr)
+        return EXIT_NO_PACKAGES
+
+    # 제자리에 쓸 때만 대상 저장소의 무시 규칙을 본다. 초안 폴더에 쓸 때는 상관없다.
+    ignored: dict[str, str] = {}
+    if out_dir == target:
+        rels = [f"{m}/{name}" for m in ml.modules for name in ("AGENTS.md", "CLAUDE.md")]
+        ignored = managed_doc.ignored_paths(target, rels) or {}
+    skip_claude = set() if force else {str(m) for m in ml.modules if f"{m}/CLAUDE.md" in ignored}
+
+    def state_of(m: Path) -> str:
+        return doc_state(out_dir / m, skip_claude=str(m) in skip_claude)
+
+    if modules_arg:
+        known = {str(m) for m in ml.modules}
+        unknown = [m for m in modules_arg if m not in known]
+        if unknown:
+            print(f"오류: 모듈 목록에 없는 경로 {unknown}. 알려진 모듈: {sorted(known)}", file=sys.stderr)
+            return 2
+        selected = [Path(m) for m in modules_arg]
+    else:
+        # 사람이 관리하는 문서·고친 초안이 있거나 옛 구조(심볼릭 링크)인 모듈은 후보가 아니다. 초안이 필요한 곳만 고른다.
+        candidates = []
+        why = {"human": "사람이 관리하는 AGENTS.md·CLAUDE.md 가 있다",
+               "symlink": "AGENTS.md·CLAUDE.md 가 심볼릭 링크다 — audit 보고의 전환 제안 참고"}
+        for m in ml.modules:
+            state = state_of(m)
+            if state == "edited":
+                print(f"건너뜀: {m} ({_edited_reason(out_dir / m)})", file=sys.stderr)
+            elif state in why:
+                print(f"건너뜀: {m} ({why[state]})", file=sys.stderr)
+            else:
+                candidates.append(m)
+        selected = select_top_modules(target, candidates, top_n)
+
+    plans = [(m, out_dir / m) for m in selected]
+    blocked = [(m, d, state_of(m)) for m, d in plans if state_of(m) in ("human", "edited", "symlink")]
+    if blocked and not force:
+        for m, d, state in blocked:
+            if state == "symlink":
+                print(f"중단: {d} 의 AGENTS.md·CLAUDE.md 가 심볼릭 링크다 — 따라 쓰면 링크가 가리키는 파일이 바뀐다.\n"
+                      f"  audit 보고의 전환 제안을 보고 사람이 옮긴다. 링크를 일반 파일로 바꿔 쓰려면 --force.",
+                      file=sys.stderr)
+                continue
+            names = ("AGENTS.md",) if str(m) in skip_claude else ("AGENTS.md", "CLAUDE.md")
+            for name in names:
+                p = d / name
+                if p.exists() and not (name == "CLAUDE.md" and _keeps_claude(p)):
+                    managed_doc.guard_overwrite(p, force=False)
+        return EXIT_REFUSED
+    chosen = {str(m) for m in selected}
+    blocking_ignored = {rel: why for rel, why in ignored.items()
+                        if not managed_doc.is_bridge_path(rel) and rel.rsplit("/", 1)[0] in chosen}
+    if blocking_ignored and not force:
+        print("중단: 만들 AGENTS.md 가 git 에서 무시된다 — 써도 커밋되지 않아 다른 클론에는 없다.", file=sys.stderr)
+        for rel, why in blocking_ignored.items():
+            print(f"  {rel} ({why})", file=sys.stderr)
+        print("  무시 규칙을 고칠지 사람에게 묻는다. 그래도 쓰려면 --force. 아무것도 쓰지 않았다.", file=sys.stderr)
+        return EXIT_IGNORED
+    skipped = [m for m in selected if str(m) in skip_claude]
+    note = managed_doc.bridge_skip_note((target / "CLAUDE.md").exists()
+                                         and "CLAUDE.md" not in (managed_doc.ignored_paths(target, ["CLAUDE.md"]) or {})) \
+        if skipped else ""
+
+    def claude_label(m: Path, d: Path) -> str:
+        if str(m) in skip_claude:
+            return f"CLAUDE.md 는 건너뜀(git 이 무시한다 — {ignored[f'{m}/CLAUDE.md']})"
+        if _keeps_claude(d / "CLAUDE.md"):
+            return f"CLAUDE.md 는 그대로 둠(이미 {managed_doc.AGENTS_IMPORT} 를 가져온다)"
+        return f"+ CLAUDE.md 에 {managed_doc.AGENTS_IMPORT}"
+
+    if not plans:
+        print("쓸 모듈이 없다 — 후보가 모두 빠졌다(위의 건너뜀 참고).")
         return EXIT_OK
-    selected = select_top_modules(target, modules, top_n)
+
+    if dry_run:
+        for m, d in plans:
+            agents = d / "AGENTS.md"
+            if agents.is_symlink():
+                state = "심볼릭 링크를 일반 파일로 바꿔 씀(--force)"
+            elif not agents.exists():
+                state = "새로 만듦"
+            else:
+                state = {"human": "덮어씀(사람 문서 — --force)", "edited": "덮어씀(고친 초안 — --force)"}.get(
+                    managed_doc.draft_state(agents), "덮어씀(자동 생성 초안)")
+            print(f"{state}: {agents} ({claude_label(m, d)})")
+        if note:
+            print(note)
+        return EXIT_OK
+
     written = []
-    for m in selected:
-        module_dir = target / m
-        # 실제 모듈 디렉토리에 CLAUDE.md가 이미 있으면 스킵 (큐레이션된 내용을 덮어쓰지 않음)
-        existing = module_dir / "CLAUDE.md"
-        if existing.exists():
-            print(f"스킵: {m} (CLAUDE.md가 이미 존재)", file=sys.stderr)
-            continue
-        stack = detect_stack_hint(module_dir)
-        layers = detect_layered_pattern(module_dir)
-        file_count = sum(1 for p in module_dir.rglob("*")
-                         if p.is_file() and p.suffix in CODE_EXTS
-                         and not any(part in EXCLUDE_DIRS for part in p.parts))
-        # T-10: 루트 CLAUDE.md / git history 에서 자동 채움
-        summary = module_summary_from_root_claude_md(target, str(m))
-        hot_files = git_hot_files(target, str(m))
-        fix_subjects = git_fix_subjects(target, str(m))
-        content = TEMPLATE.format(
-            module_path=str(m),
-            stack_hint=stack,
-            what_block=render_what_block(str(m), stack, file_count, summary),
-            design_pointer_block=render_design_pointer_block(target, str(m)),
-            how_block=render_how_block(layers),
-            antipattern_block=render_antipattern_block(fix_subjects),
-            hot_files_block=render_hot_files_block(hot_files),
-        )
-        out_path = out_dir / m / "CLAUDE.md"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
-        link_agents_beside(out_path)
-        written.append(out_path)
-    print(f"모듈 CLAUDE.md 초안 {len(written)}개 생성 (AGENTS.md 다리 포함): {out_dir}")
-    for p in written:
-        print(f"  - {p}")
+    for m, d in plans:
+        label = claude_label(m, d)
+        for name in ("AGENTS.md",) if str(m) in skip_claude else ("AGENTS.md", "CLAUDE.md"):
+            p = d / name
+            if p.exists() and not p.is_symlink() and not (name == "CLAUDE.md" and _keeps_claude(p)):
+                managed_doc.guard_overwrite(p, force=force)  # --force 로 사람 문서·고친 초안을 덮을 때 경고를 남긴다
+        write_module_docs(d, render_module(target, m), skip_claude=str(m) in skip_claude)
+        written.append((d / "AGENTS.md", label))
+    print(f"모듈 문서 초안 {len(written)}개: {out_dir}")
+    for p, label in written:
+        print(f"  - {p} ({label})")
+    if note:
+        print(note)
     return EXIT_OK
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="모듈 문서 초안 생성 (AGENTS.md + 가져오는 CLAUDE.md)")
     ap.add_argument("--target", required=True)
-    ap.add_argument("--out", required=True, help="초안 출력 디렉토리 (예: .ai-ready/scaffolds)")
-    ap.add_argument("--top", type=int, default=5, help="스캐폴드할 핫 모듈 개수")
+    ap.add_argument("--out", required=True, help="쓸 루트. 대상 저장소 자체면 제자리에 쓴다")
+    ap.add_argument("--top", type=int, default=5, help="--modules 가 없을 때 고를 모듈 수")
+    ap.add_argument("--modules", help="쉼표로 구분한 모듈 경로. 주면 --top 대신 이 목록만")
+    ap.add_argument("--dry-run", action="store_true", help="쓰지 않고 쓸 파일만 보여 준다")
+    managed_doc.add_force_arg(ap)
     args = ap.parse_args()
     target = Path(args.target).resolve()
     out_dir = Path(args.out).resolve()
     if not target.is_dir():
         print(f"오류: 대상이 디렉토리가 아님: {target}", file=sys.stderr)
         sys.exit(2)
-    sys.exit(run(target, out_dir, args.top))
+    modules = [m.strip().strip("/") for m in args.modules.split(",") if m.strip()] if args.modules else None
+    rc = run(target, out_dir, args.top, modules, force=args.force, dry_run=args.dry_run)
+    if rc != EXIT_OK:
+        print(f"종료 코드 {rc}", file=sys.stderr)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

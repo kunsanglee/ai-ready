@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -26,6 +28,19 @@ EXCLUDE_DIRS = {
     ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
     "__pycache__", ".venv", "venv", "vendor", ".next", "out", "coverage",
     ".mypy_cache", ".pytest_cache", ".tox", "bin", "obj",
+    ".turbo", "worktrees", ".ai-ready",
+}
+
+# 모듈 경계를 알리는 빌드 매니페스트. 루트가 아닌 디렉토리에 하나라도 있으면 멀티 모듈로 본다.
+MODULE_MANIFESTS = {
+    "build.gradle.kts", "build.gradle", "pom.xml",
+    "package.json", "Cargo.toml", "go.mod", "pyproject.toml", "setup.py",
+}
+
+CODE_EXTS = {
+    ".kt", ".java", ".scala", ".groovy",
+    ".ts", ".tsx", ".js", ".jsx", ".mjs",
+    ".py", ".rs", ".go", ".rb", ".php", ".cs", ".swift",
 }
 
 # 루트 매니페스트 — 어댑터가 못 맞췄을 때 무엇을 봤는지 사람에게 말해 주기 위한 목록.
@@ -205,3 +220,195 @@ def unsupported_message(target: Path) -> str:
         f"  이 스택을 지원하려면 skills/audit/scripts/stacks.py 의 ADAPTERS 에 어댑터를 더한다. "
         f"어댑터는 '논리 모듈의 부모 디렉토리가 어디인가' 하나만 답하면 된다."
     )
+
+
+# --- 모듈 목록 ---------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ModuleLayout:
+    """모듈 CLAUDE.md 를 둘 자리 목록.
+
+    mode:
+      - "multi": 루트가 아닌 디렉토리에 빌드 매니페스트가 있다. 그 디렉토리들이 모듈이다.
+      - "single": 매니페스트가 루트에만 있고, 스택 어댑터가 찾은 기준점의 직속 하위가 모듈이다.
+      - "no-adapter": 매니페스트가 루트에만 있는데 맞는 스택 어댑터가 없다.
+      - "no-code": 어댑터는 맞았는데 기준점 아래에 코드가 든 디렉토리가 없다.
+    """
+
+    mode: str
+    modules: tuple[Path, ...] = ()  # target 기준 상대 경로
+    layout: SourceLayout | None = None
+
+
+def _walk(target: Path):
+    for dirpath, dirnames, filenames in os.walk(target):
+        dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS)
+        yield Path(dirpath), dirnames, filenames
+
+
+def find_manifest_modules(target: Path) -> list[Path]:
+    """빌드 매니페스트가 있는 디렉토리(루트 포함, target 기준 상대 경로)."""
+    out = []
+    for dirpath, _, filenames in _walk(target):
+        if any(f in MODULE_MANIFESTS for f in filenames):
+            out.append(dirpath.relative_to(target))
+    return sorted(out, key=str)
+
+
+def _has_code(directory: Path) -> bool:
+    for dirpath, _, filenames in _walk(directory):
+        if any(Path(f).suffix in CODE_EXTS for f in filenames):
+            return True
+    return False
+
+
+def find_packages(source_root: Path) -> list[Path]:
+    """기준점의 직속 하위 디렉토리 중 코드 파일이 하나라도 있는 것 = 논리 모듈."""
+    if not source_root.is_dir():
+        return []
+    out = []
+    for child in sorted(source_root.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or child.name in EXCLUDE_DIRS or child.name.startswith("."):
+            continue
+        if _has_code(child):
+            out.append(child)
+    return out
+
+
+def logical_modules(target: Path) -> ModuleLayout:
+    """모듈 CLAUDE.md 를 둘 자리를 정한다. audit 과 scaffold 가 같은 답을 쓰도록 여기 한 곳에 둔다."""
+    non_root = [m for m in find_manifest_modules(target) if m != Path(".")]
+    if non_root:
+        return ModuleLayout("multi", tuple(non_root))
+    layout = detect_layout(target)
+    if layout is None:
+        return ModuleLayout("no-adapter")
+    packages = find_packages(layout.source_root)
+    if not packages:
+        return ModuleLayout("no-code", (), layout)
+    return ModuleLayout("single", tuple(p.relative_to(target) for p in packages), layout)
+
+
+# --- 확인 명령 ---------------------------------------------------------------
+#
+# verify.sh 와 루트 CLAUDE.md 의 "확인 명령" 이 쓰는 명령을 루트 매니페스트에서 고른다.
+# 못 고른 역할은 빈 채로 둔다 — 지어낸 명령은 매번 실패하는 검사가 되어 사람이 그 검사를 끄게 만든다.
+
+_GRADLE_FILES = ("build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle")
+
+
+@dataclass(frozen=True)
+class Commands:
+    build_system: str
+    typecheck: str = ""
+    lint: str = ""
+    test: str = ""
+    notes: tuple[str, ...] = field(default_factory=tuple)
+
+    def checks(self) -> list[tuple[str, str]]:
+        """(역할, 명령) — 빈 역할은 뺀다. 순서는 싼 것부터."""
+        return [(role, cmd) for role, cmd in
+                (("typecheck", self.typecheck), ("lint", self.lint), ("test", self.test)) if cmd]
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def npm_scripts(target: Path) -> dict[str, str]:
+    try:
+        pkg = json.loads(_read(target / "package.json") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    scripts = pkg.get("scripts") if isinstance(pkg, dict) else None
+    return {str(k): str(v) for k, v in scripts.items()} if isinstance(scripts, dict) else {}
+
+
+def npm_runner(target: Path) -> str:
+    if (target / "pnpm-lock.yaml").is_file():
+        return "pnpm"
+    if (target / "yarn.lock").is_file():
+        return "yarn"
+    return "npm"
+
+
+def _is_npm_test_stub(body: str) -> bool:
+    # `npm init` 이 넣는 자리표시("no test specified" && exit 1)는 테스트가 아니다.
+    low = body.lower()
+    return "no test specified" in low and "exit 1" in low
+
+
+def _node_commands(target: Path) -> Commands:
+    pm = npm_runner(target)
+    scripts = npm_scripts(target)
+    run = (lambda s: f"{pm} run {s}")
+    typecheck = next((run(n) for n in ("typecheck", "type-check", "tsc", "check-types") if n in scripts), "")
+    notes = []
+    if not typecheck and (target / "tsconfig.json").is_file():
+        typecheck = "npx tsc --noEmit"
+        notes.append("typecheck: package.json 에 타입 검사 스크립트가 없어 tsconfig.json 으로 tsc 를 골랐다")
+    lint = run("lint") if "lint" in scripts else ""
+    test = f"{pm} test" if "test" in scripts and not _is_npm_test_stub(scripts["test"]) else ""
+    return Commands(pm, typecheck, lint, test, tuple(notes))
+
+
+def _python_commands(target: Path) -> Commands:
+    pyproject = _read(target / "pyproject.toml").lower()
+    setup_cfg = _read(target / "setup.cfg").lower()
+    typecheck = ""
+    if ("[tool.mypy" in pyproject or "[mypy" in setup_cfg
+            or (target / "mypy.ini").is_file() or (target / ".mypy.ini").is_file()):
+        typecheck = "mypy ."
+    elif "[tool.pyright" in pyproject or (target / "pyrightconfig.json").is_file():
+        typecheck = "pyright"
+    lint = ""
+    if "[tool.ruff" in pyproject or (target / "ruff.toml").is_file() or (target / ".ruff.toml").is_file():
+        lint = "ruff check ."
+    elif (target / ".flake8").is_file() or "[flake8]" in setup_cfg:
+        lint = "flake8"
+    if ("pytest" in pyproject or (target / "pytest.ini").is_file()
+            or (target / "conftest.py").is_file() or (target / "tests" / "conftest.py").is_file()):
+        test = "pytest"
+    else:
+        test = "python3 -m unittest"
+    return Commands("python", typecheck, lint, test)
+
+
+def detect_commands(target: Path) -> Commands:
+    """루트 매니페스트로 빌드 시스템을 고르고 typecheck·lint·test 명령을 추론한다."""
+    has = (lambda f: (target / f).is_file())
+    if any(has(f) for f in _GRADLE_FILES):
+        g = "./gradlew" if has("gradlew") else "gradle"
+        text = "".join(_read(target / f) for f in _GRADLE_FILES).lower()
+        lint = ""
+        if "ktlint" in text:
+            lint = f"{g} ktlintCheck"
+        elif "spotless" in text:
+            lint = f"{g} spotlessCheck"
+        elif "detekt" in text:
+            lint = f"{g} detekt"
+        return Commands("gradle", f"{g} testClasses", lint, f"{g} test")
+    if has("pom.xml"):
+        mvn = "./mvnw" if has("mvnw") else "mvn"
+        pom = _read(target / "pom.xml").lower()
+        lint = ""
+        if "spotless-maven-plugin" in pom:
+            lint = f"{mvn} spotless:check"
+        elif "checkstyle" in pom:
+            lint = f"{mvn} checkstyle:check"
+        return Commands("maven", f"{mvn} -q test-compile", lint, f"{mvn} test")
+    if has("package.json"):
+        return _node_commands(target)
+    if has("Cargo.toml"):
+        return Commands("cargo", "cargo check --all-targets", "cargo clippy --all-targets", "cargo test")
+    if has("go.mod"):
+        lint = "golangci-lint run" if any(
+            has(f) for f in (".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json")) \
+            else "go vet ./..."
+        return Commands("go", "go build ./...", lint, "go test ./...")
+    if has("pyproject.toml") or has("setup.py") or has("setup.cfg"):
+        return _python_commands(target)
+    return Commands("unknown")
