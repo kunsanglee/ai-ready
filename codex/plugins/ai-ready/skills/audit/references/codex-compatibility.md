@@ -1,13 +1,10 @@
-# Codex adapter boundary
+# Codex 어댑터의 범위
 
-The Codex adapter supports audit, reviewed documentation apply, explicit
-freshness checks, bounded read-only review, and Codex-native unattended
-maker/checker loops (build, lessons). The loops run through
-Codex's own session delegation and the shared deterministic `_loop-engine`; they
-do not install a Claude Stop hook and do not reuse Claude-only agents or hooks.
+Codex 쪽은 audit(빈틈 보고서), apply(승인한 문서·검증 장치 적용), lessons(교훈 초안)를 지원한다.
 
-- Treat `AGENTS.md` as the preferred guidance surface and accept `CLAUDE.md` as a compatible source or bridge.
-- Preserve generated `.ai-ready/` history and drafts, but require per-file approval before touching live guidance.
-- Use a project-owned CI or pre-commit implementation if mechanical freshness enforcement is needed.
-- Do not copy plugin caches, credentials, global settings, or Claude agent configuration into this adapter. The loop skills orchestrate through Codex session delegation with inline role contracts, not by importing Claude agent definitions.
-- The loops make no verdict in the model: severity and the PASS/RETRY/AWAIT_USER decision come only from `_loop-engine`, and the loops stop at an uncommitted working tree (a human finishes the commit and PR).
+- `AGENTS.md` 를 우선 문서로 쓰고, `CLAUDE.md` 는 호환 원본이나 심링크로 받아들인다.
+- audit 스크립트는 Claude 트리와 같은 파일을 복사해 쓴다(`build/drift-test.sh` 가 바이트 동일을 검사한다).
+  예외는 Stop hook 설치기 하나다. `.claude/settings.json` 을 고치는 Claude Code 전용 도구라 이 번들에 넣지 않는다.
+- `scripts/verify.sh` 와 `scripts/check_docs.py` 는 대상 프로젝트에 복사되는 일반 스크립트라 Codex 에서도 쓸 수
+  있다. 자동 실행이 필요하면 프로젝트가 소유한 CI 나 pre-commit 에 넣는다.
+- 플러그인 캐시·자격 증명·전역 설정·Claude 에이전트 정의를 이 어댑터로 복사하지 않는다.

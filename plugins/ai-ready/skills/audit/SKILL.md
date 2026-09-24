@@ -1,211 +1,130 @@
 ---
 name: audit
-description: Score a codebase for AI-readiness against a 7-category 100-point rubric and generate a markdown report, an HTML dashboard, module-level CLAUDE.md scaffolds, and an ANTIPATTERNS.md seed extracted from git history. Use this skill whenever the user wants to assess how well their codebase is set up for AI agents (Claude/Codex/Gemini), generate per-module CLAUDE.md files, extract anti-patterns, or build a navigation map for a large codebase — even if they don't explicitly say the word "audit". Trigger on phrases like "ai-ready audit", "AI 준비도", "코드베이스 감사", "score my codebase for AI agents", "generate module CLAUDE.md", "anti-patterns from git history", "AI 친화 코드베이스", "make this repo navigable for Claude", or "we have no map for AI".
+description: 저장소를 AI 에이전트로 작업하기 좋은 상태인지 점검해 점수 없는 빈틈 보고서를 만든다. 스크립트가 사실(루트·모듈 CLAUDE.md, docs/design 결정 기록, 검증 문서, lint·타입체커·테스트·아키텍처 테스트·pre-commit·CI 설정, CI 가 그 검사를 실제로 돌리는지, 문서 속 규칙 문장)을 모으고, 모델이 규칙 문장마다 이미 강제됨 / 싸게 강제 가능 / 강제 불가 / 코드와 어긋남 으로 나눠 권고를 낸다. Use when the user asks for an ai-ready audit, AI 준비도 점검, 에이전트용 문서 점검, "which of our documented rules are actually enforced", "문서 규칙 중 lint 로 옮길 것", "CI 가 테스트를 돌리나", module CLAUDE.md gaps, or a gap report before running ai-ready:apply.
 ---
 
-# AI-Ready Codebase Audit
+# ai-ready audit — 빈틈 보고서
 
-Turns a codebase into an AI-navigable one.
+에이전트가 이 저장소에서 일할 때 필요한 문서와 강제 수단이 있는지, 문서에 적힌 규칙 중 무엇이 이미 도구로
+강제되고 무엇이 문서에만 있는지를 사실로 보여 준다. 점수는 매기지 않는다.
 
-## What This Skill Produces
+기준은 하나다. **강제할 수 있는 규칙은 lint·타입·테스트·CI·hook 으로 잡고, 문서에는 강제할 수 없는 것(왜·의도·
+어디에 무엇이 있나)만 남긴다.** 강제 수단은 강한 것부터 고른다.
 
-For a target codebase you point it at, this skill creates an `.ai-ready/` directory containing:
+1. 잘못된 상태를 타입·구조로 표현할 수 없게 만든다.
+2. CI 에서 실패하는 lint·금지 API 규칙.
+3. 정석 헬퍼(옳은 길을 하나로 만들어 둔 함수·모듈).
+4. 런타임 검사.
+5. 테스트.
+6. 마지막으로 문서.
 
-1. **`audit.json`** — raw scores (per-category, per-rule, evidence). Includes `single_module_mode: bool` + `package_catalog: path|null` so consumers know which layout was scored.
-2. **`audit-report.md`** — human-readable report with ROI-prioritized action list
-3. **`README.md`** — auto-generated guide for `.ai-ready/` consumers (artifact map, plugin install, score interpretation, re-run instructions)
-4. **`dashboard.html`** — self-contained HTML dashboard with score gauge, category bars, and trend sparkline (open in browser)
-5. **`history/{timestamp}.json`** — every run is archived here so the dashboard can render a trend line. Do not delete. If the archive can't be written (the `history/` slot is taken by a file, permissions), the run prints a warning to stderr and omits the `archive:` line from its summary instead of claiming a file it didn't write; scoring itself still succeeds and the exit code stays 0 (v1.5.3).
-6. **`scaffolds/...`** — drafts for the missing docs (see "Layout-aware scaffolds" below)
-7. **`scaffolds/ANTIPATTERNS.md`** — seed anti-patterns extracted from git history (clustered hotspots)
-8. **`hooks/freshness_check.sh`** (+ `hooks/freshness_check.py`) — copied from the plugin so a project's `.claude/settings.json` Stop hook can reference it as `$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh`; the `.py` runner is copied alongside so the hook works without `CLAUDE_PLUGIN_ROOT`
+## 만드는 것
 
-### Layout-aware scaffolds
+대상 저장소의 `.ai-ready/` 아래 두 파일만 쓴다. 소스·문서·설정은 건드리지 않는다.
 
-The audit auto-detects the layout from build manifests and switches scoring + scaffold output:
-
-| Layout | Detection | Module concept | Scaffold output | Module-level doc |
-|---|---|---|---|---|
-| **Multi-module** | Build manifest in ≥1 non-root directory | Each manifest-bearing dir = a module | `scaffolds/<module>/CLAUDE.md` per hot module | Per-module `CLAUDE.md` |
-| **Single-module** | Build manifest only at repo root | Each direct child of the **source root** = a logical module. Where the source root sits is stack-specific — see "Stack adapters" below | `scaffolds/PACKAGES.md` (one catalog for all packages) | Single `docs/PACKAGES.md` catalog |
-
-> Single-module reasoning: spawning N package-level `CLAUDE.md` files for a single Gradle/Maven/npm module fragments context and adds maintenance burden. A single `docs/PACKAGES.md` catalog (lazy-loaded from root `CLAUDE.md`) covers the same ground while keeping the doc surface small. The audit rubric scores them on parallel rules — see `RUBRIC.md` "Layout-aware scoring".
-
-### Stack adapters (`scripts/stacks.py`)
-
-"Where do logical modules start?" has a different answer per language, so the answer lives in one adapter registry that both `audit.py` and `scaffold.py` consume. One registry is the point: with a copy per call site, fixing only one makes scoring and scaffolding read different directories.
-
-| Stack | Detected by | Source root |
+| 파일 | 누가 쓰나 | 내용 |
 |---|---|---|
-| `jvm` | `src/main/kotlin` or `src/main/java` | dir holding `*Application.kt|java`; if the project has none (a library), the package chain is walked down to where it branches |
-| `node` | root `package.json` | first of `src/`, `lib/`, `app/` |
-| `python` | `pyproject.toml` / `setup.py` / `setup.cfg` | the distribution package under `src/`, or the single root package with `__init__.py` |
-| `go` | `go.mod` | `internal/` or `pkg/`, else the module root |
-| `rust` | `Cargo.toml` | `src/` |
+| `.ai-ready/gaps.md` | `scripts/audit.py` | 사실 세 절: 문서 존재 · 강제 수단 · 규칙 문장 목록 |
+| `.ai-ready/audit-report.md` | 모델(이 스킬) | 규칙 문장 A/B/C/D 분류 표와 권고. `ai-ready:apply` 가 이 파일을 읽는다 |
 
-Adapters are tried in that order, so a Gradle project carrying a frontend `package.json` still resolves as `jvm`.
-
-**Adding a stack**: append one `(name, fn)` entry to `ADAPTERS` in `scripts/stacks.py`. The function answers one question — which directory's children are the logical modules — and returns `SourceLayout` or `None`. Call sites iterate the registry, so nothing else changes.
-
-**An unknown stack fails loudly, it does not pass quietly.** `scaffold.py` exits `3` when no adapter matches and `4` when the source root holds no code, naming what it saw and where to add the adapter. A note plus exit `0` made a run that produced nothing indistinguishable from a run that succeeded.
-
-## Inputs You Need
-
-- **Target codebase path** (absolute path). Example: `/Users/me/projects/my-api`
-- **(Optional)** Top N modules to scaffold (default: 5)
-- **(Optional)** Lookback days for git anti-pattern extraction (default: 180)
-
-## How To Run
-
-The skill ships a baseline four-step run plus several optional action scripts (see "Additional Action Scripts" below). All scripts are stdlib-only — **no third-party dependencies**. Run the four baseline scripts in this order:
+## 실행
 
 ```bash
-# The four steps are one gate, not four independent commands. Without this line a step that dies
-# (measured: step 3 exits 4 on a target that is not a git repository) leaves step 4 running and the
-# block still finishes with exit code 0, so the caller reads a partial run as a successful one.
 set -euo pipefail
-# **`$CLAUDE_PLUGIN_ROOT` does not exist in the Bash tool's shell** (measured) — using it makes
-# SKILL_DIR="/skills/audit", a path that silently does not exist. Paste the "Base directory for
-# this skill" value printed at the top of this skill body instead.
-SKILL_DIR="<paste the Base directory from the top of this skill body>"
-[ -f "$SKILL_DIR/scripts/audit.py" ] || { echo "audit: scripts not found under $SKILL_DIR — check the base directory" >&2; exit 65; }
-TARGET="<absolute path to target codebase>"
-OUT="$TARGET/.ai-ready"
-mkdir -p "$OUT"
-
-# 1) Score the codebase
-python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$OUT"
-
-# 2) Generate scaffolds (auto-branches by layout):
-#    - Multi-module → per-module CLAUDE.md drafts (top N hot modules)
-#    - Single-module → docs/PACKAGES.md catalog draft (one file, all packages)
-python3 "$SKILL_DIR/scripts/scaffold.py" --target "$TARGET" --out "$OUT/scaffolds" --top 5
-
-# 3) Extract anti-patterns from git history (last 180 days)
-python3 "$SKILL_DIR/scripts/extract_antipatterns.py" --target "$TARGET" --out "$OUT/scaffolds/ANTIPATTERNS.md" --days 180
-
-# 4) Render HTML dashboard from audit.json
-python3 "$SKILL_DIR/scripts/dashboard.py" --audit "$OUT/audit.json" --out "$OUT/dashboard.html"
+# Bash 도구의 셸에는 $CLAUDE_PLUGIN_ROOT 가 없다. 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 넣는다.
+SKILL_DIR="<이 스킬 본문 첫머리의 Base directory>"
+[ -f "$SKILL_DIR/scripts/audit.py" ] || { echo "audit: $SKILL_DIR 아래 스크립트가 없다 — base directory 확인" >&2; exit 65; }
+TARGET="<대상 저장소 절대 경로>"
+python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$TARGET/.ai-ready/gaps.md"
 ```
 
-After it finishes, open `$OUT/dashboard.html` to see the score, then review `$OUT/audit-report.md` for the ROI action list.
+- 규칙 문장은 기본 400줄에서 자른다. 잘렸다고 보고서 끝에 적히면 `--max-rules` 로 늘린다. 잘릴 때는 루트·모듈의
+  `CLAUDE.md`/`AGENTS.md` → `docs/` → 나머지 → `.claude/` 같은 도구 폴더 순으로 남는다.
+- `--json` 을 주면 같은 사실을 JSON 으로 낸다. 표가 너무 길어 읽기 어려울 때 쓴다.
 
-## Additional Action Scripts
+## 스크립트가 보는 것
 
-To raise the score by executing ROI actions directly, use the scripts below. The companion `ai-ready:apply` skill invokes them automatically, but they also work standalone — useful when you want to apply only a single action.
+**1. 문서 존재** — 있음·없음·길이 과다만 적는다.
 
-| Script | ROI action it covers | What it does |
-|--------|---------------------|--------------|
-| `gen_index.py` | "Create docs/INDEX.md (preferred) / wiki/index.md" | Builds a single-line summary index from every CLAUDE.md / AGENTS.md found. **v0.2.0+**: if `<target>/.ai-ready/config.json` exists, switches to *frontmatter-driven grouping* — feature/module sub-groups + 한영 cross-reference + ADR supersedes graph. |
-| `inject_module_map.py` | "Add module map to root CLAUDE.md" | Injects an auto-regenerable "## 모듈 맵" section into root CLAUDE.md (idempotent, marker-fenced). **v0.8.8+**: the per-module excerpt length comes from config `module_map.root_stub_limit` (default 10, unchanged); 0 keeps only the catalog link — the root doc is always-loaded and each module's summary already lives in its own CLAUDE.md, so the excerpt is duplicate context where enough paths are referenced elsewhere. Setting 0 prints a notice because audit's "root doc references 3+ module/doc paths" rule counts that listing in some repos. |
-| `inject_lazy_load_index.py` | "Thin index pattern" | Injects a lazy-load trigger table into root CLAUDE.md, mapping triggers to `docs/*.md`. **v0.2.0+**: splits into `lazy-load:user-begin/user-end` (never overwritten) + `lazy-load:auto-begin/auto-end` (regenerated). Legacy single-marker / unmarked tables are migrated safely. Config's `lazy_load_triggers.detect` adds project-specific rules; `override_hardcoded` removes built-in rules (e.g., when migrating `docs/decisions` → `docs/adr`). **v0.8.7+**: a detected row is dropped automatically when the user section already links the same document (trailing slashes normalized) — the root doc is always-loaded, so listing one doc in both tables costs the duplicate every session; if every detected doc is already covered the auto block renders a one-line note instead of an empty table. |
-| `extract_section.py --kind testing` | "Split TESTING.md" | Lifts the testing section out of CLAUDE.md into a dedicated file |
-| `extract_section.py --kind naming` | "Split NAMING.md" | Lifts the naming/conventions section out into NAMING.md |
-| `install_hook.py` | "Install freshness Stop hook" | Adds the hook to `.claude/settings.json` (idempotent) |
-| `gen_arch_diagram.py` | "Generate ARCHITECTURE.md with Mermaid" | Parses gradle / npm dependencies and emits a Mermaid graph |
-| `scaffold.py` | "Module CLAUDE.md coverage" | Drafts CLAUDE.md for the top-N hot modules — fills module summary, dependency list, and hot-file list automatically |
-| `extract_antipatterns.py` | "Seed ANTIPATTERNS.md" | Clusters `fix` / `hotfix` / `revert` (and Korean equivalents) commits by keyword and module hotspot |
+- 루트 `CLAUDE.md` (8,000바이트를 넘으면 길이 과다), `AGENTS.md` 가 `CLAUDE.md` 심링크인지
+- 모듈별 `CLAUDE.md` (80줄을 넘으면 길이 과다). 모듈은 아래 "모듈을 어떻게 정하나" 로 정한다
+- `docs/design/{domain}.md` ↔ `{domain}.decisions.md` 짝, `docs/design/README.md`,
+  `.gitattributes` 의 `docs/design/*.decisions.md merge=union`
+- 검증 문서(`docs/VERIFICATION.md`), `scripts/verify.sh`, `scripts/check_docs.py`, Stop hook 이 verify.sh 를
+  부르는지, 안티패턴 원장(`docs/ANTIPATTERNS.md`)
 
-Scripts that modify existing files (`inject_module_map.py`, `inject_lazy_load_index.py`, `install_hook.py`) are idempotent. `inject_module_map.py` and `inject_lazy_load_index.py` expose a `--dry-run` option so changes can be previewed first; `install_hook.py` has no `--dry-run` (it offers `--uninstall` to remove the hook instead).
+**2. 강제 수단**
 
-**Overwrite guard.** Every script that writes a document (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `extract_antipatterns`) refuses to clobber a file that lacks the ai-ready generation signature — a document a human has taken over. It exits `3` and says so; `--force` overrides. This matters most for `extract_antipatterns`, whose output is *by design* a draft a human prunes and adopts: the convention is to point `--out` at `.ai-ready/scaffolds/`, but a convention is not a mechanism, and pointing it at an adopted `docs/ANTIPATTERNS.md` would otherwise replace curated entries with a git-history dump. The generated seed carries the signature itself, so re-running an audit over its own previous output stays fine. `extract_antipatterns` also exits `4` when it cannot read git at all (the target is not a repository, or `git` failed) — that is a different outcome from "read the history and found nothing", and it writes no document.
+- 설정 파일·매니페스트로 감지한 lint·formatter·타입체커·테스트 러너·아키텍처 테스트(ArchUnit·Konsist·
+  dependency-cruiser·eslint-plugin-boundaries·import-linter·go-arch-lint 등)
+- 매니페스트에서 추론한 typecheck·lint·test 명령
+- **CI 가 그 검사를 실제로 부르는지.** CI 설정 파일(GitHub Actions·GitLab·Bitbucket Pipelines·Jenkinsfile 등) 안에서
+  명령 줄을 찾아 `예`·`아니오`·`간접` 으로 적는다. `간접` 은 `./gradlew build` 처럼 그 검사를 포함할 수 있는 상위
+  태스크만 보인다는 뜻이라 사람이 확인해야 한다. CI 설정이 저장소에 없으면 `CI 없음` 이다(저장소 밖 Jenkins 등은
+  스크립트가 볼 수 없다)
+- CI·Dockerfile 에서 테스트를 빼거나 실패를 삼키는 줄: `-x test`, `-DskipTests`, `continue-on-error: true`,
+  `allow_failure: true`, `|| true`, `--no-verify`
+- pre-commit 류(`.pre-commit-config.yaml`·husky·lefthook)와 `.claude/settings.json` 의 hook. hook 이 가리키는
+  스크립트가 없으면 따로 표시한다
 
-**`--json` facts mode (v0.5.0+)**: the doc-touching scripts (`gen_index`, `gen_arch_diagram`, `extract_section`, `inject_module_map`, `inject_lazy_load_index`) accept `--json` to emit the gathered facts (doc list + summaries, dependency edges, matched sections, module summaries, present triggers) as JSON **without writing any document**. This is how `ai-ready:apply` maintains docs surgically — the script supplies read-only facts and the AI adds/updates only what changed while preserving human curation, instead of wholesale-overwriting. The `--out` write mode remains for bootstrapping a doc that does not exist yet.
+**3. 규칙 문장** — "금지·반드시·하지 마·must·never·DO NOT" 같은 표현이 든 줄과, 제목에 "규칙·원칙·금지·
+안티패턴·rules" 가 든 절 아래의 목록 항목을 `파일:줄` 로 뽑는다. 코드 블록 안은 뺀다. **분류는 하지 않는다.**
 
-## Project Config (`.ai-ready/config.json`) — v0.2.0+
+### 모듈을 어떻게 정하나 (`scripts/stacks.py`)
 
-Optional file at `<target>/.ai-ready/config.json` enables frontmatter-aware behavior. Without it, the v0.1.x defaults apply (backward compatible — no changes for existing users).
+루트가 아닌 디렉토리에 빌드 매니페스트(`build.gradle(.kts)`·`pom.xml`·`package.json`·`Cargo.toml`·`go.mod`·
+`pyproject.toml`·`setup.py`)가 있으면 그 디렉토리들이 모듈이다. 루트에만 있으면 스택 어댑터가 찾은 소스 기준점의
+직속 하위 디렉토리가 모듈이다.
 
-```json
-{
-  "version": 1,
-  "index": {
-    "groups": [
-      { "id": "adr", "title": "ADR (`docs/adr/`)",
-        "match": { "path_prefix": "docs/adr/" }, "sub_group_by": "feature" }
-    ]
-  },
-  "rubric": { "decision_records": { "dir_hints": ["docs/design"] } }
-}
-```
-
-Every section is optional. Sections not shown here are documented where they are read — the full schema lives in `scripts/config_loader.py`.
-
-What it changes:
-1. `gen_index.py` switches from hardcoded categories (claude / guides / docs-decisions / docs-other) to *config-defined groups* with frontmatter `sub_group_by` (e.g., feature/module), plus optional `cross_reference` and `evolution_graph` sections.
-2. `inject_lazy_load_index.py` adds project-specific triggers (`detect`) and removes obsolete built-in ones (`override_hardcoded`).
-3. Each .md file's YAML frontmatter is parsed via the bundled stdlib-only parser (`frontmatter_parser.py`) — no PyYAML dependency added.
-4. **`audit.py` scoring respects the `rubric` section (v0.3.0+)**: `decision_records.dir_hints` makes the "Architecture decisions captured" rule credit a consolidated decision directory such as `docs/design/` (when a project absorbed ADR/PRD/api-doc into one living doc); `api_contracts.build_deps` makes the "Cross-module API contracts documented" rule credit code-gen dependencies such as springdoc/springfox that emit OpenAPI at runtime. Separately — no config needed — the "Mechanical verification hook" rule now also credits project-level `.claude/settings.json` hooks that run lint/test/format on edit/commit, recognizing the AI-agent harness as a mechanical verification gate.
-
-Full schema is documented in `skills/audit/scripts/config_loader.py`.
-
-## When To Use Each Output
-
-- **`audit-report.md`** — read first. Tells you *what* to fix and *in what order*.
-- **`dashboard.html`** — share with team / track progress over time.
-- **`scaffolds/<module>/CLAUDE.md`** (multi-module) — review, edit, then move into the actual module directory.
-- **`scaffolds/PACKAGES.md`** (single-module) — review, fill in the `TODO` lines, then move to `docs/PACKAGES.md` and reference it from root `CLAUDE.md` lazy-load.
-- **`scaffolds/ANTIPATTERNS.md`** — review, prune false positives, then move to repo root.
-- **`hooks/freshness_check.sh`** — install as a Claude Code Stop hook (instructions below).
-
-## Installing the Freshness Hook
-
-After reviewing the generated scaffold, add this to the target project's `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.ai-ready/hooks/freshness_check.sh" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The hook runs at session end, compares mtimes between source files and their nearest CLAUDE.md, and writes a warning if the source has drifted ahead by >7 days (configurable inside the script). The audit copies both `freshness_check.sh` and its `freshness_check.py` runner into `.ai-ready/hooks/`, so the hook is self-contained and does not depend on `CLAUDE_PLUGIN_ROOT`.
-
-## The 7-Category Rubric (100 points)
-
-See `RUBRIC.md` for the full criteria and detection rules. Summary:
-
-| # | Category | Points |
+| 스택 | 감지 | 기준점 |
 |---|---|---|
-| 1 | Navigation (root → modules) | 15 |
-| 2 | Context Document Quality | 20 |
-| 3 | Tribal Knowledge & Anti-patterns | 15 |
-| 4 | Cross-module Dependency Tracking | 15 |
-| 5 | Verification Quality Gates | 10 |
-| 6 | Freshness Auto-Maintenance | 10 |
-| 7 | Outcome Metrics | 15 |
+| `jvm` | `src/main/kotlin` 또는 `src/main/java` | `*Application.kt`·`*Application.java` 가 있는 패키지. 없으면(라이브러리) 패키지가 갈라지는 곳 |
+| `node` | 루트 `package.json` | `src/`·`lib/`·`app/` 중 먼저 있는 것 |
+| `python` | `pyproject.toml`·`setup.py`·`setup.cfg` | `src/` 아래 배포 패키지, 또는 `__init__.py` 가 있는 루트 패키지 하나 |
+| `go` | `go.mod` | `internal/` 또는 `pkg/`, 없으면 모듈 루트 |
+| `rust` | `Cargo.toml` | `src/` |
 
-**Grade bands**: 0-39 = AI-blind, 40-59 = AI-aware, 60-79 = AI-enabled, 80-89 = AI-maximalist, 90-100 = Agentic-ready.
+같은 판단을 `audit.py` 와 `scaffold.py` 가 함께 쓴다. 스택을 늘리려면 `stacks.py` 의 `ADAPTERS` 에 한 줄을 더한다.
 
-## Detection Heuristics (Quick Reference)
+## 모델이 할 일 — 규칙 분류와 권고
 
-The audit script looks at:
-- Presence and size of `CLAUDE.md` / `AGENTS.md` (root + per module). The root doc's always-loaded cost is measured in bytes; when both root files exist, both are measured and the worse one sets the score (v1.5.3)
-- Presence of `ANTIPATTERNS.md`, `ARCHITECTURE.md`, `ADR/`, `docs/decisions/`
-- Hooks in `.git/hooks/`, `.husky/`, `.claude/hooks/`, `.claude/settings.json`
-- CI configs: `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/`, `Jenkinsfile`
-- Build manifest signals to identify modules: `build.gradle.kts`, `build.gradle`, `pom.xml`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, `Package.swift` (Swift Package Manager), `Podfile` (CocoaPods)
-- Recent git activity to find "hot" modules
-- "DO NOT" / "절대" / "금지" / "MUST NOT" markers in CLAUDE.md content
+`gaps.md` 를 읽은 뒤, 3절의 규칙 줄마다 아래 넷 중 하나로 나눈다. **문장만 보고 정하지 않는다.** A 와 D 는 코드·
+설정을 `Grep`/`Read` 로 확인한 근거가 있어야 하고, 확인하지 못했으면 "확인 필요" 로 남긴다.
 
-## Limitations
+| 분류 | 뜻 | 근거로 적을 것 | 권고 |
+|---|---|---|---|
+| **A 이미 강제됨** | lint 규칙·테스트·타입·CI 가 이미 이 규칙을 어기면 실패한다 | 규칙 이름이나 테스트 경로, 그리고 CI 가 그것을 돌리는지(2절) | 문서에서는 본문을 줄이고 "→ <규칙·테스트>" 한 줄만 남긴다. CI 가 안 돌리면 그 사실을 따로 권고 |
+| **B 싸게 강제 가능** | 이 스택의 도구로 규칙 하나·테스트 하나를 더하면 강제된다 | 쓸 도구와 규칙 종류(예: eslint `no-restricted-imports`, ArchUnit 의존 규칙, ruff `banned-api`) | 강제 초안 후보. `ai-ready:apply` 가 초안을 만든다 |
+| **C 강제 불가** | 의도·트레이드오프·판단이 필요해 도구로 잡을 수 없다 | 왜 도구로 못 잡는지 한 줄 | 문서에 남긴다. 모듈 `CLAUDE.md` 의 "강제할 수 없는 규칙" 이나 안티패턴 원장에, 이유와 함께 |
+| **D 어긋남·낡음** | 코드가 이미 규칙과 다르게 되어 있거나, 규칙이 가리키는 파일·API 가 없다 | 어긋난 코드 위치(`파일:줄`) | 수정 후보. 문서를 고칠지 코드를 고칠지는 사람이 정한다 |
 
-- Heuristics-based scoring; expect ±5 points of noise. Use the trend, not the absolute number.
-- Anti-pattern extraction depends on commit message hygiene. Repos with vague messages produce thin output.
-- Module detection prefers conventional layouts (Gradle multi-module, npm monorepo, Python `src/` layout, Go modules, Cargo workspaces). Single-module source roots come from the stack adapters above; a stack with no adapter is reported and exits non-zero rather than being skipped silently.
-- The "standard layout" rule (`controller`/`service`/`domain`/`repository`) is a JVM web convention. On other stacks it is reported as *not measured* and the catalog alone earns the points — full marks since v1.5.3, where it previously capped at 4 of 5 and left a permanent "add controller/service/domain/repository" action on node/python/go/rust repos. It is never advice to restructure a non-JVM repo into that shape. A JVM repo with no controller-bearing package still scores 4: there the layout is measurable in principle and simply absent.
-- HTML dashboard is intentionally dependency-free (vanilla CSS + inline SVG) — pretty enough but not interactive.
-- **Scores the cartography (map) layer only — not code health (sanitize)**: this audit measures whether the docs/map exist and self-maintain, not whether the code underneath is healthy (test coverage, dead code, code smells). A repo can score high on the map while the code it describes is untested and tangled — a high score on unhealthy code is a *false signal*. Treat sanitize (tests / dead-code removal / consistent conventions) as a prerequisite you ensure separately.
-- **Does not measure token/cost**: the audit's "Outcome Metrics" category checks whether usage is *tracked*, not the cost itself. There is no session-log parser or cache-hit dashboard here — use `ccusage` / RTK `gain` for that.
+같은 규칙이 여러 문서에 되풀이되면 한 번만 분류하고 위치를 모두 적는다. 규칙이 아닌 줄(설명·이력·인용)이 섞여
+있으면 "규칙 아님" 으로 빼고 넘어간다.
 
-## Re-running
+### `audit-report.md` 형식
 
-This is meant to be run periodically (monthly is a good cadence). Each run overwrites `audit.json` / `audit-report.md` / `dashboard.html` / `README.md`, but **also archives the result to `history/{timestamp}.json`** so the dashboard can render a trend sparkline. Don't delete the `history/` directory.
+```markdown
+# ai-ready 점검 결과 — <대상>
+
+## 빈틈 요약
+- (gaps.md 1·2절에서 중요한 것부터: 없는 문서, CI 가 돌리지 않는 검사, 테스트 제외 줄, 깨진 hook)
+
+## 규칙 분류
+| ID | 위치 | 규칙(요약) | 분류 | 근거 | 권고 |
+|---|---|---|---|---|---|
+| R3 | `AGENTS.md:12` | ... | B | eslint no-restricted-imports 로 잡힌다 | 강제 초안 |
+
+## 권고
+1. B — 강제 초안 후보 (도구·규칙 이름)
+2. D — 수정 후보 (위치)
+3. 없는 문서·장치 (apply 가 만들 것)
+```
+
+보고서를 쓴 뒤 사용자에게는 빈틈 요약과 분류별 개수, B·D 상위 항목만 짧게 알리고, 다음 단계로
+`ai-ready:apply` 를 안내한다.
+
+## 하지 않는 것
+
+- 점수·등급을 매기지 않는다. 문서 개수로 품질을 말하지 않는다.
+- `.ai-ready/` 밖에 쓰지 않는다. hook 설치·CI 수정·문서 수정은 `ai-ready:apply` 에서 사람이 승인한 뒤에 한다.
+- 규칙 분류를 스크립트나 정규식에 맡기지 않는다. 스크립트는 후보 줄만 모은다.

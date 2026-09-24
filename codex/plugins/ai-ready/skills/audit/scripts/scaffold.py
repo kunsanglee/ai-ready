@@ -30,26 +30,9 @@ from pathlib import Path
 # 이 파일과 audit.py 가 각자 JVM 으로만 하드코딩해 두 벌로 갈라져 있었다.
 import stacks
 
-BUILD_MANIFESTS = {
-    "build.gradle.kts", "build.gradle", "pom.xml",
-    "package.json", "Cargo.toml", "go.mod", "pyproject.toml", "setup.py",
-}
-
-EXCLUDE_DIRS = {
-    ".git", "node_modules", "build", "dist", "target", ".gradle", ".idea",
-    "out", "bin", "vendor", ".venv", "venv", "__pycache__", ".next", ".turbo",
-    ".pytest_cache", ".mypy_cache",
-    "worktrees",  # git worktree(.claude/worktrees) = repo 전체 복사본 — 통째 중복 수집 방지
-    ".ai-ready",  # 자기 산출물 자기참조 차단
-}
-
-CODE_EXTS = {
-    ".kt", ".java", ".scala", ".groovy",
-    ".ts", ".tsx", ".js", ".jsx", ".mjs",
-    ".py", ".rs", ".go", ".rb", ".php", ".cs", ".swift",
-}
-
-# 단일 모듈 프로젝트의 패키지(=논리 모듈) 탐색 기준점은 stacks.py 의 어댑터가 답한다.
+# 모듈 목록·제외 디렉토리·코드 확장자는 audit.py 와 같은 답을 쓰도록 stacks.py 한 곳에 둔다.
+EXCLUDE_DIRS = stacks.EXCLUDE_DIRS
+CODE_EXTS = stacks.CODE_EXTS
 
 # 종료코드. 0 이 아닌 값을 쓰는 이유는 "안 만들어졌다" 를 호출한 쪽이 셀 수 있게 하기
 # 위해서다. 안내문은 사람만 읽고 스크립트는 못 읽는다.
@@ -62,20 +45,6 @@ def walk(target: Path):
     for dirpath, dirnames, filenames in os.walk(target):
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDE_DIRS)
         yield Path(dirpath), dirnames, filenames
-
-
-def find_modules(target: Path) -> list[Path]:
-    seen = set()
-    out = []
-    for dirpath, _, filenames in walk(target):
-        for f in filenames:
-            if f in BUILD_MANIFESTS:
-                rel = dirpath.relative_to(target)
-                if rel not in seen:
-                    seen.add(rel)
-                    out.append(rel)
-                break
-    return sorted(out, key=str)
 
 
 def git_changed_paths(target: Path, days: int = 90) -> list[str]:
@@ -396,25 +365,6 @@ def render_hot_files_block(hot_files: list[tuple[str, int]]) -> str:
     return "\n".join(out)
 
 
-# --- Single-module package detection -------------------------------------
-
-def find_packages(base_package: Path) -> list[Path]:
-    """base package 의 직속 자식 디렉토리 = 패키지(논리 모듈)."""
-    if not base_package.is_dir():
-        return []
-    out = []
-    for child in sorted(base_package.iterdir(), key=lambda p: p.name):
-        if not child.is_dir():
-            continue
-        if child.name in EXCLUDE_DIRS or child.name.startswith("."):
-            continue
-        # 코드 파일이 1개라도 있는 경우만
-        has_code = any(p.suffix in CODE_EXTS for p in child.rglob("*") if p.is_file())
-        if has_code:
-            out.append(child)
-    return out
-
-
 # --- Main -----------------------------------------------------------------
 
 def select_top_modules(target: Path, modules: list[Path], top_n: int) -> list[Path]:
@@ -437,22 +387,18 @@ def select_top_modules(target: Path, modules: list[Path], top_n: int) -> list[Pa
 
 def run(target: Path, out_dir: Path, top_n: int):
     out_dir.mkdir(parents=True, exist_ok=True)
-    modules = find_modules(target)
-    # 단일 모듈이면 스택 어댑터가 찾은 기준점의 직속 하위 디렉토리가 논리 모듈이다.
-    non_root = [m for m in modules if m != Path(".")]
-    if not non_root:
-        layout = stacks.detect_layout(target)
-        if layout is None:
-            # 안내문만 찍고 0으로 끝내지 않는다. 그러면 산출물 0개인 실행과 성공한 실행이
-            # 호출한 쪽에서 똑같아 보인다.
-            print(stacks.unsupported_message(target), file=sys.stderr)
-            return EXIT_NO_ADAPTER
-        packages = find_packages(layout.source_root)
-        if not packages:
-            print(f"단일 모듈({layout.stack}) — 기준점 {layout.source_root.relative_to(target)} 아래 "
-                  f"코드가 든 디렉토리가 없다. 근거: {layout.evidence}", file=sys.stderr)
-            return EXIT_NO_PACKAGES
-        modules = [p.relative_to(target) for p in packages]
+    ml = stacks.logical_modules(target)
+    if ml.mode == "no-adapter":
+        # 안내문만 찍고 0으로 끝내지 않는다. 그러면 산출물 0개인 실행과 성공한 실행이
+        # 호출한 쪽에서 똑같아 보인다.
+        print(stacks.unsupported_message(target), file=sys.stderr)
+        return EXIT_NO_ADAPTER
+    if ml.mode == "no-code":
+        layout = ml.layout
+        print(f"단일 모듈({layout.stack}) — 기준점 {layout.source_root.relative_to(target)} 아래 "
+              f"코드가 든 디렉토리가 없다. 근거: {layout.evidence}", file=sys.stderr)
+        return EXIT_NO_PACKAGES
+    modules = list(ml.modules)
     selected = select_top_modules(target, modules, top_n)
     written = []
     for m in selected:
