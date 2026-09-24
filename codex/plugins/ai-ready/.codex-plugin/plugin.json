@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
-  "version": "1.5.7+codex.1",
-  "description": "Audit AI-agent readiness, apply reviewed guidance improvements, and run unattended maker/checker loops (build/review/lessons) in Codex. Checker lenses split by axis and review in parallel without seeing each other; severity is assigned by a deterministic rubric shell, not by the model. Release history lives in CHANGELOG.md.",
+  "version": "2.0.0+codex.1",
+  "description": "Report documentation and enforcement gaps for AI-agent work without a score, apply only the reviewed drafts (guidance docs, decision records, verify.sh, a docs check, lint or architecture-test drafts), and draft lessons from session and PR corrections in Codex. Release history lives in CHANGELOG.md.",
   "author": {
     "name": "kunsanglee",
     "url": "https://github.com/kunsanglee"
@@ -14,13 +14,14 @@
     "audit",
     "guidance",
     "documentation",
+    "enforcement",
     "codex"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "AI-Ready",
-    "shortDescription": "Audit and safely improve AI-agent guidance.",
-    "longDescription": "Assess a repository's AI-agent readiness, prepare reviewed guidance improvements, and check documentation freshness without Claude-only hooks.",
+    "shortDescription": "Find and close guidance and enforcement gaps for AI agents.",
+    "longDescription": "Report which guidance documents and checks a repository has and whether CI runs them, sort documented rules by whether a tool can enforce them, and apply only the reviewed drafts.",
     "developerName": "kunsanglee",
     "category": "Productivity",
     "capabilities": [
@@ -28,10 +29,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Audit this repository for AI-agent readiness.",
-      "Plan the approved improvements from the latest AI-Ready audit.",
-      "Check whether this repository's guidance documents are stale.",
-      "Use build to build out this approved design across phases and converge it to a PASS verdict."
+      "Report documentation and enforcement gaps in this repository.",
+      "Apply the approved items from the latest AI-Ready gap report.",
+      "Turn the corrections from this session into enforcement or anti-pattern drafts."
     ]
   }
 }

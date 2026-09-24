@@ -4,15 +4,15 @@
     "name": "kunsanglee"
   },
   "metadata": {
-    "description": "Standalone Claude Code marketplace hosting the ai-ready plugin: audit a codebase for AI-readiness, apply ROI-prioritized improvements, and run an unattended maker/checker verification loop whose severity is assigned by a deterministic rubric shell rather than by the model. Release history lives in CHANGELOG.md.",
-    "version": "1.5.7"
+    "description": "Standalone Claude Code marketplace hosting the ai-ready plugin: a score-free gap report on guidance docs and enforcement for AI-agent work, reviewed drafts that move documented rules into lint, tests, CI and hooks, and lessons drafted from session and PR corrections. Release history lives in CHANGELOG.md.",
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "ai-ready",
       "source": "./plugins/ai-ready",
-      "description": "Two axes in one plugin. (1) Audit a codebase for AI-readiness on a 7-category 100-point rubric, then apply ROI-prioritized improvements — per-module CLAUDE.md, ANTIPATTERNS.md seeded from git history, INDEX.md, ARCHITECTURE.md Mermaid diagrams, a freshness Stop hook. Multi-module and single-module layouts score on parallel rubrics. (2) Run the unattended verification loop — /spec derives the spec first by enumerating undecided calls and closing each one with evidence, asking the human only where a guess would be invented; /build breaks a spec into phases and converges each one until it passes, /review checks once, /lessons harvests what the loop caught into the knowledge layer. A maker fixes; checker lenses split by axis (contract, safety, quality) review in parallel without seeing each other; severity comes from a deterministic shell reading a BASE + project-LOCAL rubric, so the same finding always scores the same. Release history lives in CHANGELOG.md.",
-      "version": "1.5.7",
+      "description": "Keep a repository ready for AI-agent work by enforcing what can be enforced and documenting only what cannot. audit writes a score-free gap report: which guidance docs exist (root and module CLAUDE.md, docs/design decision records, a verification doc), which lint/typecheck/test/architecture checks exist and whether CI actually runs them, and every documented rule sorted into already enforced, cheap to enforce, not enforceable, or out of date. apply creates only what you approve: a short root CLAUDE.md, module docs, decision-record pairs with union merge, an anti-pattern ledger, scripts/verify.sh with a Stop hook, a docs consistency check, and lint or architecture-test drafts for rules that only lived in prose. lessons turns corrections from the session and PR review into the same kinds of drafts. Release history lives in CHANGELOG.md.",
+      "version": "2.0.0",
       "author": {
         "name": "kunsanglee"
       },
@@ -23,15 +23,15 @@
         "claude-code",
         "audit",
         "documentation",
-        "codebase-quality",
         "CLAUDE.md",
-        "single-module",
-        "package-catalog",
-        "loop-engine",
-        "autonomous-review",
-        "rubric",
-        "maker-checker",
-        "무인 검증 루프"
+        "AGENTS.md",
+        "enforcement",
+        "lint",
+        "architecture-tests",
+        "decision-records",
+        "verification",
+        "AI 준비도",
+        "강제 수단"
       ],
       "category": "workflow"
     }
