@@ -35,6 +35,6 @@
     "./skills/lessons"
   ],
   "agents": [
-    "./agents/loop-lesson-synthesizer.md"
+    "./agents/lesson-synthesizer.md"
   ]
 }

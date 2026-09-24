@@ -1,83 +1,65 @@
 ---
 name: lessons
-description: 무인 검증 loop 종료 후 lesson 승인 게이트. 루프가 잡은 실수(history diff)와 사람·PR 지적을 loop-lesson-synthesizer 가 영구 지식층 후보 초안으로 만들면, 한 번에 하나씩 추가/수정/버림을 사람에게 묻고 승인분만 반영한다. 호출 /lessons [--history <경로>]. Use this skill when the user says "/lessons", "lesson 종합", "교훈 반영", "안티패턴 후보", or wants to harvest a finished loop's mistakes into the knowledge layer. 자동 반영 없음 — 사람 승인이 의무.
+description: 작업 세션에서 사람이 바로잡은 실수와 PR 리뷰 코멘트를 모아 같은 실수가 다시 나지 않게 하는 후보를 만들고, 한 번에 하나씩 사람의 승인을 받아 반영한다. 후보마다 먼저 도구로 강제할 수 있는지 따져 강제 초안(lint 규칙·아키텍처 테스트)을, 안 되면 이유를 붙인 안티패턴 원장 항목을, 설계 결정이면 docs/design 결정 카드를 낸다. 호출 /lessons [PR 번호]. Use when the user says "/lessons", "교훈 정리", "lesson 종합", "PR 코멘트에서 규칙 뽑아", "안티패턴 후보", or wants review feedback turned into lint rules or anti-pattern entries. 자동 반영 없음 — 사람 승인이 필수.
 ---
 
-# lessons — lesson 승인 게이트
+# lessons — 교훈을 강제 수단이나 문서로
 
-무인 검증 loop 의 **선순환을 닫는 사람 승인 게이트**다. loop 가 잡은 실수(+ 사람·PR 이 더한 지적)를 `loop-lesson-synthesizer` 가 ANTIPATTERNS 후보 초안으로 만들면, 이 스킬이 **한 번에 하나씩** 추가/수정/버림을 사람에게 묻고 승인분만 영구 지식층(`$LOOP_KNOWLEDGE_LAYER`, 예: `docs/ANTIPATTERNS.md`)에 반영한다. 다음 loop·세션이 그 자산을 읽고 같은 실수를 안 하는 것이 이 고리의 끝이다. 보통 `/build` 종료 후 그 history 로 부른다.
+작업 중 사람이 바로잡은 실수를 모아, 다음 작업에서 같은 실수가 나지 않게 한다. 먼저 도구로 막을 수 있는지 묻고,
+막을 수 없는 것만 문서로 남긴다. 초안은 `lesson-synthesizer` 에이전트가 쓰고, 반영 여부는 사람이 정한다.
 
-## 🔌 plugin / 프로젝트 구조
+## 지킬 것
 
-- 의존(plugin 번들): `agents/loop-lesson-synthesizer.md`(후보 초안 작성, `ai-ready:` namespace), `_loop-engine/lessons.sh`(출처1 추출), `_loop-engine/detect_build.py`(지식층·문서 경로 감지), `_loop-engine/test.sh`(rubric 변경 시 채점 회귀).
-- 반영 대상(프로젝트 델타, Step 1 감지가 경로를 준다): `$LOOP_KNOWLEDGE_LAYER`(영구 지식층 `docs/ANTIPATTERNS.md`), `$LOOP_RUBRIC_LOCAL`(LOCAL rubric `.loop/rubric.md` — 새 kind 예외표, 없으면 새로 만들 대상). 어댑터 파일은 없다.
-- 환경변수 없음. 지식층은 ai-ready 와 공동 저작하는 append-only 문서다.
+1. **사람 승인 없이 반영하지 않는다.** 에이전트도 이 스킬도 초안까지만 만든다. 후보마다 추가·수정·버림을 묻는다.
+2. **강제 초안이 먼저다.** 문서 항목은 도구로 막을 수 없는 이유가 있을 때만 쓴다.
+3. **한 번에 하나씩** 묻는다. 여러 후보를 한 번의 승인으로 묶지 않는다.
 
-## 절대 원칙
-
-1. **사람 승인 없이는 반영 금지.** synthesizer 도 이 스킬도 초안·제시까지다. 추가/수정/버림은 사람이 정한다. 무인 loop 여도 이 한 단계는 반드시 사람.
-2. **수록 문턱을 지킨다.** 권위는 영구 지식층(`$LOOP_KNOWLEDGE_LAYER`) 헤더의 기준(동일 위치 fix 3회+ 또는 revert)이고, 못 넘은 후보는 모듈 `CLAUDE.md` "절대 금지" 로만 가거나 보류한다.
-3. **rubric 예외표는 ANTIPATTERNS 승인 때만 자란다.** 승인된 후보가 표에 없는 반복 종류이면 synthesizer 가 따진 **권장 base_severity** 로 KINDS 표에 한 줄 추가하고, 그 권장이 floor 와 같으면 안 늘린다. 기록된 severity 와 floor 의 비교는 기준이 아니다 — 미등록 종류의 기록값은 floor 채점의 복사본이라 항상 같게 나와, 그 비교를 기준으로 두면 표가 자라는 경로가 닫힌다.
-
-## 호출 예시
+## 호출
 
 ```
-/lessons                                   # 직전 loop 의 history 에서 출처1 자동 추출 → 후보 검토
-/lessons --history .loop/run/{ticket}/history-{phase}.jsonl    # history 경로 명시
+/lessons           # 이 세션에서 사람이 바로잡은 것으로
+/lessons 123       # PR #123 의 리뷰 코멘트도 함께
 ```
 
-## 작업 흐름
+## 흐름
 
-### Step 1. 입력 수집 (출처1 + 출처2)
+### 1. 입력 모으기
 
-- **출처1 (loop 가 잡고 maker 가 고친 실수)**: `loop-lesson-synthesizer` 가 받을 JSON. 없으면 history 경로로 직접 만든다.
+- **세션 지적**: 이 대화에서 사람이 바로잡은 말("그렇게 하지 말고…", "이건 틀렸다", 되돌리라는 요청)을 찾아 원문과
+  맥락(어떤 파일·어떤 변경이었나)을 텍스트로 정리한다. 에이전트는 대화를 볼 수 없어서 여기서 정리한 텍스트만 받는다.
+- **PR 코멘트**(PR 번호를 받았을 때): GitHub 이고 `gh` 가 있으면 읽기만 한다.
   ```bash
-  # 엔진: plugin 번들. **$CLAUDE_PLUGIN_ROOT 는 Bash 도구의 셸에 없다** — 스킬 본문을 만들 때
-  # 치환되는 값이라 자식 셸로 안 내려간다(실측). 그대로 쓰면 ENG=/_loop-engine 이 되어 조용히 없는
-  # 경로를 가리킨다. 이 스킬 본문 맨 위의 "Base directory for this skill" 값을 그대로 넣는다.
-  SKILL_DIR="<이 스킬 본문 첫머리의 Base directory 를 그대로 넣는다>"
-  ENG="$(cd "$SKILL_DIR/../.." && pwd)/_loop-engine"
-  [ -f "$ENG/lib.sh" ] || { echo "loop: 엔진을 못 찾았다 ($ENG) — base directory 확인" >&2; exit 65; }
-  PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
-  # 반영 대상 경로를 런타임 감지(읽기 전용, 어댑터 파일 없음).
-  DET="$(python3 "$ENG/detect_build.py" --target "$PROJECT_ROOT")"
-  LOOP_KNOWLEDGE_LAYER="$(printf '%s' "$DET" | jq -r '.knowledge_layer // ""')"   # ai-ready 가 만든 docs/ANTIPATTERNS.md
-  LOOP_RUBRIC_LOCAL="$PROJECT_ROOT/.loop/rubric.md"                                # 있으면 병합 대상, 없으면 새 kind 추가 시 생성
-  # 감지 값을 창에 출력 — 변수 대입만으론 Step 2 프롬프트에 넣을 값이 오케스트레이터에게 존재하지 않는다.
-  echo "lessons 값: knowledge=[${LOOP_KNOWLEDGE_LAYER:-없음}] / local_rubric=$LOOP_RUBRIC_LOCAL / engine=$ENG"
-  bash "$ENG/lessons.sh" --history <history-{phase}.jsonl>
+  gh pr view <번호> --comments                                   # 대화 코멘트·리뷰 요약
+  gh api "repos/{owner}/{repo}/pulls/<번호>/comments" --paginate   # 줄 단위 리뷰 코멘트(파일·줄 포함)
   ```
-  (kind+위치)로 중복 제거한 mistake 목록 + 통과 시점 verdict 을 낸다. 통과 시 남은 MINOR 는 받아들여진 것이라 실수로 안 친다. `/build` 는 history 를 phase 별로 가르므로(`history-{phase}.jsonl`) `lessons.sh` 를 파일마다 반복 호출해 mistake 목록을 합친다(`--history` 는 파일 하나만 받는다).
-- **출처2 (checker 가 놓친 것, 선택)**: 사람이 결과 검토 중 "checker 가 여기 놓쳤다/과하게 잡았다" 한 지적(세션 안이면 대화에서), 또는 무인 드라이버면 PR 코멘트 추출 결과. 텍스트로 모은다.
-- 티켓/작업 요약 1~3문장(없으면 "작업 정의 없음").
+  GitHub 이 아니거나 `gh` 가 없으면 사용자에게 코멘트를 붙여 달라고 한다. 토큰을 찾아 쓰지 않는다.
+- 대상 저장소 경로와, 있으면 `docs/ANTIPATTERNS.md`·`docs/design/`·`docs/VERIFICATION.md` 경로.
 
-### Step 2. synthesizer 호출 (후보 초안 작성)
+입력이 하나도 없으면 "바로잡은 실수가 없다" 고 알리고 끝낸다.
 
-`Agent` 툴로 `loop-lesson-synthesizer` 를 호출한다. 프롬프트에 출처1 경로(또는 내용)·출처2 지적·티켓 요약, 그리고 **지식층 경로·LOCAL rubric 경로·엔진 경로**(Step 1 이 echo 한 "lessons 값:" 줄의 값들)를 넘긴다 — 환경변수는 서브에이전트에 전달되지 않으므로 값 자체를 프롬프트 텍스트로 넘긴다. 지식층·LOCAL rubric 은 synthesizer 의 중복 차단·예외표 동반 제안이 읽고, 엔진 경로는 출처1 이 없을 때 synthesizer 가 `lessons.sh` 를 직접 돌리는 폴백에 쓴다.
+### 2. 초안 받기
 
-synthesizer 는 Edit/Write 가 없어 **절대 문서를 직접 안 고친다** — 출력은 후보 목록뿐이다.
+`Agent` 도구로 `lesson-synthesizer` 를 부른다. 1단계에서 정리한 텍스트와 경로를 프롬프트에 그대로 넣는다(환경변수는
+서브에이전트에 전달되지 않는다). 에이전트는 후보마다 강제 초안 / 안티패턴 원장 항목 / 결정 카드 / 버림 중 하나를 낸다.
 
-### Step 3. 사람 게이트 (한 번에 하나씩)
+### 3. 하나씩 승인받기
 
-synthesizer 가 낸 후보 블록을 **하나씩** 그대로 제시하고 추가/수정/버림을 묻는다. 그 블록에 목적지 추천·수록 문턱 충족 여부·초안·(해당 시) KINDS 한 줄이 이미 들어 있다(형식은 synthesizer 정의가 정한다). 사용자가 "수정" 이면 그 자리에서 문구를 고쳐 다시 확인받는다.
+후보 블록을 하나씩 보여 주고 추가·수정·버림을 묻는다. "수정" 이면 그 자리에서 고쳐 다시 확인받는다.
 
-### Step 4. 승인분만 반영
+### 4. 승인한 것만 반영
 
-사용자가 **추가**(또는 수정 후 승인)한 후보만 반영한다. 버림·보류는 아무 데도 안 쓴다.
+- **강제 초안**: `ai-ready:apply` 의 "강제 초안" 절차를 따른다(설정·테스트 추가 → 돌려서 기존 위반 확인 → 필요하면
+  기준 파일 → 관련 문서 줄을 "→ <규칙·테스트>" 로 줄이기 → CI 에 없으면 넣는 한 줄 제안). 각 단계의 파일 변경도
+  diff 를 보여 주고 승인받는다.
+- **안티패턴 원장 항목**: `docs/ANTIPATTERNS.md` 의 "항목" 절 끝에 덧붙인다(DO NOT / 이유 / 대신 / 강제 불가 /
+  출처). 파일이 없으면 어디에 둘지 묻는다 — `ai-ready:apply` 의 `bootstrap.py --only antipatterns` 로 빈 원장을 만들 수
+  있다. 모듈 하나에만 해당하면 그 모듈 `CLAUDE.md` 의 "강제할 수 없는 규칙" 에 이유와 함께 넣는다.
+- **결정 카드**: `docs/design/<도메인>.decisions.md` 맨 위에 새 카드를 더한다. 옛 카드 본문은 고치지 않고, 결정이
+  바뀐 경우에만 옛 카드 제목의 라벨을 `[superseded]` 로 바꾼다.
+- 반영한 파일과 항목을 한 줄씩 보고한다. 커밋은 하지 않는다.
 
-- **영구 지식층 추가**: `$LOOP_KNOWLEDGE_LAYER`(ai-ready 가 만든 `docs/ANTIPATTERNS.md`) 끝의 다음 번호로 `## {N}. {제목}` 섹션을 *덧붙인다*(append, 통째 덮어쓰기 금지 — ai-ready 와 공동 저작하는 문서). 형식은 기존 항목과 동일하게 `**DO NOT**` / `**이유**` / `**대신**` 세 bullet. 이유에는 근거(이 loop `파일:라인`·severity·사이클 수 / 과거 커밋·revert / 출처2)를 남긴다. 감지된 지식층 경로가 비어 있으면(프로젝트에 `docs/ANTIPATTERNS.md` 부재) 사용자에게 어디에 둘지 묻는다 — 임의 생성 금지.
-- **모듈 CLAUDE.md 추가**(문턱 미달·모듈 고유): 해당 `{module}/CLAUDE.md` "절대 금지" 섹션에 짧게.
-- **LOCAL rubric KINDS 예외표**(해당 시만): 승인 후보가 표에 없는 반복 종류이고 synthesizer 가 권장 base_severity 를 floor 와 다르게 따졌으면, LOCAL rubric(`$LOOP_RUBRIC_LOCAL` = `.loop/rubric.md`)의 `LOOP_RUBRIC:KINDS` 마커 안 표에 한 줄 추가한다(BASE rubric 은 건드리지 않는다 — 프로젝트 특유 kind 는 LOCAL 로). **파일이 아직 없으면** KINDS 마커(`<!-- LOOP_RUBRIC:KINDS:BEGIN -->` ~ `:END`)와 6열 헤더(`kind_id|dimension|layer|base_severity|force_await|note`)만 갖춘 최소 골격으로 새로 만들고 그 한 줄을 넣는다. 이것이 스택 특유 종류가 자라는 유일한 경로다. 추가했으면 `bash "<엔진 경로>/test.sh"` 로 BASE 채점 회귀 0 을 확인한다 — 엔진 경로는 Step 1 이 창에 낸 "lessons 값:" 줄의 `engine=` 값이다.
-- 반영 후 변경 파일·추가 항목을 사용자에게 1줄로 보고한다. 커밋은 사용자/별도 절차가 한다(이 스킬은 파일 기록까지).
+## 하지 않는 것
 
-## 트러블슈팅
-
-| 증상 | 원인 | 해결 |
-|---|---|---|
-| lessons.sh 출력이 비어있음 | history 파일에 "떴다가 사라진 finding" 없음(고친 실수 0) | 정상 — 후보 없음. 억지로 만들지 않는다 |
-| 후보가 전부 "버림/관찰" | 전부 일회성·중복 | 정상. ANTIPATTERNS 는 반복·일반 규칙만. 그대로 종료 |
-| rubric KINDS 추가 후 test 실패 | 표 형식 깨짐(열 수 불일치) | 6열(kind_id\|dimension\|layer\|base_severity\|force_await\|note) 맞췄는지 확인 |
-
-## Non-Goals
-
-- 개별 finding 의 severity 재산정 — 출처1 값을 인용만. 채점은 결정론 셸. (KINDS 초안의 권장 base_severity 는 다음 실행의 표 정책 제안이라 여기 해당하지 않는다 — 원칙 "rubric 예외표는 ANTIPATTERNS 승인 때만 자란다" 참조.)
+- 사람 승인 없이 문서·설정·CI 를 고치지 않는다.
+- 일회성 실수를 억지로 규칙으로 만들지 않는다.
+- 확인하지 않은 코드 위치나 도구 규칙 이름을 적지 않는다.

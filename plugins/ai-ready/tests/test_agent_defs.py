@@ -18,7 +18,7 @@ TREE = Path(os.environ.get("AI_READY_TREE") or Path(__file__).resolve().parents[
 AGENTS = TREE / "agents"
 
 # 파일을 고치지 않는 것이 존재 이유인 에이전트들. 여기 이름이 있으면 Edit/Write 를 가질 수 없다.
-READ_ONLY = {"loop-lesson-synthesizer"}
+READ_ONLY = {"lesson-synthesizer"}
 
 _FM = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.S)
 
