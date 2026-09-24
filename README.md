@@ -144,6 +144,11 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 같은 저장소에 Codex 용 번들이 `codex/` 아래 있습니다. `audit`·`apply`·`lessons` 가 같은 스크립트를 쓰고, Codex 에
 없는 기능(에이전트 정의, Stop hook 설치)은 빠져 있습니다. Codex 에서는 `verify.sh` 를 직접 부르거나 CI 에 넣습니다.
 
+두 번들은 손으로 맞춥니다. 원본은 Claude 트리(`plugins/ai-ready/`)입니다. `skills/audit/scripts/` 나
+`skills/apply/references/` 를 고쳤으면 같은 파일을 `codex/plugins/ai-ready/` 아래 같은 자리에 복사하고
+`bash build/drift-test.sh` 로 두 사본이 바이트 단위로 같은지 확인합니다(`install_verify_hook.py` 는 Claude 전용이라
+비교에서 뺍니다). SKILL.md 는 호스트마다 호출 방식이 달라 따로 고칩니다.
+
 ---
 
 ## 저장소 구조
