@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
   "version": "2.0.0+codex.1",
-  "description": "Report documentation and enforcement gaps for AI-agent work without a score, apply only the reviewed drafts (guidance docs, decision records, verify.sh, a docs check, lint or architecture-test drafts), and draft lessons from session and PR corrections in Codex. Release history lives in CHANGELOG.md.",
+  "description": "Report documentation and enforcement gaps for AI-agent work without a score, apply only the reviewed drafts (guidance docs: a root AGENTS.md with a one-line CLAUDE.md that imports it, module docs, decision records, verify.sh, a docs check, lint or architecture-test drafts), and draft lessons from session and PR corrections in Codex. Release history lives in CHANGELOG.md.",
   "author": {
     "name": "kunsanglee",
     "url": "https://github.com/kunsanglee"

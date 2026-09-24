@@ -10,7 +10,7 @@ AI 에이전트가 일하기 좋은 저장소를 만들고 유지하는 Claude C
 | 스킬 | 하는 일 |
 |---|---|
 | `ai-ready:audit` | 점수 없는 빈틈 보고서. 문서가 있나, 검사 도구가 있고 CI 가 실제로 돌리나, 문서 속 규칙이 이미 강제되나 |
-| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 짧은 루트 `CLAUDE.md`, 모듈 `CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, Stop hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
+| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, Stop hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
 | `ai-ready:lessons` | 작업 중 사람이 바로잡은 실수와 PR 리뷰 코멘트를 강제 초안이나 문서 항목 초안으로 만들고, 하나씩 승인받아 반영한다 |
 
 ---
@@ -95,13 +95,15 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 | `docs/design/{domain}.md` + `{domain}.decisions.md` | 지금 동작은 고쳐 쓰고, 결정은 카드를 맨 위에 더한다. 카드 제목은 `## 제목 · (티켓) · [accepted\|proposed\|rejected\|superseded]`, 읽을 때는 `grep -n '^## '`. `.gitattributes` 의 `merge=union` 으로 병합 충돌을 피한다 |
 | `docs/ANTIPATTERNS.md` | 빈 원장과 항목 형식(DO NOT / 이유 / 대신 / 강제 수단 또는 강제 불가 / 출처) |
 | `docs/VERIFICATION.md` + `scripts/verify.sh` | 매니페스트에서 추론한 typecheck·lint·test 를 차례로 돌린다. 실패하면 마지막 20줄만 보여 준다. 작업 트리가 마지막 통과 때와 같으면 다시 돌리지 않는다 |
-| Stop hook | `verify.sh` 가 한 번 통과한 뒤에만 `.claude/settings.json` 에 `verify.sh --stop-hook` 을 병합한다. 실패하면 에이전트가 턴을 끝내지 못한다. 같은 작업 트리로 3번 막은 뒤에는 검사를 다시 돌리지 않고 통과시키고, 트리가 바뀌면 다시 센다 |
+| Stop hook | `verify.sh` 가 통과한 기록이 남아 있을 때만(실패하면 기록을 지운다) `.claude/settings.json` 에 `verify.sh --stop-hook` 을 병합한다. 실패하면 에이전트가 턴을 끝내지 못한다. 같은 작업 트리로 3번 막은 뒤에는 검사를 다시 돌리지 않고 통과시키고, 트리가 바뀌면 다시 센다 |
 | `scripts/check_docs.py` | 깨진 상대 링크, 결정 카드 제목 형식, union merge 로 생긴 중복 카드, frontmatter 필수 키. CI 에 한 줄로 넣는다 |
 | 강제 초안 | audit 의 B 항목을 ArchUnit·detekt·eslint(`no-restricted-imports`)·dependency-cruiser·ruff(`banned-api`)·import-linter·clippy 규칙이나 테스트로. 오류 메시지에 "대신 X" 를 넣고, 기존 위반은 기준 파일로 묶는다 |
 
-사람이 서명을 지운(직접 관리하는) 파일은 덮어쓰지 않습니다. 그런 파일이 있으면 스크립트가 아무것도 쓰지 않고
-멈추고, 그 파일은 필요한 부분만 고친 diff 로 제안합니다. 만들 파일이 git 에서 무시되거나 심볼릭 링크일 때도
-아무것도 쓰지 않고 멈춥니다.
+서명이 없는(사람이 관리하는) 파일과, 서명을 남긴 채 고친 초안은 덮어쓰지 않습니다. 초안의 서명 줄에는 본문 해시가
+들어 있어 고쳤는지 알 수 있습니다. 그런 파일이 있으면 스크립트가 아무것도 쓰지 않고 멈추고, 그 파일은 필요한 부분만
+고친 diff 로 제안합니다. 초안을 다시 만들고 싶으면 파일을 지우고 돌립니다. 만들 원본 파일(`AGENTS.md`·`docs/`·
+`scripts/`)이 git 에서 무시되거나 심볼릭 링크일 때도 아무것도 쓰지 않고 멈춥니다. 무시되는 것이 `@AGENTS.md` 한
+줄짜리 `CLAUDE.md` 뿐이면 그 파일만 건너뜁니다.
 
 `AGENTS.md` 를 원본으로 두고 `CLAUDE.md` 에서 가져오는 까닭은 [Claude Code 문서](https://code.claude.com/docs/en/memory)에
 있습니다. 한 폴더에 둘이 있으면 Claude Code 는 `CLAUDE.md` 만 읽고, `@AGENTS.md` 가져오기를 권하며, 가져오기 경로는
