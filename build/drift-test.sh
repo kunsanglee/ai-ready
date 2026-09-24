@@ -1,54 +1,24 @@
 #!/usr/bin/env bash
-# drift-test.sh — 각 호스트 설치 트리의 _loop-engine 이 core/_loop-engine 과 바이트 동일한지 검사한다.
+# drift-test.sh — claude 트리(plugins/ai-ready)와 codex 트리(codex/plugins/ai-ready)가 갈라지지 않았는지,
+# 매니페스트·변경 이력이 한 릴리스를 가리키는지 검사한다.
 #
-# core 가 단일 진실이고 설치 트리는 커밋된 사본이므로, 사본이 손으로 갈라지면(한쪽만 고침)
-# 결정론 판정이 호스트마다 달라진다. 이 테스트가 그 갈라짐을 CI/커밋 전에 fail-loud 로 막는다.
-# (D5 "엔진 공유: core 원본 + 빌드 복사 + 드리프트 테스트".)
+# 두 트리는 각자의 매니페스트로 로드돼 폴더 하나를 같이 쓸 수 없다. 그래서 공유 스크립트는 claude 트리를
+# 원본으로 두고 codex 트리에 손으로 복사하며, 복사가 빠진 것을 이 검사가 잡는다.
 #
-# exit 0 = 동일, exit 1 = 드리프트 발견(어느 호스트·어느 파일인지 출력).
+# exit 0 = 통과, exit 1 = 갈라짐 발견(어느 검사·어느 파일인지 출력).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-declare -a CHECKS=(
-  "claude:plugins/ai-ready/_loop-engine"
-  "codex:codex/plugins/ai-ready/_loop-engine"
-)
-
-fail=0
-for entry in "${CHECKS[@]}"; do
-  host="${entry%%:*}"; dest="${entry#*:}"
-  if [ ! -d "$dest" ]; then
-    echo "[$host] 스킵 — 설치 트리 없음($dest). (아직 조립 안 됨)"
-    continue
-  fi
-  if diff -rq --exclude='__pycache__' --exclude='*.pyc' core/_loop-engine "$dest" >/tmp/drift.$$.txt 2>&1; then
-    echo "[$host] OK — core 와 바이트 동일"
-  else
-    echo "[$host] DRIFT 발견 — core/_loop-engine 과 $dest 가 다르다:"
-    sed 's/^/    /' /tmp/drift.$$.txt
-    fail=1
-  fi
-  rm -f /tmp/drift.$$.txt
-done
-
-[ "$fail" -eq 0 ] || { echo "드리프트 테스트 실패 — core 에서 고치고 build/assemble.sh 로 재조립하라." >&2; exit 1; }
-
 # --- audit 스킬 스크립트: 두 호스트 트리의 사본이 갈라졌나 ---
-# 위 블록과 달리 이쪽은 core 원본이 없다. claude 트리가 원본이고 codex 트리가 손으로 맞춰 온
-# 사본이라, 한쪽만 고치면 같은 저장소를 두 호스트가 다르게 채점하게 된다.
+# claude 트리가 원본이고 codex 트리가 손으로 맞춘 사본이다. 한쪽만 고치면 같은 저장소를 두 호스트가
+# 다르게 진단한다.
 #
-# freshness_check.py 와 install_hook.py 는 codex audit 번들에 일부러 없다
-# (codex/tests 의 test_audit_bundle_has_no_hook_installer 가 install_hook.py 부재를 단언한다).
-# 이 둘을 빼지 않으면 의도한 차이를 드리프트로 잘못 잡는다.
-#
-# audit.py 는 파일째로 빼지 않는다. 호스트마다 다른 곳은 훅 복사와 그 산출물 안내 두 자리뿐인데
-# 파일을 통째로 빼면 채점 로직 전체가 검사 밖이 된다 — 실측: 한쪽 트리에서만 점수 밴드를
-# 뒤집어도 모든 검사가 통과했다. 아래 audit.py 블록이 그 자리를 마커 단위로 좁혀 잠근다.
+# Stop hook 설치기는 codex 번들에 일부러 없다(Claude Code 전용 설정을 고친다 — codex/tests 의
+# test_audit_bundle_has_no_hook_installer 가 부재를 단언한다). 이 파일만 빼고 비교한다.
 AUDIT_SRC="plugins/ai-ready/skills/audit/scripts"
 AUDIT_DEST="codex/plugins/ai-ready/skills/audit/scripts"
-if diff -rq --exclude='__pycache__' --exclude='*.pyc' \
-     --exclude='audit.py' --exclude='freshness_check.py' --exclude='install_hook.py' \
+if diff -rq --exclude='__pycache__' --exclude='*.pyc' --exclude='install_verify_hook.py' \
      "$AUDIT_SRC" "$AUDIT_DEST" >/tmp/drift.$$.txt 2>&1; then
   echo "[audit-scripts] OK — 두 트리 사본이 바이트 동일"
 else
@@ -59,44 +29,6 @@ else
   exit 1
 fi
 rm -f /tmp/drift.$$.txt
-
-# audit.py: 호스트별로 갈리는 구간만 `HOST-ADAPTER:BEGIN`~`:END` 로 표시돼 있다. 양쪽에서 그
-# 구간을 지운 나머지를 비교하므로, 마커 밖의 한 글자 변이는 잡히고 마커 안의 차이는 허용된다.
-# 마커가 한쪽에만 있거나 짝이 안 맞으면 지워지는 범위가 서로 달라져 여기서 드러난다.
-AUDIT_PY_SRC="$AUDIT_SRC/audit.py"
-AUDIT_PY_DEST="$AUDIT_DEST/audit.py"
-strip_adapter() { sed '/HOST-ADAPTER:BEGIN/,/HOST-ADAPTER:END/d' "$1"; }
-for f in "$AUDIT_PY_SRC" "$AUDIT_PY_DEST"; do
-  begins="$(grep -c 'HOST-ADAPTER:BEGIN' "$f" || true)"
-  ends="$(grep -c 'HOST-ADAPTER:END' "$f" || true)"
-  if [ "$begins" != "$ends" ] || [ "$begins" = "0" ]; then
-    echo "[audit-py] 마커가 짝이 안 맞는다($f: BEGIN ${begins}개 / END ${ends}개) —" >&2
-    echo "           마커가 없으면 지우는 범위가 어긋나 비교가 뜻을 잃는다." >&2
-    exit 1
-  fi
-done
-if diff <(strip_adapter "$AUDIT_PY_SRC") <(strip_adapter "$AUDIT_PY_DEST") >/tmp/drift.$$.txt 2>&1; then
-  echo "[audit-py] OK — 어댑터 구간을 뺀 나머지가 두 트리 동일"
-else
-  echo "[audit-py] DRIFT 발견 — 어댑터 구간 밖에서 $AUDIT_PY_SRC 와 $AUDIT_PY_DEST 가 다르다:" >&2
-  sed 's/^/    /' /tmp/drift.$$.txt >&2
-  rm -f /tmp/drift.$$.txt
-  echo "           claude 트리가 원본이다. 호스트마다 달라야 하는 코드면 마커로 감싸라." >&2
-  exit 1
-fi
-rm -f /tmp/drift.$$.txt
-
-# freshness_check.py 는 codex 에서 audit 번들이 아니라 freshness 스킬에 산다. 위 디렉토리
-# 비교에서 뺐으니 여기서 따로 잠근다 — 안 그러면 이 파일만 검사 밖에 남는다.
-FRESHNESS_SRC="plugins/ai-ready/skills/audit/scripts/freshness_check.py"
-FRESHNESS_DEST="codex/plugins/ai-ready/skills/freshness/scripts/freshness_check.py"
-if diff -q "$FRESHNESS_SRC" "$FRESHNESS_DEST" >/dev/null 2>&1; then
-  echo "[audit-scripts] OK — freshness_check.py 두 트리 바이트 동일"
-else
-  echo "[audit-scripts] DRIFT 발견 — $FRESHNESS_SRC 와 $FRESHNESS_DEST 가 다르다:" >&2
-  diff "$FRESHNESS_SRC" "$FRESHNESS_DEST" | sed 's/^/    /' >&2
-  exit 1
-fi
 
 # --- 버전 드리프트: 매니페스트 셋이 같은 릴리스를 가리키나 ---
 # 릴리스마다 손으로 세 곳을 올려야 해서 실제로 갈라졌다 — 0.9.6 은 claude plugin.json 만 올라가고
@@ -202,7 +134,7 @@ fi
 # `brace-check-example` 이 있으면 건너뛴다 — 예외는 이 한 줄짜리 명시적 표시뿐이다.
 brace_bad="$(grep -rnE '\$[A-Za-z_][A-Za-z0-9_]*[가-힣]' \
   --include='*.sh' --include='*.md' --include='*.py' \
-  build core plugins codex README.md CHANGELOG.md 2>/dev/null \
+  build plugins codex README.md CHANGELOG.md 2>/dev/null \
   | grep -v 'brace-check-example' || true)"
 if [ -n "$brace_bad" ]; then
   echo "[brace] 변수 뒤에 한글이 바로 붙었다 — 셸이 그 한글까지 변수 이름으로 읽는다:" >&2
@@ -225,7 +157,7 @@ echo "[brace] OK — 변수 뒤에 한글이 바로 붙은 자리 없음"
 # 세는 값이 안내 문구에만 쓰이는데 그것 때문에 판정이 갈리는 것이 이 버그의 모양이라, 세기를
 # 없애는 쪽이 갈래를 통째로 지운다. 예외가 정말 필요하면 줄 끝에 grepc-check-example 을 단다.
 grepc_bad="$(grep -rn 'grep -c' --include='*.sh' --include='*.md' --include='*.py' \
-  build core plugins codex 2>/dev/null \
+  build plugins codex 2>/dev/null \
   | grep '|| echo' | grep -v 'grepc-check-example' || true)"
 if [ -n "$grepc_bad" ]; then
   echo "[grep-c] 일치 0건이면 값이 두 줄이 된다 — 정수 비교가 죽고 그 조건이 거짓이 된다:" >&2

@@ -32,15 +32,9 @@
   "skills": [
     "./skills/audit",
     "./skills/apply",
-    "./skills/spec",
-    "./skills/build",
-    "./skills/review",
     "./skills/lessons"
   ],
   "agents": [
-    "./agents/loop-checker.md",
-    "./agents/loop-lesson-synthesizer.md",
-    "./agents/loop-maker.md",
-    "./agents/loop-spec-checker.md"
+    "./agents/loop-lesson-synthesizer.md"
   ]
 }
