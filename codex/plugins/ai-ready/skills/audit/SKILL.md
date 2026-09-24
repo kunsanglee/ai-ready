@@ -19,10 +19,12 @@ description: "Produce a score-free gap report on whether a repository is set up 
 
 ## 사실 모으기
 
-이 스킬 폴더의 표준 라이브러리 스크립트를 돌린다.
+이 스킬 폴더(이 `SKILL.md` 가 있는 `audit/` 폴더) 안 `scripts/audit.py` 를 돌린다. 작업 폴더는 보통 대상 저장소라
+`scripts/audit.py` 를 상대 경로로 부르면 대상 저장소의 파일을 찾는다. `<audit 스킬 폴더>` 자리에 이 `SKILL.md` 가
+있는 폴더의 절대 경로를 넣는다.
 
 ```text
-python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
+python3 <audit 스킬 폴더>/scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
 ```
 
 한 줄로 부른다. 변수 대입·`{ ...; exit ...; }` 묶음을 앞에 붙이지 않고, `echo $?` 를 이어 붙이지 않는다 — 스크립트가
@@ -34,6 +36,7 @@ python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
    `scripts/check_docs.py`, 안티패턴 원장. 있음·없음·길이 과다와 문서 구조를 적는다. 기본 구조는 `AGENTS.md` 원본 +
    `@AGENTS.md` 한 줄짜리 `CLAUDE.md` 다. 옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)나 가져오기 없이 따로 있는
    두 파일은 전환 제안으로 적고 바꾸지 않는다. apply 가 만들 문서 경로가 `git check-ignore` 에 걸리면 따로 적는다.
+   무시되는 것이 `@AGENTS.md` 한 줄짜리 `CLAUDE.md`(다리 파일)뿐이면 참고로만 적는다(원본 `AGENTS.md` 는 커밋된다).
 2. 강제 수단 — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트, 매니페스트에서 추론한 확인 명령,
    CI 설정 파일 안에서 그 검사를 부르는 줄(`예`·`아니오`·`간접`·`아니오(제외됨)` — 같은 줄의 `-x test`·`-DskipTests`
    가 그 태스크를 빼면 제외됨), CI·Dockerfile 의 테스트 제외·실패 무시 줄,

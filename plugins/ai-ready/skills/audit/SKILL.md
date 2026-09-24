@@ -1,7 +1,7 @@
 ---
 name: audit
 description: 저장소를 AI 에이전트로 작업하기 좋은 상태인지 점검해 점수 없는 빈틈 보고서를 만든다. 스크립트가 사실(루트·모듈 AGENTS.md·CLAUDE.md 와 그 구조, git 이 무시하는 생성 대상 경로, docs/design 결정 기록, 검증 문서, lint·타입체커·테스트·아키텍처 테스트·pre-commit·CI 설정, CI 가 그 검사를 실제로 돌리는지, 문서 속 규칙 문장)을 모으고, 모델이 규칙 문장마다 이미 강제됨 / 싸게 강제 가능 / 강제 불가 / 코드와 어긋남 으로 나눠 권고를 낸다. Use when the user asks for an ai-ready audit, AI 준비도 점검, 에이전트용 문서 점검, "which of our documented rules are actually enforced", "문서 규칙 중 lint 로 옮길 것", "CI 가 테스트를 돌리나", module CLAUDE.md gaps, or a gap report before running ai-ready:apply.
-allowed-tools: Bash(python3:*)
+allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*)
 ---
 
 # ai-ready audit — 빈틈 보고서
@@ -31,13 +31,13 @@ allowed-tools: Bash(python3:*)
 ## 실행
 
 ```bash
-python3 <SKILL>/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md
 ```
 
-- `<SKILL>` 은 이 스킬 본문 첫머리의 "Base directory for this skill" 절대 경로, `<T>` 는 대상 저장소 절대 경로다.
-  Bash 도구의 셸에는 `$CLAUDE_PLUGIN_ROOT` 가 없으니 두 경로를 글자 그대로 넣는다.
-- 한 줄로 부른다. 변수 대입·`set -euo pipefail`·`{ ...; exit ...; }` 묶음을 앞에 붙이지 않는다 — 권한 검사가 그런
-  명령을 멈춰 세운다. 스크립트가 있는지 먼저 보려면 `test -f <SKILL>/scripts/audit.py && python3 ...` 꼴까지만 쓴다.
+- 스크립트 경로는 이미 절대 경로로 풀려 있으니 그대로 쓴다. `<T>` 는 대상 저장소 절대 경로다.
+- 이 꼴 그대로 한 줄로 부른다. 스킬이 미리 허용한 명령은 audit 스크립트 폴더의 `python3 ...` 실행뿐이다. 변수 대입·
+  `cd ... &&`·`set -euo pipefail`·`{ ...; exit ...; }` 묶음을 앞에 붙이면 이 허용에 맞지 않아 권한 확인에 걸린다.
+- 허용은 이 스킬을 부른 턴에만 있고 하위 에이전트에게 넘어가지 않는다. 스크립트는 메인 에이전트가 같은 턴에 돌린다.
 - `echo $?` 를 이어 붙이지 않는다. 스크립트가 실패하면 이유와 `종료 코드 N` 을 stderr 에 출력한다.
 
 - 규칙 문장은 기본 400줄에서 자른다. 잘렸다고 보고서 끝에 적히면 `--max-rules` 로 늘린다. 잘릴 때는 루트·모듈의
@@ -107,7 +107,7 @@ python3 <SKILL>/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md
 |---|---|---|---|
 | **A 이미 강제됨** | lint 규칙·테스트·타입·CI 가 이미 이 규칙을 어기면 실패한다 | 규칙 이름이나 테스트 경로, 그리고 CI 가 그것을 돌리는지(2절) | 문서에서는 본문을 줄이고 "→ <규칙·테스트>" 한 줄만 남긴다. CI 가 안 돌리면 그 사실을 따로 권고 |
 | **B 싸게 강제 가능** | 이 스택의 도구로 규칙 하나·테스트 하나를 더하면 강제된다 | 쓸 도구와 규칙 종류(예: eslint `no-restricted-imports`, ArchUnit 의존 규칙, ruff `banned-api`) | 강제 초안 후보. `ai-ready:apply` 가 초안을 만든다 |
-| **C 강제 불가** | 의도·트레이드오프·판단이 필요해 도구로 잡을 수 없다 | 왜 도구로 못 잡는지 한 줄 | 문서에 남긴다. 모듈 `CLAUDE.md` 의 "강제할 수 없는 규칙" 이나 안티패턴 원장에, 이유와 함께 |
+| **C 강제 불가** | 의도·트레이드오프·판단이 필요해 도구로 잡을 수 없다 | 왜 도구로 못 잡는지 한 줄 | 문서에 남긴다. 모듈 `AGENTS.md` 의 "강제할 수 없는 규칙" 이나 안티패턴 원장에, 이유와 함께 |
 | **D 어긋남·낡음** | 코드가 이미 규칙과 다르게 되어 있거나, 규칙이 가리키는 파일·API 가 없다 | 어긋난 코드 위치(`파일:줄`) | 수정 후보. 문서를 고칠지 코드를 고칠지는 사람이 정한다 |
 
 같은 규칙이 여러 문서에 되풀이되면 한 번만 분류하고 위치를 모두 적는다. 규칙이 아닌 줄(설명·이력·인용)이 섞여

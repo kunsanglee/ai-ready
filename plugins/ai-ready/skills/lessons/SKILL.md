@@ -1,7 +1,7 @@
 ---
 name: lessons
 description: 작업 세션에서 사람이 바로잡은 실수와 PR 리뷰 코멘트를 모아 같은 실수가 다시 나지 않게 하는 후보를 만들고, 한 번에 하나씩 사람의 승인을 받아 반영한다. 후보마다 먼저 도구로 강제할 수 있는지 따져 강제 초안(lint 규칙·아키텍처 테스트)을, 안 되면 이유를 붙인 안티패턴 원장 항목을, 설계 결정이면 docs/design 결정 카드를 낸다. 호출 /lessons [PR 번호]. Use when the user says "/lessons", "교훈 정리", "lesson 종합", "PR 코멘트에서 규칙 뽑아", "안티패턴 후보", or wants review feedback turned into lint rules or anti-pattern entries. 자동 반영 없음 — 사람 승인이 필수.
-allowed-tools: Bash(python3:*) Bash(bash scripts/verify.sh:*) Bash(scripts/verify.sh:*)
+allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(python3 scripts/check_docs.py*) Bash(bash scripts/verify.sh*)
 ---
 
 # lessons — 교훈을 강제 수단이나 문서로
@@ -14,6 +14,13 @@ allowed-tools: Bash(python3:*) Bash(bash scripts/verify.sh:*) Bash(scripts/verif
 1. **사람 승인 없이 반영하지 않는다.** 에이전트도 이 스킬도 초안까지만 만든다. 후보마다 추가·수정·버림을 묻는다.
 2. **강제 초안이 먼저다.** 문서 항목은 도구로 막을 수 없는 이유가 있을 때만 쓴다.
 3. **한 번에 하나씩** 묻는다. 여러 후보를 한 번의 승인으로 묶지 않는다.
+4. **스크립트는 메인 에이전트가 같은 턴에 돌린다.** `allowed-tools` 의 허용은 이 스킬을 부른 턴에만 있고, 이 스킬이
+   띄운 하위 에이전트에게는 넘어가지 않는다. 그래서:
+   - 하위 에이전트(`lesson-synthesizer` 포함)를 백그라운드로 띄우지 않는다. 결과를 받을 때까지 같은 턴에서 기다린다.
+   - ai-ready 스크립트(`python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/…`), `python3 scripts/check_docs.py`,
+     `bash scripts/verify.sh` 는 메인 에이전트가 이 문서에 적힌 꼴 그대로 한 줄로 부르고, 하위 에이전트에 넘기지 않는다.
+   - 하위 에이전트 프롬프트에는 "Read/Grep/Glob 을 쓰고 셸 명령을 묶어 쓰지 않는다" 를 넣는다.
+   - 턴이 끝난 뒤에 남은 확인은 보류로 적는다.
 
 ## 호출
 
@@ -46,8 +53,9 @@ allowed-tools: Bash(python3:*) Bash(bash scripts/verify.sh:*) Bash(scripts/verif
 
 ### 2. 초안 받기
 
-`Agent` 도구로 `lesson-synthesizer` 를 부른다. 1단계에서 정리한 텍스트와 경로를 프롬프트에 그대로 넣는다(환경변수는
-서브에이전트에 전달되지 않는다). 에이전트는 후보마다 강제 초안 / 안티패턴 원장 항목 / 결정 카드 / 버림 중 하나를 낸다.
+`Agent` 도구로 `lesson-synthesizer` 를 백그라운드가 아닌 방식으로 부른다. 1단계에서 정리한 텍스트와 경로, 그리고
+"Read/Grep/Glob 을 쓰고 셸 명령을 묶어 쓰지 않는다" 를 프롬프트에 그대로 넣는다(환경변수는 서브에이전트에 전달되지
+않는다). 에이전트는 후보마다 강제 초안 / 안티패턴 원장 항목 / 결정 카드 / 버림 중 하나를 낸다.
 
 ### 3. 하나씩 승인받기
 
@@ -71,6 +79,7 @@ allowed-tools: Bash(python3:*) Bash(bash scripts/verify.sh:*) Bash(scripts/verif
 
 ## 하지 않는 것
 
-- 사람 승인 없이 문서·설정·CI 를 고치지 않는다.
+- 사람 승인 없이 문서·설정·CI·무시 규칙(`.gitignore` 등)을 고치지 않는다.
+- 스킬 흐름 안에서 하위 에이전트를 백그라운드로 띄우거나, 스크립트 실행을 하위 에이전트에 넘기지 않는다.
 - 일회성 실수를 억지로 규칙으로 만들지 않는다.
 - 확인하지 않은 코드 위치나 도구 규칙 이름을 적지 않는다.
