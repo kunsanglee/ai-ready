@@ -207,10 +207,11 @@ def bridge_skip_note(root_claude_committed: bool) -> str:
     """무시되는 다리 파일만 건너뛸 때 사람에게 남기는 안내."""
     note = ("참고: git 이 무시하는 것은 `@AGENTS.md` 한 줄짜리 CLAUDE.md 뿐이라 그 파일만 건너뛰고 나머지는 쓴다. "
             "원본 AGENTS.md 는 커밋된다. Claude Code v2.1.277 이상은 작업 폴더와 그 위에 CLAUDE.md 가 없으면 "
-            "AGENTS.md 를 읽는다. 로컬에 개인 CLAUDE.md 가 있는 사람은 거기에 `@AGENTS.md` 를 넣어야 AGENTS.md 가 "
-            "로드된다.")
+            "AGENTS.md 를 읽는다. 로컬에 개인 CLAUDE.md 나 CLAUDE.local.md 가 있는 사람은 거기에 `@AGENTS.md` 를 "
+            "넣거나, `/config` 의 Project instructions 를 `claude-md-and-agents-md` 로 바꿔 둘 다 읽게 해야 "
+            "AGENTS.md 가 로드된다(프로젝트 설정 파일에서는 이 값을 무시한다).")
     if root_claude_committed:
-        note += ("\n  주의: 루트 CLAUDE.md 는 무시되지 않는다. 기본 설정의 Claude Code 는 작업 폴더나 그 위에 CLAUDE.md 가 "
+        note += ("\n  주의: 루트 CLAUDE.md 가 있고 git 이 무시하지 않는다. 기본 설정의 Claude Code 는 작업 폴더나 그 위에 CLAUDE.md 가 "
                  "있으면 하위 폴더의 AGENTS.md 를 읽지 않는다(https://code.claude.com/docs/en/memory). 모듈 AGENTS.md 를 "
                  "다른 사람도 읽게 하려면 모듈 CLAUDE.md 를 커밋할지 사람이 정한다.")
     return note

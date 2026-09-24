@@ -400,7 +400,8 @@ def run(target: Path, out_dir: Path, top_n: int, modules_arg: list[str] | None =
         print("  무시 규칙을 고칠지 사람에게 묻는다. 그래도 쓰려면 --force. 아무것도 쓰지 않았다.", file=sys.stderr)
         return EXIT_IGNORED
     skipped = [m for m in selected if str(m) in skip_claude]
-    note = managed_doc.bridge_skip_note("CLAUDE.md" not in (managed_doc.ignored_paths(target, ["CLAUDE.md"]) or {})) \
+    note = managed_doc.bridge_skip_note((target / "CLAUDE.md").exists()
+                                         and "CLAUDE.md" not in (managed_doc.ignored_paths(target, ["CLAUDE.md"]) or {})) \
         if skipped else ""
 
     def claude_label(m: Path, d: Path) -> str:

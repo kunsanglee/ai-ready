@@ -254,7 +254,9 @@ class TestBootstrap(unittest.TestCase):
             self.assertTrue((root / "AGENTS.md").is_file())
             self.assertTrue((root / "docs/ANTIPATTERNS.md").is_file())
             self.assertFalse((root / "CLAUDE.md").exists(), "무시되는 다리 파일은 쓰지 않는다")
-            self.assertIn("개인 CLAUDE.md 가 있는 사람은 거기에 `@AGENTS.md` 를 넣어야", r.stdout)
+            self.assertIn("CLAUDE.local.md 가 있는 사람은 거기에 `@AGENTS.md` 를 넣거나", r.stdout)
+            self.assertIn("claude-md-and-agents-md", r.stdout)
+            self.assertNotIn("루트 CLAUDE.md 가 있고", r.stdout, "루트 CLAUDE.md 가 없으면 경고하지 않는다")
             # 무시되는 자리에 개인 CLAUDE.md 가 있어도 쓰지 않을 파일이라 막지 않는다.
             _mk(root, "CLAUDE.md", "# 내 메모\n")
             self.assertEqual(_quiet(bootstrap.run, root, ["root"], [], None), bootstrap.EXIT_OK)

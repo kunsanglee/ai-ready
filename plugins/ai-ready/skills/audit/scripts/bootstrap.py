@@ -384,7 +384,7 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
               "아무것도 쓰지 않았다.", file=sys.stderr)
         return EXIT_IGNORED
     union = "design" in kinds and _needs_union_line(target)
-    note = managed_doc.bridge_skip_note("CLAUDE.md" not in ignored) if skipped else ""
+    note = managed_doc.bridge_skip_note((target / "CLAUDE.md").exists() and "CLAUDE.md" not in ignored) if skipped else ""
 
     if dry_run:
         for p in kept:
