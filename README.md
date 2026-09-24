@@ -147,18 +147,6 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 
 ---
 
-## Codex
-
-같은 저장소에 Codex 용 번들이 `codex/` 아래 있습니다. `audit`·`apply`·`lessons` 가 같은 스크립트를 쓰고, Codex 에
-없는 기능(에이전트 정의, Stop hook 설치)은 빠져 있습니다. Codex 에서는 `verify.sh` 를 직접 부르거나 CI 에 넣습니다.
-
-두 번들은 손으로 맞춥니다. 원본은 Claude 트리(`plugins/ai-ready/`)입니다. `skills/audit/scripts/` 나
-`skills/apply/references/` 를 고쳤으면 같은 파일을 `codex/plugins/ai-ready/` 아래 같은 자리에 복사하고
-`bash build/drift-test.sh` 로 두 사본이 바이트 단위로 같은지 확인합니다(`install_verify_hook.py` 는 Claude 전용이라
-비교에서 뺍니다). SKILL.md 는 호스트마다 호출 방식이 달라 따로 고칩니다.
-
----
-
 ## 저장소 구조
 
 ```
@@ -180,12 +168,11 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 │   │   └── lessons/
 │   ├── agents/lesson-synthesizer.md
 │   └── tests/                            # stdlib unittest
-├── codex/                                # Codex 번들 (스크립트는 위와 같은 내용)
-└── build/drift-test.sh                   # 두 번들의 스크립트·버전이 어긋나지 않았는지 검사
+└── build/drift-test.sh                   # 매니페스트 버전·변경 이력·셸 함정 검사
 ```
 
-시험은 `plugins/ai-ready` 에서 `python3 -m unittest discover -s tests -t .`, `codex` 에서
-`python3 -m unittest discover -s tests`, 그리고 저장소 루트에서 `bash build/drift-test.sh` 입니다.
+시험은 `plugins/ai-ready` 에서 `python3 -m unittest discover -s tests -t .`, 그리고 저장소 루트에서
+`bash build/drift-test.sh` 입니다.
 
 실제 세션으로 확인할 때는 대상 저장소를 `~/.claude` 밖 경로(예: `/tmp/ai-ready-e2e/`)에 복사해 두고
 `claude -p --plugin-dir <이 저장소>/plugins/ai-ready ...` 로 돌립니다. `~/.claude` 아래에서 돌리면 권한 검사가 그

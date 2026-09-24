@@ -11,7 +11,7 @@
   기존 위반을 고치며 운영 코드를 바꾼다. `--force` 로만 무시한다.
 - `--uninstall` 은 이 hook 만 뺀다.
 
-Claude Code 전용이다(codex 번들에는 없다). 사람이 승인한 뒤 명시적으로 실행한다.
+Claude Code 전용이다. 사람이 승인한 뒤 명시적으로 실행한다.
 
   python3 install_verify_hook.py --target <repo> [--dry-run] [--uninstall] [--force] [--timeout 600]
 """

@@ -1,66 +1,27 @@
 #!/usr/bin/env bash
-# drift-test.sh — claude 트리(plugins/ai-ready)와 codex 트리(codex/plugins/ai-ready)가 갈라지지 않았는지,
-# 매니페스트·변경 이력이 한 릴리스를 가리키는지 검사한다.
-#
-# 두 트리는 각자의 매니페스트로 로드돼 폴더 하나를 같이 쓸 수 없다. 그래서 공유 스크립트는 claude 트리를
-# 원본으로 두고 codex 트리에 손으로 복사하며, 복사가 빠진 것을 이 검사가 잡는다.
+# drift-test.sh — 매니페스트·변경 이력이 한 릴리스를 가리키는지, 셸 함정이 들어오지 않았는지 검사한다.
 #
 # exit 0 = 통과, exit 1 = 갈라짐 발견(어느 검사·어느 파일인지 출력).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# --- audit 스킬 스크립트: 두 호스트 트리의 사본이 갈라졌나 ---
-# claude 트리가 원본이고 codex 트리가 손으로 맞춘 사본이다. 한쪽만 고치면 같은 저장소를 두 호스트가
-# 다르게 진단한다.
-#
-# Stop hook 설치기는 codex 번들에 일부러 없다(Claude Code 전용 설정을 고친다 — codex/tests 의
-# test_audit_bundle_has_no_hook_installer 가 부재를 단언한다). 이 파일만 빼고 비교한다.
-AUDIT_SRC="plugins/ai-ready/skills/audit/scripts"
-AUDIT_DEST="codex/plugins/ai-ready/skills/audit/scripts"
-if diff -rq --exclude='__pycache__' --exclude='*.pyc' --exclude='install_verify_hook.py' \
-     "$AUDIT_SRC" "$AUDIT_DEST" >/tmp/drift.$$.txt 2>&1; then
-  echo "[audit-scripts] OK — 두 트리 사본이 바이트 동일"
-else
-  echo "[audit-scripts] DRIFT 발견 — $AUDIT_SRC 와 $AUDIT_DEST 가 다르다:" >&2
-  sed 's/^/    /' /tmp/drift.$$.txt >&2
-  rm -f /tmp/drift.$$.txt
-  echo "                claude 트리가 원본이다. 거기서 고치고 codex 사본에 옮겨라." >&2
-  exit 1
-fi
-rm -f /tmp/drift.$$.txt
-
-# --- apply 참고 문서: 강제 초안 예시는 두 호스트가 같은 것을 본다 ---
-if diff -rq plugins/ai-ready/skills/apply/references codex/plugins/ai-ready/skills/apply/references \
-     >/tmp/drift.$$.txt 2>&1; then
-  echo "[apply-references] OK — 두 트리 사본이 바이트 동일"
-else
-  echo "[apply-references] DRIFT 발견:" >&2
-  sed 's/^/    /' /tmp/drift.$$.txt >&2
-  rm -f /tmp/drift.$$.txt
-  exit 1
-fi
-rm -f /tmp/drift.$$.txt
-
 # --- 버전 드리프트: 매니페스트 셋이 같은 릴리스를 가리키나 ---
-# 릴리스마다 손으로 세 곳을 올려야 해서 실제로 갈라졌다 — 0.9.6 은 claude plugin.json 만 올라가고
-# marketplace.json(둘) 과 codex plugin.json 은 0.9.5 에 남았다. 설치본이 어느 버전인지 읽는 곳이
-# 서로 다른 답을 하면 "무엇이 깔려 있나" 를 아무도 결정론으로 답할 수 없다.
-# codex 는 `<버전>+codex.N` 형태라 빌드 메타(+ 뒤)를 떼고 비교한다.
+# 릴리스마다 손으로 여러 곳을 올려야 해서 실제로 갈라졌다 — 0.9.6 은 plugin.json 만 올라가고
+# marketplace.json 은 0.9.5 에 남았다. 설치본이 어느 버전인지 읽는 곳이 서로 다른 답을 하면
+# "무엇이 깔려 있나" 를 아무도 결정론으로 답할 수 없다.
 command -v jq >/dev/null 2>&1 || { echo "drift-test: 'jq' 필요 (PATH 확인)" >&2; exit 127; }
 ver_claude="$(jq -r '.version' plugins/ai-ready/.claude-plugin/plugin.json)"
-ver_codex="$(jq -r '.version' codex/plugins/ai-ready/.codex-plugin/plugin.json | sed 's/+.*//')"
 ver_mkt_meta="$(jq -r '.metadata.version' .claude-plugin/marketplace.json)"
 # 인덱스 고정(.plugins[0])이 아니라 이름으로 찾는다 — 마켓플레이스에 플러그인이 하나 더 붙으면
 # 엉뚱한 항목을 검사하게 된다.
 ver_mkt_plugin="$(jq -r '.plugins[] | select(.name == "ai-ready") | .version' .claude-plugin/marketplace.json)"
-if [ "$ver_claude" = "$ver_codex" ] && [ "$ver_claude" = "$ver_mkt_meta" ] && [ "$ver_claude" = "$ver_mkt_plugin" ]; then
-  echo "[version] OK — 매니페스트 넷 모두 $ver_claude"
+if [ "$ver_claude" = "$ver_mkt_meta" ] && [ "$ver_claude" = "$ver_mkt_plugin" ]; then
+  echo "[version] OK — 매니페스트 버전 셋 모두 $ver_claude"
 else
   echo "[version] DRIFT 발견 — 릴리스 하나를 올리며 일부만 바꿨다:" >&2
   printf '    %-34s %s\n' \
     "plugins/.../plugin.json"        "$ver_claude" \
-    "codex/.../plugin.json (+메타 뗌)" "$ver_codex" \
     "marketplace.json .metadata"     "$ver_mkt_meta" \
     "marketplace.json .plugins[0]"   "$ver_mkt_plugin" >&2
   exit 1
@@ -76,7 +37,7 @@ fi
 # CHANGELOG.md 이고, 아래 changelog 검사가 그쪽을 지킨다.
 DESC_MAX=1200
 desc_long=""
-for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json codex/plugins/ai-ready/.codex-plugin/plugin.json; do
+for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json; do
   longest="$(jq -r '[.metadata?.description, (.plugins? // [] | .[].description), .description] | map(select(. != null) | length) | max // 0' "$f")"
   # `${longest}` 의 중괄호는 장식이 아니다. 변수 바로 뒤에 한글이 붙으면 셸이 그 한글까지 변수
   # 이름으로 읽어, zsh 는 빈 문자열을 내고 bash 는 깨진 바이트를 낸다(실측). 실패 경로의 메시지라
@@ -88,14 +49,14 @@ if [ -n "$desc_long" ]; then
   echo "              플러그인 목록에서 사람이 읽는 자리다. 릴리스 이력은 CHANGELOG.md 에 쓴다." >&2
   exit 1
 fi
-echo "[description] OK — 매니페스트 셋 모두 ${DESC_MAX}자 이하"
+echo "[description] OK — 매니페스트 둘 모두 ${DESC_MAX}자 이하"
 
 # --- 설명문이 가리키는 이력 위치가 실재하나 ---
-# 설명문 넷이 "Release history lives in <파일>" 로 독자를 이력으로 보낸다. 0.9.13 에서 이력이
-# README.md 에서 CHANGELOG.md 로 옮겨졌는데 그 문장 넷은 그대로 남아 있었다 — 길이 상한만 보는
+# 설명문들이 "Release history lives in <파일>" 로 독자를 이력으로 보낸다. 0.9.13 에서 이력이
+# README.md 에서 CHANGELOG.md 로 옮겨졌는데 그 문장들은 그대로 남아 있었다 — 길이 상한만 보는
 # 위 검사가 그 거짓말에 초록을 줬다. 문구는 자유롭게 두고 가리키는 대상만 본다.
 desc_bad=""
-for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json codex/plugins/ai-ready/.codex-plugin/plugin.json; do
+for f in .claude-plugin/marketplace.json plugins/ai-ready/.claude-plugin/plugin.json; do
   while IFS= read -r target; do
     [ -z "$target" ] && continue
     [ -f "$target" ] || desc_bad="$desc_bad $f→$target"
@@ -146,7 +107,7 @@ fi
 # `brace-check-example` 이 있으면 건너뛴다 — 예외는 이 한 줄짜리 명시적 표시뿐이다.
 brace_bad="$(grep -rnE '\$[A-Za-z_][A-Za-z0-9_]*[가-힣]' \
   --include='*.sh' --include='*.md' --include='*.py' \
-  build plugins codex README.md CHANGELOG.md 2>/dev/null \
+  build plugins README.md CHANGELOG.md 2>/dev/null \
   | grep -v 'brace-check-example' || true)"
 if [ -n "$brace_bad" ]; then
   echo "[brace] 변수 뒤에 한글이 바로 붙었다 — 셸이 그 한글까지 변수 이름으로 읽는다:" >&2
@@ -169,7 +130,7 @@ echo "[brace] OK — 변수 뒤에 한글이 바로 붙은 자리 없음"
 # 세는 값이 안내 문구에만 쓰이는데 그것 때문에 판정이 갈리는 것이 이 버그의 모양이라, 세기를
 # 없애는 쪽이 갈래를 통째로 지운다. 예외가 정말 필요하면 줄 끝에 grepc-check-example 을 단다.
 grepc_bad="$(grep -rn 'grep -c' --include='*.sh' --include='*.md' --include='*.py' \
-  build plugins codex 2>/dev/null \
+  build plugins 2>/dev/null \
   | grep '|| echo' | grep -v 'grepc-check-example' || true)"
 if [ -n "$grepc_bad" ]; then
   echo "[grep-c] 일치 0건이면 값이 두 줄이 된다 — 정수 비교가 죽고 그 조건이 거짓이 된다:" >&2

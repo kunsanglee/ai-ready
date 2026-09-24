@@ -1,7 +1,7 @@
 """SKILL.md 가 적은 명령 옵션·종료 코드가 스크립트의 실제와 맞는지 본다.
 
 스킬 본문은 모델이 그대로 따라 부르는 명령이라, 없는 옵션이나 스크립트가 쓰지 않는 종료 코드를 적으면 모델이 그
-틀린 문장대로 움직인다. codex 사본(`codex/plugins/ai-ready`)이 같은 저장소에 있으면 그 SKILL.md 도 같이 본다.
+틀린 문장대로 움직인다.
 
 stdlib only. 플러그인 루트에서 `python3 -m unittest discover -s tests -t .` 로 돈다.
 """
@@ -15,7 +15,6 @@ import unittest
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-CODEX_ROOT = PLUGIN_ROOT.parent.parent / "codex" / "plugins" / "ai-ready"
 
 SCRIPT_NAME = re.compile(r"\b(audit\.py|bootstrap\.py|scaffold\.py|install_verify_hook\.py|check_docs\.py|verify\.sh)\b")
 OPTION = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
@@ -128,12 +127,6 @@ class _Checks:
 class ClaudeSkillDocs(_Checks, unittest.TestCase):
     plugin = PLUGIN_ROOT
     scripts = ("audit.py", "bootstrap.py", "scaffold.py", "install_verify_hook.py", "check_docs.py", "verify.sh")
-
-
-@unittest.skipUnless(CODEX_ROOT.is_dir(), "codex 사본이 없다(플러그인만 설치된 경우)")
-class CodexSkillDocs(_Checks, unittest.TestCase):
-    plugin = CODEX_ROOT
-    scripts = ("audit.py", "bootstrap.py", "scaffold.py", "check_docs.py", "verify.sh")
 
 
 if __name__ == "__main__":
