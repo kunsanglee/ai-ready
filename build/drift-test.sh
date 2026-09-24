@@ -30,6 +30,18 @@ else
 fi
 rm -f /tmp/drift.$$.txt
 
+# --- apply 참고 문서: 강제 초안 예시는 두 호스트가 같은 것을 본다 ---
+if diff -rq plugins/ai-ready/skills/apply/references codex/plugins/ai-ready/skills/apply/references \
+     >/tmp/drift.$$.txt 2>&1; then
+  echo "[apply-references] OK — 두 트리 사본이 바이트 동일"
+else
+  echo "[apply-references] DRIFT 발견:" >&2
+  sed 's/^/    /' /tmp/drift.$$.txt >&2
+  rm -f /tmp/drift.$$.txt
+  exit 1
+fi
+rm -f /tmp/drift.$$.txt
+
 # --- 버전 드리프트: 매니페스트 셋이 같은 릴리스를 가리키나 ---
 # 릴리스마다 손으로 세 곳을 올려야 해서 실제로 갈라졌다 — 0.9.6 은 claude plugin.json 만 올라가고
 # marketplace.json(둘) 과 codex plugin.json 은 0.9.5 에 남았다. 설치본이 어느 버전인지 읽는 곳이

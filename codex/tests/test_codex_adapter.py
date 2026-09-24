@@ -46,9 +46,11 @@ class CodexAdapterTests(unittest.TestCase):
 
     def test_audit_bundle_has_no_hook_installer(self):
         scripts = PLUGIN / "skills" / "audit" / "scripts"
-        for filename in ("scaffold.py", "stacks.py", "managed_doc.py"):
+        for filename in ("audit.py", "bootstrap.py", "scaffold.py", "stacks.py", "managed_doc.py",
+                         "project/verify.sh", "project/check_docs.py"):
             self.assertTrue((scripts / filename).is_file(), filename)
-        self.assertFalse((scripts / "install_hook.py").exists())
+        # Stop hook 설치기는 .claude/settings.json 을 고치는 Claude Code 전용 도구다.
+        self.assertFalse((scripts / "install_verify_hook.py").exists())
 
 
 if __name__ == "__main__":
