@@ -231,8 +231,11 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
         lines += [f"- `{x['where']}` — {x['label']}. TODO: 왜 빼는지, 대신 어디서 도는지 적는다" for x in enf["exclusions"]]
     lines += ["", "## 에이전트 작업 중", "",
               "Claude Code 를 쓰면 `.claude/settings.json` 의 Stop hook 이 `scripts/verify.sh --stop-hook` 을 돌린다.",
-              "실패하면 턴을 끝내지 못하고 실패 출력의 마지막 20줄을 에이전트가 받는다. 연속 3번 막히면 다음 실패는",
-              "경고만 남기고 통과시킨다.", "",
+              "실패하면 턴을 끝내지 못하고 실패 출력의 마지막 20줄을 에이전트가 받는다. 같은 작업 트리로 3번 막았으면",
+              "그 뒤로는 확인 명령을 다시 돌리지 않고 통과시키고, 작업 트리가 바뀌면 다시 센다. `scripts/verify.sh` 를",
+              "직접 부르면 늘 확인 명령을 돌린다.", "",
+              "hook 은 `scripts/verify.sh` 가 한 번 통과한 뒤에 건다. 이번 작업과 무관한 기존 위반으로 막히면 에이전트는",
+              "그 위반을 고치지 않고 멈춰서 사람에게 알린다.", "",
               "실패 출력 마지막 20줄이 가공 없이 모델에 전달되므로, 테스트가 환경변수·설정 값을 출력하지 않게 한다.", ""]
     if enf["precommit"]:
         lines += ["pre-commit: " + ", ".join(f"`{p}`" for p in enf["precommit"]), ""]

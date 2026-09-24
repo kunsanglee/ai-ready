@@ -363,23 +363,91 @@ class TestVerifySh(unittest.TestCase):
 
     def test_stop_hook_blocks_three_times_then_lets_through(self):
         (self.root / "FAIL").write_text("")
-        codes = [self._verify("--stop-hook").returncode for _ in range(5)]
-        self.assertEqual(codes, [2, 2, 2, 0, 2])
+        codes = [self._verify("--stop-hook").returncode for _ in range(3)]
+        self.assertEqual(codes, [2, 2, 2])
         (self.root / "FAIL").unlink()
         self.assertEqual(self._verify("--stop-hook").returncode, 0)
         (self.root / "FAIL").write_text("x")
         self.assertEqual(self._verify("--stop-hook").returncode, 2, "통과하면 막은 횟수가 0 으로 돌아간다")
 
+    def test_same_failing_tree_is_not_rerun_after_the_cap(self):
+        # 상한까지 막은 뒤에는 같은 작업 트리로 몇 턴을 더 끝내도 검사를 다시 돌리지 않고 통과시킨다.
+        (self.root / "FAIL").write_text("")
+        results = [self._verify("--stop-hook") for _ in range(6)]
+        self.assertEqual([r.returncode for r in results], [2, 2, 2, 0, 0, 0])
+        self.assertEqual(self._runs(), 3, "상한 뒤의 턴은 검사를 돌리지 않는다")
+        self.assertIn("다시 돌리지 않는다", results[3].stderr)
+        self.assertEqual(len(results[3].stderr.strip().splitlines()), 1, "안내는 한 줄")
 
+    def test_changed_tree_is_counted_anew(self):
+        (self.root / "FAIL").write_text("")
+        for _ in range(4):
+            self._verify("--stop-hook")
+        self.assertEqual(self._runs(), 3)
+        (self.root / "FAIL").write_text("changed")
+        codes = [self._verify("--stop-hook").returncode for _ in range(4)]
+        self.assertEqual(codes, [2, 2, 2, 0], "트리가 바뀌면 다시 막는다")
+        self.assertEqual(self._runs(), 6)
+
+    def test_manual_run_always_runs_even_after_the_cap(self):
+        (self.root / "FAIL").write_text("")
+        for _ in range(4):
+            self._verify("--stop-hook")
+        self.assertEqual(self._runs(), 3)
+        self.assertEqual(self._verify().returncode, 1)
+        self.assertEqual(self._verify().returncode, 1)
+        self.assertEqual(self._runs(), 5, "사람이 직접 부르면 매번 돈다")
+        self.assertEqual(self._verify("--stop-hook").returncode, 0, "수동 실행은 막은 횟수를 건드리지 않는다")
+        self.assertEqual(self._runs(), 5)
+
+    def test_stop_hook_failure_tells_the_agent_not_to_fix_unrelated_violations(self):
+        (self.root / "FAIL").write_text("")
+        r = self._verify("--stop-hook")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("이번 변경과 무관한 기존 위반은 고치지 말고 멈춰서 사람에게 보고한다", r.stderr)
+
+
+@unittest.skipUnless(HAS_SHELL, "bash·git 이 없다")
 class TestInstallVerifyHook(unittest.TestCase):
     def _run(self, root: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(SCRIPTS / "install_verify_hook.py"), "--target", str(root), *args],
                               capture_output=True, text=True)
 
-    def test_merges_with_existing_settings_and_is_idempotent(self):
+    @staticmethod
+    def _passed_repo(root: Path) -> None:
+        """verify.sh 가 한 번 통과한 저장소 — 통과 지문 파일이 있다."""
+        _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+        _mk(root, ".git/verify-pass", "abc\n")
+
+    def test_refuses_until_verify_has_passed_once(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            for args in ((), ("--dry-run",)):
+                r = self._run(root, *args)
+                self.assertEqual(r.returncode, install_verify_hook.EXIT_NOT_PASSED, args)
+                self.assertIn("통과", r.stderr)
+                self.assertIn(f"종료 코드 {install_verify_hook.EXIT_NOT_PASSED}", r.stderr)
+            self.assertFalse((root / ".claude/settings.json").exists())
+            self.assertEqual(self._run(root, "--force").returncode, 0)
+            self.assertTrue((root / ".claude/settings.json").is_file())
+            _mk(root, ".git/verify-pass", "abc\n")
+            self.assertEqual(self._run(root, "--uninstall").returncode, 0)
+
+    def test_uninstall_does_not_need_a_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, ".claude/settings.json", json.dumps({"hooks": {"Stop": [
+                {"hooks": [{"type": "command", "command": install_verify_hook.HOOK_COMMAND}]}]}}))
+            self.assertEqual(self._run(root, "--uninstall").returncode, 0)
+            self.assertEqual(json.loads((root / ".claude/settings.json").read_text(encoding="utf-8")), {})
+
+    def test_merges_with_existing_settings_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._passed_repo(root)
             existing = {"permissions": {"allow": ["Bash(ls:*)"]},
                         "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo other"}]}],
                                   "PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "fmt"}]}]}}
@@ -397,7 +465,7 @@ class TestInstallVerifyHook(unittest.TestCase):
     def test_uninstall_removes_only_ours(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            self._passed_repo(root)
             _mk(root, ".claude/settings.json", json.dumps({"hooks": {"Stop": [
                 {"hooks": [{"type": "command", "command": "echo other"}]}]}}))
             self._run(root)
@@ -410,7 +478,7 @@ class TestInstallVerifyHook(unittest.TestCase):
             root = Path(d)
             self.assertEqual(self._run(root).returncode, 1)
             self.assertFalse((root / ".claude/settings.json").exists())
-            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            self._passed_repo(root)
             _mk(root, ".claude/settings.json", "{ not json")
             self.assertEqual(self._run(root).returncode, 1)
             self.assertEqual((root / ".claude/settings.json").read_text(encoding="utf-8"), "{ not json")
@@ -418,7 +486,7 @@ class TestInstallVerifyHook(unittest.TestCase):
     def test_dry_run_does_not_write(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            self._passed_repo(root)
             r = self._run(root, "--dry-run")
             self.assertEqual(r.returncode, 0)
             self.assertIn("--stop-hook", r.stdout)

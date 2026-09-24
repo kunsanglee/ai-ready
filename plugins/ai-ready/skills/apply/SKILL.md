@@ -91,17 +91,25 @@ B 항목마다 [`references/enforcement-drafts.md`](references/enforcement-draft
 
 ### 5. Stop hook — `install_verify_hook.py`
 
-`scripts/verify.sh` 가 생긴 뒤, 사용자가 명시적으로 승인하면 건다.
+건 전제는 둘이다. `scripts/verify.sh` 가 있고, **이번 세션에서 `bash scripts/verify.sh` 가 한 번 이상 통과했다.**
+통과하지 못했으면 hook 을 걸지 않는다. 대신 실패 출력에서 기존 위반 목록을 뽑아 보고하고, 그 검사의 기준선
+(baseline·freeze) 방식을 제안한다. 이미 실패하는 검사를 hook 으로 걸면 에이전트가 턴을 끝내려고 이번 작업과 무관한
+기존 위반을 고치며 운영 코드를 바꾼다. 두 전제를 채웠고 사용자가 명시적으로 승인하면 건다.
 
 ```bash
-python3 "$AUDIT/scripts/install_verify_hook.py" --target <T> --dry-run   # 바뀔 settings.json 을 보여 준다
+python3 "$AUDIT/scripts/install_verify_hook.py" --target <T> --dry-run
 python3 "$AUDIT/scripts/install_verify_hook.py" --target <T>
 ```
 
-- `.claude/settings.json` 의 다른 설정은 그대로 두고 Stop hook 하나만 더한다. 이미 걸려 있으면 바꾸지 않는다.
-- 에이전트가 턴을 끝내려 할 때 verify.sh 가 돌고, 실패하면 exit 2 로 턴을 막으며 실패 출력의 마지막 20줄을 넘긴다.
-  연속 3번 막았으면 다음 실패는 경고만 남기고 통과시킨다(끝없이 막히지 않게).
-- 작업 트리가 마지막 통과 때와 같으면(`.git/verify-pass` 에 지문을 적어 둔다) 다시 돌리지 않는다.
+- 스크립트도 같은 전제를 본다. verify.sh 의 통과 기록(`git rev-parse --git-path verify-pass` 파일)이 없으면 걸지
+  않고 exit 4 로 끝난다. `--force` 로 넘기지 않는다 — 위 보고로 돌아간다.
+- `--dry-run` 은 바뀔 settings.json 을 보여 준다. `.claude/settings.json` 의 다른 설정은 그대로 두고 Stop hook 하나만
+  더한다. 이미 걸려 있으면 바꾸지 않는다.
+- 에이전트가 턴을 끝내려 할 때 verify.sh 가 돌고, 실패하면 exit 2 로 턴을 막으며 실패 출력의 마지막 20줄과 "이번
+  변경과 무관한 기존 위반은 고치지 말고 멈춰서 사람에게 보고한다" 는 줄을 넘긴다.
+- 같은 작업 트리로 3번 막았으면(`verify-fail` 에 실패한 트리의 지문을 적어 둔다) 그 뒤로는 확인 명령을 다시 돌리지
+  않고 한 줄 안내만 남기고 통과시킨다. 작업 트리가 바뀌면 다시 센다. `scripts/verify.sh` 를 직접 부르면 늘 돈다.
+- 작업 트리가 마지막 통과 때와 같으면(`verify-pass` 에 지문을 적어 둔다) 다시 돌리지 않는다.
 - 빼려면 `--uninstall`.
 
 ## 사람이 관리하는 문서 고치기

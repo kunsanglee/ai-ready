@@ -5,11 +5,13 @@
 # 작업 트리(HEAD + 커밋 안 한 변경 + 추적 안 하는 파일)가 마지막으로 통과했을 때와 같으면 다시 돌리지 않는다.
 # 이 지문에는 gitignore 된 파일(.env 등)·환경변수·도구 버전이 들어가지 않는다. 그것만 바꿨으면 지문을 지우고 돌린다:
 #   rm "$(git rev-parse --git-path verify-pass)"
-# 막은 횟수(verify-blocks)는 세션마다가 아니라 작업 트리에 하나라, 같은 작업 트리의 세션들이 함께 센다.
+# 실패한 작업 트리의 지문(verify-fail)과 그 지문으로 막은 횟수(verify-blocks)는 세션마다가 아니라 작업 트리에
+# 하나라, 같은 작업 트리의 세션들이 함께 센다.
 #
-#   scripts/verify.sh              사람·CI·에이전트가 직접 부를 때. 실패하면 exit 1
+#   scripts/verify.sh              사람·CI·에이전트가 직접 부를 때. 늘 확인 명령을 돌리고, 실패하면 exit 1
 #   scripts/verify.sh --stop-hook  Claude Code Stop hook 으로 부를 때. 실패하면 exit 2 로 턴을 막는다.
-#                                  연속 3번 막았으면 다음 실패는 경고만 남기고 통과시킨다(끝없이 막히지 않게).
+#                                  같은 작업 트리로 3번 막았으면 그 뒤로는 확인 명령을 다시 돌리지 않고 통과시킨다
+#                                  (끝없이 막히지 않게). 작업 트리가 바뀌면 다시 센다.
 set -uo pipefail
 
 # 확인 명령. 싼 것부터 둔다 — 앞에서 실패하면 뒤는 돌리지 않는다.
@@ -69,18 +71,32 @@ run_checks() {
 }
 
 pass_file="$(state_file verify-pass)"
+fail_file="$(state_file verify-fail)"
 blocks_file="$(state_file verify-blocks)"
 key="$(tree_key 2>/dev/null)" || key=""
 
+read_blocks() {
+  local n
+  n="$(cat "$blocks_file" 2>/dev/null || echo 0)"
+  case "$n" in '' | *[!0-9]*) n=0 ;; esac
+  printf '%s\n' "$n"
+}
+
 if [ -n "$key" ] && [ "$(cat "$pass_file" 2>/dev/null)" = "$key" ]; then
-  rm -f "$blocks_file"
+  rm -f "$fail_file" "$blocks_file"
   [ "$mode" = "--stop-hook" ] || echo "verify: 마지막 통과 이후 바뀐 것이 없다"
+  exit 0
+fi
+
+if [ "$mode" = "--stop-hook" ] && [ -n "$key" ] && [ "$(cat "$fail_file" 2>/dev/null)" = "$key" ] \
+  && [ "$(read_blocks)" -ge "$MAX_BLOCKS" ]; then
+  echo "verify: 이 작업 트리로 이미 ${MAX_BLOCKS}번 막았고 그 뒤로 바뀐 것이 없어 다시 돌리지 않는다. 실패는 남아 있다(scripts/verify.sh 로 확인)." >&2
   exit 0
 fi
 
 if report="$(run_checks)"; then
   [ -n "$key" ] && printf '%s\n' "$key" >"$pass_file"
-  rm -f "$blocks_file"
+  rm -f "$fail_file" "$blocks_file"
   [ "$mode" = "--stop-hook" ] || echo "verify: 통과"
   exit 0
 fi
@@ -90,15 +106,20 @@ if [ "$mode" != "--stop-hook" ]; then
   exit 1
 fi
 
-blocks="$(cat "$blocks_file" 2>/dev/null || echo 0)"
-case "$blocks" in '' | *[!0-9]*) blocks=0 ;; esac
+blocks="$(read_blocks)"
+if [ -n "$key" ] && [ "$(cat "$fail_file" 2>/dev/null)" != "$key" ]; then
+  blocks=0
+fi
+# 지문을 만들 수 없으면(커밋이 없거나 git 밖) 트리가 같은지 모르므로, 연속으로 센 횟수만 보고 한 번 통과시킨다.
 if [ "$blocks" -ge "$MAX_BLOCKS" ]; then
   rm -f "$blocks_file"
   printf '%s\n' "$report" >&2
   echo "verify: 연속 ${MAX_BLOCKS}번 막았으므로 이번에는 통과시킨다. 위 실패는 아직 남아 있다." >&2
   exit 0
 fi
+[ -n "$key" ] && printf '%s\n' "$key" >"$fail_file"
 printf '%s\n' "$((blocks + 1))" >"$blocks_file"
 printf '%s\n' "$report" >&2
-echo "verify: 확인 명령이 실패했다. 고친 뒤 끝낸다 (막은 횟수 $((blocks + 1))/${MAX_BLOCKS})." >&2
+echo "verify: 확인 명령이 실패했다. 고친 뒤 끝낸다 (이 작업 트리로 막은 횟수 $((blocks + 1))/${MAX_BLOCKS})." >&2
+echo "verify: 이번 변경과 무관한 기존 위반은 고치지 말고 멈춰서 사람에게 보고한다." >&2
 exit 2
