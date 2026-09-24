@@ -59,9 +59,10 @@ python3 "$SKILL_DIR/scripts/audit.py" --target "$TARGET" --out "$TARGET/.ai-read
   dependency-cruiser·eslint-plugin-boundaries·import-linter·go-arch-lint 등)
 - 매니페스트에서 추론한 typecheck·lint·test 명령
 - **CI 가 그 검사를 실제로 부르는지.** CI 설정 파일(GitHub Actions·GitLab·Bitbucket Pipelines·Jenkinsfile 등) 안에서
-  명령 줄을 찾아 `예`·`아니오`·`간접` 으로 적는다. `간접` 은 `./gradlew build` 처럼 그 검사를 포함할 수 있는 상위
-  태스크만 보인다는 뜻이라 사람이 확인해야 한다. CI 설정이 저장소에 없으면 `CI 없음` 이다(저장소 밖 Jenkins 등은
-  스크립트가 볼 수 없다)
+  명령 줄을 찾아 `예`·`아니오`·`간접`·`아니오(제외됨)` 으로 적는다. `간접` 은 `./gradlew build` 처럼 그 검사를 포함할
+  수 있는 상위 태스크만 보인다는 뜻이라 사람이 확인해야 한다. `test` 같은 맨 태스크 이름은 러너(gradlew·mvn·npm·
+  pytest·go·cargo·make 등)를 부르는 줄에서만 찾고, 같은 줄의 `-x test`·`-DskipTests` 가 그 태스크를 빼면
+  `아니오(제외됨)` 이다. CI 설정이 저장소에 없으면 `CI 없음` 이다(저장소 밖 Jenkins 등은 스크립트가 볼 수 없다)
 - CI·Dockerfile 에서 테스트를 빼거나 실패를 삼키는 줄: `-x test`, `-DskipTests`, `continue-on-error: true`,
   `allow_failure: true`, `|| true`, `--no-verify`
 - pre-commit 류(`.pre-commit-config.yaml`·husky·lefthook)와 `.claude/settings.json` 의 hook. hook 이 가리키는

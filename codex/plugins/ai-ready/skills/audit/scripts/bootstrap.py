@@ -12,6 +12,7 @@
 
 모든 파일은 managed_doc 규칙을 따른다. 없으면 만들고, ai-ready 서명이 있으면 다시 쓰고, 서명이 없는
 (사람이 관리하는) 파일이 하나라도 있으면 아무것도 쓰지 않고 exit 3 이다. --force 로만 덮는다.
+서명이 있는 scripts/verify.sh 라도 CHECKS 가 이번에 만들 값과 다르면 사람이 고친 것으로 보고 같은 식으로 멈춘다.
 .gitattributes 는 덮어쓰지 않고 빠진 줄만 더한다.
 
   python3 bootstrap.py --target <repo> --dry-run               # 무엇을 쓸지만 본다
@@ -49,6 +50,7 @@ SIGNATURE_MD = ("<!-- ai-ready:apply 자동 생성 초안 — 다듬은 뒤 이 
                 "ai-ready 는 이후 이 파일을 덮어쓰지 않는다 -->")
 UNION_LINE = "docs/design/*.decisions.md merge=union"
 _DOMAIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_CHECKS_BLOCK = re.compile(r"^CHECKS=\($\n(.*?)^\)$", re.M | re.S)
 
 ROLE_LABEL = {"typecheck": "타입 검사", "lint": "lint", "test": "테스트"}
 
@@ -203,7 +205,12 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
              "## 로컬에서", "", "한 번에 돌린다. 마지막 통과 이후 바뀐 것이 없으면 바로 끝난다.", "",
              "```", "scripts/verify.sh", "```", "", "`scripts/verify.sh` 가 차례로 돌리는 명령:", ""]
     lines += [f"- {ROLE_LABEL.get(role, '확인')}: `{cmd}`" for role, cmd in checks]
-    lines += ["", "명령을 바꾸려면 `scripts/verify.sh` 의 `CHECKS` 를 고치고 이 목록도 같이 고친다.", "",
+    lines += ["", "명령을 바꾸려면 `scripts/verify.sh` 의 `CHECKS` 를 고치고 이 목록도 같이 고친다. 고친 뒤 ai-ready apply 를",
+              "다시 돌려도, `CHECKS` 가 새로 만들 값과 다르면 `scripts/verify.sh` 를 덮어쓰지 않고 멈춘다(exit 3).",
+              "새 값으로 덮어쓰려면 `--force` 를 준다.", "",
+              "마지막 통과를 기억하는 지문에는 커밋·커밋 안 한 변경·추적 안 하는 파일·`CHECKS` 만 들어간다. gitignore 된 파일(`.env` 등),",
+              "환경변수, 도구 버전만 바꿨다면 지문을 지우고 다시 돌린다.", "",
+              "```", 'rm "$(git rev-parse --git-path verify-pass)"', "```", "",
               "## CI 에서", ""]
     if enf["ci_files"]:
         lines.append("CI 설정: " + ", ".join(f"`{p}`" for p in enf["ci_files"]))
@@ -212,6 +219,9 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
             row = ci_by_cmd.get(cmd)
             if row and row["ci"] == "예":
                 lines.append(f"- `{cmd}`: CI 가 돌린다 ({', '.join(row['ci_evidence'][:3])})")
+            elif row and row["ci"] == audit.CI_EXCLUDED:
+                lines.append(f"- `{cmd}`: CI 가 이 명령을 부르는 줄에서 `-x`·`-DskipTests` 같은 옵션으로 이 검사를 뺀다 "
+                             f"({', '.join(row['ci_evidence'][:3])}) — TODO: 왜 빼는지, 대신 어디서 도는지 적는다")
             else:
                 lines.append(f"- `{cmd}`: CI 설정에서 이 명령을 찾지 못했다 — TODO: CI 에 넣거나 이유를 적는다")
     else:
@@ -222,7 +232,8 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
     lines += ["", "## 에이전트 작업 중", "",
               "Claude Code 를 쓰면 `.claude/settings.json` 의 Stop hook 이 `scripts/verify.sh --stop-hook` 을 돌린다.",
               "실패하면 턴을 끝내지 못하고 실패 출력의 마지막 20줄을 에이전트가 받는다. 연속 3번 막히면 다음 실패는",
-              "경고만 남기고 통과시킨다.", ""]
+              "경고만 남기고 통과시킨다.", "",
+              "실패 출력 마지막 20줄이 가공 없이 모델에 전달되므로, 테스트가 환경변수·설정 값을 출력하지 않게 한다.", ""]
     if enf["precommit"]:
         lines += ["pre-commit: " + ", ".join(f"`{p}`" for p in enf["precommit"]), ""]
     lines += ["## 테스트 작성 규칙", "", "- TODO: 테스트를 어디에 두고 어떻게 이름 짓는지, 무엇을 가짜로 바꾸는지 적는다."]
@@ -231,6 +242,18 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
             lines.append(f"- TODO: `{legacy}` 의 내용을 이 절로 옮기고 그 파일은 지운다.")
     lines.append("")
     return "\n".join(lines)
+
+
+def checks_block(verify_sh: str) -> list[str] | None:
+    """verify.sh 의 `CHECKS=( … )` 배열 원소. 따옴표만 바꾼 것은 같은 값으로 본다. 블록을 못 찾거나 셸 문법으로
+    읽지 못하면 None."""
+    m = _CHECKS_BLOCK.search(verify_sh)
+    if not m:
+        return None
+    try:
+        return shlex.split(m.group(1), comments=True)
+    except ValueError:
+        return None
 
 
 def render_verify_sh(checks: list[tuple[str, str]]) -> str:
@@ -269,6 +292,16 @@ def _needs_union_line(target: Path) -> bool:
                    for line in text.splitlines())
 
 
+def _edited_checks(target: Path, items: list[Planned]) -> Planned | None:
+    """서명이 남은 기존 verify.sh 인데 CHECKS 가 이번에 만들 값과 다르면 그 항목."""
+    for p in items:
+        path = target / p.rel
+        if p.rel == "scripts/verify.sh" and path.is_file() and managed_doc.is_ai_ready_generated(path):
+            if checks_block(path.read_text(encoding="utf-8")) != checks_block(p.content):
+                return p
+    return None
+
+
 def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | None,
         force: bool = False, dry_run: bool = False) -> int:
     checks = _checks(target, extra_checks)
@@ -283,6 +316,17 @@ def run(target: Path, kinds: list[str], extra_checks: list[str], domain: str | N
             managed_doc.guard_overwrite(target / p.rel, force=False)
         print(f"아무것도 쓰지 않았다 — 사람이 관리하는 파일 {len(refused)}개. 그 파일은 apply 스킬에서 diff 로 고친다.",
               file=sys.stderr)
+        return EXIT_REFUSED
+    edited = _edited_checks(target, items)
+    if edited and not force:
+        now = checks_block((target / edited.rel).read_text(encoding="utf-8"))
+        keep = " ".join(f"--check {shlex.quote(c)}" for c in now) if now else "(CHECKS 를 읽지 못했다)"
+        print(f"중단: {edited.rel} 의 CHECKS 가 이번에 만들 값과 다르다 — 사람이 고친 것으로 보고 덮어쓰지 않는다.\n"
+              f"  지금 값: {now}\n"
+              f"  만들 값: {checks_block(edited.content)}\n"
+              f"  지금 값을 두려면 --only 에서 verification 을 빼거나 이 인자로 다시 돌린다: {keep}\n"
+              f"  새 값으로 덮으려면 --force.\n"
+              f"아무것도 쓰지 않았다.", file=sys.stderr)
         return EXIT_REFUSED
     union = "design" in kinds and _needs_union_line(target)
     agents_link = "root" in kinds and not (target / "AGENTS.md").exists() and not (target / "AGENTS.md").is_symlink()

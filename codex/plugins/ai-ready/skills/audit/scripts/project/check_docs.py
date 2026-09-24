@@ -38,7 +38,7 @@ CARD_HEADER = re.compile(
     r"^## (?P<title>\S.*?) · \((?P<ticket>[^()]+)\) · \[(?P<status>accepted|proposed|rejected|superseded)\]$")
 _INLINE_LINK = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
 _REF_DEF = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)")
-_FENCE = re.compile(r"^\s*(```|~~~)")
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 _INLINE_CODE = re.compile(r"`+[^`]*`+")
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 
@@ -55,15 +55,24 @@ def _rel(root: Path, p: Path) -> str:
     return str(p.relative_to(root))
 
 
+def _outside_fences(text: str):
+    """(줄 번호, 줄) — 코드 블록 안과 펜스 줄은 뺀다. 여는 펜스와 같은 문자로, 그 길이 이상일 때만 닫힌다
+    (`~~~` 블록 안의 ``` 줄은 본문이다)."""
+    fence = ""
+    for no, line in enumerate(text.splitlines(), 1):
+        m = _FENCE.match(line)
+        if not fence:
+            if m:
+                fence = m.group(1)
+            else:
+                yield no, line
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
+            fence = ""
+
+
 def _link_targets(text: str):
     """(줄 번호, 링크 대상). 코드 블록·인라인 코드 안은 뺀다."""
-    in_fence = False
-    for no, line in enumerate(text.splitlines(), 1):
-        if _FENCE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
+    for no, line in _outside_fences(text):
         m = _REF_DEF.match(line)
         if m:
             yield no, m.group(1)
@@ -91,12 +100,8 @@ def check_cards(root: Path, path: Path, text: str) -> list[str]:
     errors = []
     seen_line: dict[str, int] = {}
     seen_card: dict[tuple[str, str], tuple[int, str]] = {}
-    in_fence = False
-    for no, line in enumerate(text.splitlines(), 1):
-        if _FENCE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence or not line.startswith("## "):
+    for no, line in _outside_fences(text):
+        if not line.startswith("## "):
             continue
         where = f"{_rel(root, path)}:{no}"
         line = line.rstrip()

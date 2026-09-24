@@ -15,8 +15,8 @@
   - **lessons**: 입력을 loop 기록에서 작업 세션의 지적과 PR 리뷰 코멘트로 바꿨습니다. 에이전트 이름을 `loop-lesson-synthesizer` 에서 `lesson-synthesizer` 로 바꾸고, 후보마다 먼저 도구로 강제할 수 있는지 따지게 했습니다.
   - **바뀐 종료 코드**: `scaffold.py` 는 맞는 스택 어댑터가 없을 때 3 대신 5 로 끝납니다. 3 은 이제 "사람이 관리하는 파일이 있어 쓰지 않았다" 한 가지 뜻입니다.
   - **1.x 에서 옮기는 순서** (대상 저장소마다)
-    1. `.claude/settings.json` 의 Stop hook 중 명령에 `.ai-ready/hooks/freshness_check` 가 든 항목을 지웁니다. 2.0.0 에는 그 스크립트가 없어 매 턴 헛돕니다. 새 audit 보고서의 "로컬 강제" 절이 이 hook 을 옛 버전 hook 으로 표시합니다.
-    2. `.ai-ready/` 안의 옛 산출물(`audit.json`, `README.md`, `dashboard.html`, `history/`, `scaffolds/`, `hooks/`)과 사람이 만들었던 `config.json` 은 더 읽지 않으므로 지워도 됩니다. 새 audit 은 같은 폴더에 `gaps.md` 와 `audit-report.md` 를 쓰고, 옛 `audit-report.md` 는 새 내용으로 바뀝니다.
+    1. 먼저 `.claude/settings.json` 의 Stop hook 중 명령에 `.ai-ready/hooks/freshness_check` 가 든 항목을 지웁니다. 이 hook 은 대상 저장소 안의 `.ai-ready/hooks/freshness_check.sh` 를 부르므로 2.0.0 으로 올린 뒤에도 지우기 전까지 매 턴 계속 돕니다. 2단계에서 폴더를 먼저 지우면 이 hook 이 없는 파일을 부르게 됩니다. 새 audit 보고서의 "로컬 강제" 절이 이 hook 을 옛 버전 hook 으로 표시합니다.
+    2. 1단계를 마친 뒤 `.ai-ready/` 안의 옛 산출물(`audit.json`, `README.md`, `dashboard.html`, `history/`, `scaffolds/`, `hooks/`)과 사람이 만들었던 `config.json` 은 더 읽지 않으므로 지워도 됩니다. 새 audit 은 같은 폴더에 `gaps.md` 와 `audit-report.md` 를 쓰고, 옛 `audit-report.md` 는 새 내용으로 바뀝니다.
     3. 옛 생성 문서(`docs/INDEX.md`, `docs/ARCHITECTURE.md`, `docs/MODULE_MAP.md`)는 더 갱신되지 않습니다. 남길 것은 서명 줄을 지워 사람이 관리하는 문서로 두고, 아니면 지웁니다. 옛 `docs/INDEX.md` 의 상대 링크는 `docs/` 기준으로 풀면 깨져 있는 경우가 있어 `scripts/check_docs.py` 가 오류로 알립니다.
     4. `.loop/rubric.md` 는 더 읽지 않습니다.
     5. `docs/decisions/`·`docs/adr/` 의 ADR 은 자동으로 옮기지 않습니다. 도메인별 `docs/design/{domain}.decisions.md` 로 옮길지는 사람이 정합니다.

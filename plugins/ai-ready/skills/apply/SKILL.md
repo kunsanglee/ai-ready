@@ -46,6 +46,8 @@ python3 "$AUDIT/scripts/bootstrap.py" --target <T> --only root,design           
 - 이미 있는 파일에 ai-ready 서명(`<!-- ai-ready:apply 자동 생성 초안 ...`)이 없으면 사람이 관리하는 파일이다. 그런
   파일이 하나라도 있으면 스크립트는 아무것도 쓰지 않고 exit 3 으로 끝난다. 그 파일은 `--force` 로 덮지 말고, 아래
   "사람이 관리하는 문서 고치기" 로 처리한다.
+- 서명이 남은 `scripts/verify.sh` 라도 `CHECKS` 가 이번에 만들 값과 다르면 사람이 고친 것으로 보고 같은 exit 3 으로
+  멈춘다. 그때는 stderr 에 나온 지금 값을 `--check` 로 그대로 주거나 `--only` 에서 `verification` 을 뺀다.
 - `verification` 은 매니페스트에서 typecheck·lint·test 명령을 추론한다. 추론이 안 되면 exit 4 로 멈춘다. 그때는
   사용자에게 명령을 물어 `--check "<명령>"` 으로 준다(여러 번 줄 수 있다). 명령을 지어내지 않는다.
 - CI 한 줄 예시: `python3 scripts/check_docs.py` 를 CI 의 문서 검사 단계에 넣는다. 오류가 있으면 exit 1,

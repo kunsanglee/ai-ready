@@ -23,7 +23,8 @@ audit 스킬 폴더의 스크립트를 쓴다(`../audit/scripts/`).
   union merge 한 줄, `--design-domain` 으로 도메인 문서 쌍), `antipatterns`(빈 원장과 형식), `verification`
   (`docs/VERIFICATION.md` + `scripts/verify.sh`), `doc-check`(`scripts/check_docs.py`).
 - 사람이 관리하는 파일(ai-ready 서명이 없는 파일)이 있으면 스크립트는 아무것도 쓰지 않고 exit 3 이다. 덮어쓰지
-  말고 diff 를 보여 준 뒤 필요한 부분만 고친다.
+  말고 diff 를 보여 준 뒤 필요한 부분만 고친다. 서명이 남은 `scripts/verify.sh` 라도 `CHECKS` 가 이번에 만들 값과
+  다르면 같은 exit 3 이다. stderr 에 나온 지금 값을 `--check` 로 그대로 주거나 `verification` 을 뺀다.
 - 확인 명령을 추론하지 못하면 exit 4 다. 사용자에게 물어 `--check "<명령>"` 으로 준다. 명령을 지어내지 않는다.
 - `scaffold.py --target <target> --out <target> --dry-run` 으로 모듈 문서 초안을 만든다. 절은 하는 일 / 경계 /
   변경 방법 / 강제할 수 없는 규칙 / 강제되는 규칙(포인터만)이고, 숫자는 적지 않는다.

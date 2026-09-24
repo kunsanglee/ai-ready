@@ -30,7 +30,8 @@ python3 scripts/audit.py --target <target> --out <target>/.ai-ready/gaps.md
 1. 문서 존재 — 루트·모듈 문서, `docs/design/` 결정 기록 쌍과 union merge 설정, 검증 문서·`scripts/verify.sh`·
    `scripts/check_docs.py`, 안티패턴 원장. 있음·없음·길이 과다만 적는다.
 2. 강제 수단 — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트, 매니페스트에서 추론한 확인 명령,
-   CI 설정 파일 안에서 그 검사를 부르는 줄(`예`·`아니오`·`간접`), CI·Dockerfile 의 테스트 제외·실패 무시 줄,
+   CI 설정 파일 안에서 그 검사를 부르는 줄(`예`·`아니오`·`간접`·`아니오(제외됨)` — 같은 줄의 `-x test`·`-DskipTests`
+   가 그 태스크를 빼면 제외됨), CI·Dockerfile 의 테스트 제외·실패 무시 줄,
    pre-commit 설정.
 3. 규칙 문장 — "금지·반드시·must·never·DO NOT" 류 줄과 규칙 제목 아래 항목을 `파일:줄` 로. 분류는 없다.
 

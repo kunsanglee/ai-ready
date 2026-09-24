@@ -50,6 +50,9 @@ CI_PATHS = (
     ".drone.yml", "appveyor.yml", "cloudbuild.yaml", "cloudbuild.yml",
 )
 
+# CI 설정에 그 검사를 부르는 줄이 있지만, 같은 줄의 `-x <태스크>`·`-DskipTests` 같은 인자가 실행에서 뺀다.
+CI_EXCLUDED = "아니오(제외됨)"
+
 # 테스트·검사를 빼거나 실패를 삼키는 표시. CI 설정과 Dockerfile 에서 찾는다.
 EXCLUSION_PATTERNS = (
     (re.compile(r"(?<![\w-])-x\s+(test|check|\w*[Tt]est\w*)\b"), "gradle 태스크 제외"),
@@ -70,12 +73,13 @@ class Tool:
     name: str
     kind: str                      # lint | format | typecheck | test | arch
     evidence: list[str]            # 무엇을 보고 감지했나 (파일 경로·매니페스트 표시)
-    ci: str = "CI 없음"            # 예 | 간접 | 아니오 | CI 없음
+    ci: str = "CI 없음"            # 예 | 간접 | 아니오 | 아니오(제외됨) | CI 없음
     ci_evidence: list[str] = field(default_factory=list)
 
 
 # (이름, 종류, 설정 파일 후보, 매니페스트 안 표시, CI 에서 찾을 토큰, 간접 실행 토큰)
 # 매니페스트 표시는 package.json·pyproject.toml·setup.cfg·gradle·pom·Cargo 본문을 소문자로 합친 텍스트에서 찾는다.
+# 간접 실행 토큰 중 공백이 없는 것(`test`)은 맨 태스크 이름이라 러너 호출 줄에서만 찾는다.
 _GRADLE_INDIRECT = ("gradlew build", "gradlew check", "gradle build", "gradle check")
 _MAVEN_INDIRECT = ("mvn verify", "mvn install", "mvn package", "mvnw verify", "mvnw install", "mvnw package")
 TOOL_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...] = (
@@ -295,15 +299,61 @@ def _npm_script_tokens(target: Path, tool_tokens: tuple[str, ...]) -> tuple[str,
     return tuple(out)
 
 
-def _token_hits(lines: list[tuple[str, int, str]], tokens: tuple[str, ...]) -> list[str]:
-    """토큰이 명령으로 쓰인 줄. 뒤에 대문자로 이어지는 것은 허용한다 — gradle 태스크가 `ktlintCheck`·
+# 빌드·테스트 러너를 부르는 줄. `test` 같은 맨 태스크 이름은 이 줄에서만 찾는다 — 아니면 CI 의 job 이름
+# `test:` 나 `-x test` 가 그 태스크를 돌린다는 근거가 된다.
+_RUNNER = re.compile(r"(?<![\w.-])(?:\./)?(?:gradlew|gradle|mvnw|mvn|npm|pnpm|yarn|npx|bunx?|pytest|tox|nox|go|cargo|"
+                     r"make|python3?|uv|poetry)(?![\w-])")
+_GRADLE = re.compile(r"(?<![\w.-])(?:\./)?gradlew?(?![\w-])")
+# YAML 의 이름표 줄(`- name: Run gradle test`)은 명령이 아니다.
+_LABEL_LINE = re.compile(r"^-?\s*name\s*:")
+# 같은 줄에서 태스크를 실행에서 빼는 인자. `-x` 는 gradle 줄에서만 본다(`pytest -x` 는 다른 뜻이다).
+_GRADLE_EXCLUDE_ARG = re.compile(r"(?<![\w-])(?:-x|--exclude-task)(?:\s+|=)(\S+)")
+_MAVEN_SKIP_TESTS = re.compile(r"(?<![\w-])-DskipTests(?:=true)?(?![=\w])")
+_MAVEN_SKIP_TEST_BUILD = re.compile(r"(?<![\w-])-Dmaven\.test\.skip=true\b")
+
+
+def _token_pattern(token: str) -> re.Pattern:
+    """토큰이 명령으로 쓰인 자리. 뒤에 대문자로 이어지는 것은 허용한다 — gradle 태스크가 `ktlintCheck`·
     `detektMain` 처럼 도구 이름에 붙는다. 소문자로 이어지면 다른 낱말이다(`tsc` ≠ `tsconfig`)."""
-    patterns = [re.compile(rf"(?<![\w-]){re.escape(t)}(?![a-z0-9_-])") for t in tokens if t]
-    hits = []
+    return re.compile(rf"(?<![\w-]){re.escape(token)}(?![a-z0-9_-])")
+
+
+def _without_exclusions(text: str) -> tuple[str, set[str]]:
+    """(제외 인자를 지운 줄, 그 줄이 실행에서 빼는 태스크 이름). `-x :app:test` 는 `test` 로 센다."""
+    excluded: set[str] = set()
+    if _GRADLE.search(text):
+        excluded |= {m.group(1).rsplit(":", 1)[-1] for m in _GRADLE_EXCLUDE_ARG.finditer(text)}
+        text = _GRADLE_EXCLUDE_ARG.sub(" ", text)
+    if _MAVEN_SKIP_TESTS.search(text):
+        excluded.add("test")
+        text = _MAVEN_SKIP_TESTS.sub(" ", text)
+    if _MAVEN_SKIP_TEST_BUILD.search(text):
+        excluded |= {"test", "test-compile"}
+        text = _MAVEN_SKIP_TEST_BUILD.sub(" ", text)
+    return text, excluded
+
+
+def _ci_hits(lines: list[tuple[str, int, str]], anywhere: tuple[str, ...], bare: tuple[str, ...] = (),
+             excludes=lambda names: False) -> tuple[list[str], list[str]]:
+    """(실행 근거 줄, 제외된 줄).
+
+    anywhere 는 줄 어디서나 찾는 명령 형태(`npm test`·`gradlew build`·도구 이름), bare 는 러너 호출 줄에서만
+    찾는 맨 태스크 이름이다. 제외 인자(`-x test`·`-DskipTests`) 안에서만 보인 토큰은 근거가 아니다. 러너 호출
+    줄에서 `excludes(그 줄이 빼는 태스크 이름)` 가 참이면 토큰이 보여도 그 줄은 제외된 줄로 센다
+    (`mvn package -DskipTests` 는 `mvn test` 를 뺀 줄이다)."""
+    any_p = [_token_pattern(t) for t in anywhere if t]
+    bare_p = [_token_pattern(t) for t in bare if t]
+    hits, excluded = [], []
     for path, no, text in lines:
-        if any(p.search(text) for p in patterns):
+        runner = bool(_RUNNER.search(text)) and not _LABEL_LINE.match(text)
+        patterns = any_p + (bare_p if runner else [])
+        kept, dropped = _without_exclusions(text)
+        found = any(p.search(kept) for p in patterns)
+        if found and not excludes(dropped):
             hits.append(f"{path}:{no}")
-    return hits
+        elif found or any(p.search(text) for p in patterns) or (runner and dropped and excludes(dropped)):
+            excluded.append(f"{path}:{no}")
+    return hits, excluded
 
 
 def detect_tools(target: Path, ci_lines: list[tuple[str, int, str]], has_ci: bool) -> list[Tool]:
@@ -316,12 +366,21 @@ def detect_tools(target: Path, ci_lines: list[tuple[str, int, str]], has_ci: boo
             continue
         tool = Tool(name, kind, evidence)
         if has_ci:
-            direct = _token_hits(ci_lines, ci_tokens + _npm_script_tokens(target, ci_tokens))
-            via = _token_hits(ci_lines, indirect) if not direct else []
+            bare = tuple(t for t in indirect if " " not in t)
+            own = [_token_pattern(t) for t in ci_tokens]
+
+            def excludes(names: set[str], bare: tuple[str, ...] = bare, own: list = own) -> bool:
+                return any(n in bare or any(p.search(n) for p in own) for n in names)
+
+            direct, direct_x = _ci_hits(ci_lines, ci_tokens + _npm_script_tokens(target, ci_tokens),
+                                        excludes=excludes)
+            via, via_x = _ci_hits(ci_lines, tuple(t for t in indirect if " " in t), bare, excludes)
             if direct:
                 tool.ci, tool.ci_evidence = "예", direct
             elif via:
                 tool.ci, tool.ci_evidence = "간접(상위 태스크가 포함할 수 있음 — 확인 필요)", via
+            elif direct_x or via_x:
+                tool.ci, tool.ci_evidence = CI_EXCLUDED, sorted(set(direct_x + via_x))
             else:
                 tool.ci = "아니오"
         tools.append(tool)
@@ -338,10 +397,17 @@ def enforcement_facts(target: Path) -> dict:
     for role, cmd in commands.checks():
         row = {"role": role, "command": cmd, "ci": "CI 없음", "ci_evidence": []}
         if cis:
-            # 명령 전체가 아니라 핵심 부분(러너 이름을 뗀 태스크·스크립트 이름)으로 찾는다.
-            core = cmd.split(" ", 1)[1] if cmd.startswith(("./gradlew ", "gradle ", "./mvnw ", "mvn ")) else cmd
-            hits = _token_hits(ci_lines, (cmd, core))
-            row["ci"], row["ci_evidence"] = ("예", hits) if hits else ("아니오", [])
+            # gradle·maven 은 러너 이름을 뗀 태스크 이름으로도 찾는다(`./gradlew ktlintCheck test` 도 근거다).
+            tasks: tuple[str, ...] = ()
+            if cmd.startswith(("./gradlew ", "gradle ", "./mvnw ", "mvn ")):
+                tasks = tuple(t for t in cmd.split()[1:] if not t.startswith("-"))
+            hits, dropped = _ci_hits(ci_lines, (cmd,), tasks, lambda names, tasks=tasks: bool(names & set(tasks)))
+            if hits:
+                row["ci"], row["ci_evidence"] = "예", hits
+            elif dropped:
+                row["ci"], row["ci_evidence"] = CI_EXCLUDED, dropped
+            else:
+                row["ci"] = "아니오"
         command_rows.append(row)
 
     exclusions = []
@@ -488,7 +554,8 @@ def _yes(b: bool) -> str:
 
 def render(facts: dict) -> str:
     d, e = facts["docs"], facts["enforcement"]
-    out = [f"# ai-ready 빈틈 보고서 — `{facts['target']}`", "",
+    # 절대 경로는 이 장비의 사용자 이름·폴더 구조를 드러낸다. 저장소 이름만 적는다.
+    out = [f"# ai-ready 빈틈 보고서 — `{Path(facts['target']).name}`", "",
            "점수는 없다. 아래는 스크립트가 확인한 사실이고, 규칙 문장의 분류(A/B/C/D)는 audit 스킬이 이어서 한다.", ""]
 
     out += ["## 1. 문서 존재", ""]

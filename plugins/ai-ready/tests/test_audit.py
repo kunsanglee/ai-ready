@@ -133,6 +133,41 @@ class TestEnforcementFacts(unittest.TestCase):
             _gradle_repo(root, ci="steps:\n  - run: ./gradlew build\n")
             self.assertTrue(_tool(audit.collect(root), "ktlint")["ci"].startswith("간접"))
 
+    def test_job_name_and_excluded_task_are_not_a_test_run(self):
+        # job 이름 `test:` 과 `-x test` 의 `test` 를 근거로 삼으면 테스트를 빼는 CI 가 "예" 가 된다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _gradle_repo(root, ci="jobs:\n  test:\n    steps:\n      - run: ./gradlew bootJar -x test\n")
+            facts = audit.collect(root)
+            test_row = next(c for c in facts["enforcement"]["commands"] if c["command"] == "./gradlew test")
+            self.assertEqual(test_row["ci"], audit.CI_EXCLUDED)
+            self.assertEqual(test_row["ci_evidence"], [".github/workflows/ci.yml:4"])
+            self.assertEqual(_tool(facts, "ArchUnit")["ci"], audit.CI_EXCLUDED)
+
+    def test_umbrella_task_that_excludes_the_tool_task_is_excluded(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _gradle_repo(root, ci="steps:\n  - run: ./gradlew build -x test -x ktlintCheck\n")
+            facts = audit.collect(root)
+            self.assertEqual(_tool(facts, "ArchUnit")["ci"], audit.CI_EXCLUDED)
+            self.assertEqual(_tool(facts, "ktlint")["ci"], audit.CI_EXCLUDED)
+
+    def test_bare_task_counts_only_on_runner_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _gradle_repo(root, ci="jobs:\n  test:\n    steps:\n      - name: gradle test\n"
+                                  "      - run: ./gradlew :app:test\n")
+            test_row = next(c for c in audit.collect(root)["enforcement"]["commands"] if c["role"] == "test")
+            self.assertEqual((test_row["ci"], test_row["ci_evidence"]), ("예", [".github/workflows/ci.yml:5"]))
+
+    def test_maven_skip_tests_excludes_test_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "pom.xml", "<project/>\n")
+            _mk(root, "Jenkinsfile", "sh 'mvn package -DskipTests'\n")
+            rows = {c["command"]: c["ci"] for c in audit.collect(root)["enforcement"]["commands"]}
+            self.assertEqual(rows["mvn test"], audit.CI_EXCLUDED)
+
     def test_no_ci_file_says_so(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -244,6 +279,8 @@ class TestReportAndCli(unittest.TestCase):
                 self.assertIn(heading, text)
             self.assertIn("R1. `CLAUDE.md:1`", text)
             self.assertNotRegex(text, r"\d+\s*/\s*100|점수:")
+            self.assertIn(f"# ai-ready 빈틈 보고서 — `{root.name}`", text)
+            self.assertNotIn(str(root), text, "로컬 절대 경로를 보고서에 남기지 않는다")
 
     def test_cli_writes_out_file_and_json(self):
         with tempfile.TemporaryDirectory() as d:

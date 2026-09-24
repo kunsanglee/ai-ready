@@ -162,6 +162,40 @@ class TestBootstrap(unittest.TestCase):
             self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make check"], None), bootstrap.EXIT_OK)
             self.assertIn("'make check'", (root / "scripts/verify.sh").read_text(encoding="utf-8"))
 
+    def test_edited_checks_in_signed_verify_sh_block_the_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make a"], None), bootstrap.EXIT_OK)
+            sh = root / "scripts/verify.sh"
+            edited = sh.read_text(encoding="utf-8").replace("  'make a'", "  'make a'\n  'make b'")
+            sh.write_text(edited, encoding="utf-8")
+            doc = (root / "docs/VERIFICATION.md").read_text(encoding="utf-8")
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make a"], None), bootstrap.EXIT_REFUSED)
+            self.assertEqual(sh.read_text(encoding="utf-8"), edited, "사람이 고친 CHECKS 를 덮어쓰지 않는다")
+            self.assertEqual((root / "docs/VERIFICATION.md").read_text(encoding="utf-8"), doc, "거부되면 다른 파일도 쓰지 않는다")
+            r = subprocess.run([sys.executable, str(SCRIPTS / "bootstrap.py"), "--target", str(root),
+                                "--only", "verification", "--check", "make a"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, bootstrap.EXIT_REFUSED)
+            self.assertIn("--check 'make a' --check 'make b'", r.stderr)
+            # 같은 명령을 주면 CHECKS 가 같아 그대로 다시 쓴다.
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make a", "make b"], None), bootstrap.EXIT_OK)
+            self.assertEqual(_quiet(bootstrap.run, root, ["verification"], ["make c"], None, force=True),
+                             bootstrap.EXIT_OK)
+            self.assertEqual(bootstrap.checks_block(sh.read_text(encoding="utf-8")), ["make c"])
+
+    def test_ci_line_that_excludes_the_test_task_is_written_as_excluded(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "settings.gradle.kts", 'include(":app")\n')
+            _mk(root, "build.gradle.kts")
+            _mk(root, "gradlew", "#!/bin/sh\n")
+            _mk(root, ".github/workflows/ci.yml", "jobs:\n  test:\n    steps:\n      - run: ./gradlew bootJar -x test\n")
+            _quiet(bootstrap.run, root, ["verification"], [], None)
+            doc = (root / "docs/VERIFICATION.md").read_text(encoding="utf-8")
+            self.assertIn("- `./gradlew test`: CI 가 이 명령을 부르는 줄에서 `-x`·`-DskipTests` 같은 옵션으로 이 검사를 뺀다 "
+                          "(.github/workflows/ci.yml:4)", doc)
+            self.assertNotIn("`./gradlew test`: CI 가 돌린다", doc)
+
     def test_existing_testing_doc_is_marked_for_absorption(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -218,6 +252,18 @@ class TestCheckDocs(unittest.TestCase):
             self.assertTrue(any(e.startswith("docs/c.md") for e in errors))
             self.assertEqual(len(warnings), 2, "a.md·b.md 에 결정 카드 파일이 없다 — 경고")
 
+    def test_fence_closes_only_with_its_own_marker(self):
+        # ~~~ 블록 안의 ``` 는 펜스를 닫지 않는다. 토글로 세면 안과 밖이 뒤집힌다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "docs/a.md", "\n".join([
+                "~~~markdown", "```", "[inside](nope.md)", "```", "~~~",
+                "[after](missing.md)",
+                "````", "```", "[inside2](nope2.md)", "````",
+            ]))
+            errors, _ = check_docs.run(root, {})
+            self.assertEqual([e.split(":")[1] for e in errors], ["6"])
+
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -271,6 +317,40 @@ class TestVerifySh(unittest.TestCase):
         (self.root / "new.txt").write_text("m\n")
         self._verify()
         self.assertEqual(self._runs(), 4, "추적 안 하는 파일의 내용이 바뀌어도 다시 돈다")
+
+    def _git(self, *args: str) -> None:
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@t"}
+        subprocess.run(["git", *args], cwd=self.root, check=True, env=env, capture_output=True)
+
+    def test_committing_a_failing_change_invalidates_cache(self):
+        # 작업 트리는 깨끗한 채 HEAD 만 바뀐다. 지문에 HEAD 가 없으면 옛 통과를 그대로 믿는다.
+        self.assertEqual(self._verify().returncode, 0)
+        (self.root / "FAIL").write_text("")
+        self._git("add", "FAIL")
+        self._git("commit", "-qm", "fail")
+        self.assertEqual(self._verify().returncode, 1)
+        self.assertEqual(self._runs(), 2)
+
+    def test_staged_change_invalidates_cache(self):
+        self.assertEqual(self._verify().returncode, 0)
+        (self.root / "FAIL").write_text("")
+        self._git("add", "FAIL")
+        self.assertEqual(self._verify().returncode, 1)
+        self.assertEqual(self._runs(), 2)
+
+    def test_changed_checks_invalidate_cache(self):
+        # verify.sh 를 git 밖에 두어 파일 변경이 diff 에 잡히지 않게 한다. 그래도 CHECKS 가 바뀌면 다시 돈다.
+        (self.root / ".gitignore").write_text("scripts/verify.sh\n")
+        self._git("rm", "-q", "--cached", "scripts/verify.sh")
+        self._git("add", ".gitignore")
+        self._git("commit", "-qm", "ignore verify")
+        self._verify()
+        self._verify()
+        self.assertEqual(self._runs(), 1)
+        _mk(self.root, "scripts/verify.sh", bootstrap.render_verify_sh([("test", "echo run >> .git/count; true")]))
+        self.assertEqual(self._verify().returncode, 0)
+        self.assertEqual(self._runs(), 2)
 
     def test_failure_prints_only_last_lines(self):
         _mk(self.root, "scripts/verify.sh", bootstrap.render_verify_sh(

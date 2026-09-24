@@ -3,6 +3,9 @@
 #
 # 이 저장소의 확인 명령을 차례로 돌린다. 하나라도 실패하면 그 명령의 출력 마지막 20줄만 보여 주고 멈춘다.
 # 작업 트리(HEAD + 커밋 안 한 변경 + 추적 안 하는 파일)가 마지막으로 통과했을 때와 같으면 다시 돌리지 않는다.
+# 이 지문에는 gitignore 된 파일(.env 등)·환경변수·도구 버전이 들어가지 않는다. 그것만 바꿨으면 지문을 지우고 돌린다:
+#   rm "$(git rev-parse --git-path verify-pass)"
+# 막은 횟수(verify-blocks)는 세션마다가 아니라 작업 트리에 하나라, 같은 작업 트리의 세션들이 함께 센다.
 #
 #   scripts/verify.sh              사람·CI·에이전트가 직접 부를 때. 실패하면 exit 1
 #   scripts/verify.sh --stop-hook  Claude Code Stop hook 으로 부를 때. 실패하면 exit 2 로 턴을 막는다.
