@@ -979,21 +979,58 @@ class TestInstallVerifyHook(unittest.TestCase):
         self.assertIn("core.hooksPath", r.stderr)
         self.assertFalse(self.repo.hook.exists())
 
-    def test_empty_hooks_path_is_refused_with_how_to_unset_it(self):
-        # 빈 값이면 git 이 hook 을 찾지 못한다. 기본 폴더에 걸어도 돌지 않으므로 값을 지우라고 알린다.
+    def test_empty_hooks_path_is_refused_with_the_file_that_holds_it(self):
+        # 빈 값이면 git 이 hook 을 찾지 못한다. 기본 폴더에 걸어도 돌지 않으므로 빈 값이 든 설정 파일을 알린다.
+        # 전역 설정 파일은 git 이 경로를 따옴표로 바꿔 적는 한글·공백이 든 폴더에 둔다.
         self._pass()
-        self.repo.git("config", "core.hooksPath", "")
+        glob = self.base / "전역 설정" / "gitconfig"
+        glob.parent.mkdir()
+        glob.touch()
+        self.repo.env["GIT_CONFIG_GLOBAL"] = str(glob)
+        cases = (("로컬", os.path.realpath(self.repo.root / ".git" / "config"),
+                  lambda: self.repo.git("config", "core.hooksPath", "")),
+                 ("전역", str(glob), lambda: glob.write_text("[core]\n\thooksPath =\n")))
+        for where, path, set_empty in cases:
+            with self.subTest(where=where):
+                set_empty()
+                fix = (f"빈 값이 든 설정 파일({path})에서 빈 값인 core.hooksPath 줄을 지운다 — 어느 파일인지는 "
+                       "`git config --show-origin --get-all core.hooksPath` 로 본다")
+                r = self.repo.install()
+                self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
+                self.assertIn("중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다.\n"
+                              f"  {fix}. 지운 뒤 다시 돌린다.", r.stderr)
+                self.assertFalse(self.repo.hook.exists())
+                r = self.repo.install("--uninstall")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("core.hooksPath 가 빈 값이라 git 이 hook 을 찾지 못한다. hook 자리는 건드리지 않는다.\n"
+                              f"  {fix}", r.stdout)
+                self.repo.git("config", "--file", path, "--unset", "core.hooksPath")
+                r = self.repo.install()
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(self.repo.hook.is_file())
+                self.repo.hook.unlink()
+        env = {**self.repo.env, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": ""}
+        r = self.repo.install(env=env)
+        self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
+        self.assertIn("빈 값이 든 설정 파일(command line:)에서 빈 값인 core.hooksPath 줄을 지운다", r.stderr)
+
+    def test_removing_only_the_empty_line_leaves_the_other_hooks_path_in_the_same_file(self):
+        # 같은 파일에 .husky 와 빈 값이 함께 있으면 git 은 마지막 빈 값을 쓴다. 안내대로 빈 값인 줄만 지우면 .husky 가
+        # 남고, 그때부터는 .husky 로 거절한다.
+        self._pass()
+        self.repo.git("config", "--add", "core.hooksPath", ".husky")
+        self.repo.git("config", "--add", "core.hooksPath", "")
+        path = os.path.realpath(self.repo.root / ".git" / "config")
         r = self.repo.install()
         self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
-        self.assertIn("중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다. "
-                      "`git config --unset core.hooksPath` 로 지운 뒤 다시 돌린다 (file:.git/config)", r.stderr)
+        self.assertIn(f"빈 값이 든 설정 파일({path})에서 빈 값인 core.hooksPath 줄을 지운다", r.stderr)
+        self.repo.git("config", "--file", path, "--unset", "core.hooksPath", "^$")
+        self.assertEqual(self.repo.git("config", "--get-all", "core.hooksPath").stdout, ".husky\n")
+        r = self.repo.install()
+        self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
+        self.assertIn("중단: core.hooksPath 가 설정돼 있다 (.husky (file:.git/config))", r.stderr)
+        self.assertNotIn("빈 값", r.stderr)
         self.assertFalse(self.repo.hook.exists())
-        r = self.repo.install("--uninstall")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("core.hooksPath 가 빈 값이라(file:.git/config) git 이 hook 을 찾지 못한다", r.stdout)
-        self.assertIn("`git config --unset core.hooksPath` 로 지운다", r.stdout)
-        self.repo.git("config", "--unset", "core.hooksPath")
-        self.assertEqual(self.repo.install().returncode, 0)
 
     def test_refuses_to_touch_a_pre_push_it_did_not_install(self):
         self._pass()

@@ -270,20 +270,37 @@ class TestDocFacts(unittest.TestCase):
     @unittest.skipUnless(shutil.which("git"), "git 이 없다")
     def test_empty_core_hooks_path_is_reported_as_no_with_the_reason(self):
         # 빈 값이면 git 이 hook 을 찾지 못한다. 기본 자리에 우리 hook 이 있어도 돌지 않는다.
+        # 빈 값이 든 설정 파일을 알린다. 전역 설정 파일은 git 이 경로를 따옴표로 바꿔 적는 한글·공백이 든 폴더에 둔다.
         with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
+            root = Path(d) / "repo"
             _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
             subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
             shutil.copy(SCRIPTS / "project" / "pre-push", root / ".git" / "hooks" / "pre-push")
             (root / ".git" / "hooks" / "pre-push").chmod(0o755)
             self.assertTrue(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"], "전제: 설정이 없으면 돈다")
+
+            def assert_empty_in(path: str) -> None:
+                v = audit.doc_facts(root)["verification"]
+                self.assertTrue(v["core_hooks_path_empty"])
+                self.assertEqual(v["core_hooks_path_origin"], path)
+                self.assertIs(v["pre_push_hook_runs_verify"], False)
+                self.assertIn("git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: **아니오**(core.hooksPath 가 "
+                              f"빈 값 — git 이 hook 을 찾지 못한다. 빈 값이 든 설정 파일({path})에서 빈 값인 core.hooksPath 줄을 "
+                              "지운다 — 어느 파일인지는 `git config --show-origin --get-all core.hooksPath` 로 본다)",
+                              audit.render(audit.collect(root)))
+
+            local = os.path.realpath(root / ".git" / "config")
             subprocess.run(["git", "config", "core.hooksPath", ""], cwd=root, check=True, capture_output=True)
-            v = audit.doc_facts(root)["verification"]
-            self.assertTrue(v["core_hooks_path_empty"])
-            self.assertIs(v["pre_push_hook_runs_verify"], False)
-            self.assertIn("git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: **아니오**(core.hooksPath 가 빈 값 "
-                          "— git 이 hook 을 찾지 못한다. `git config --unset core.hooksPath` 로 지운다)",
-                          audit.render(audit.collect(root)))
+            assert_empty_in(local)
+            subprocess.run(["git", "config", "--file", local, "--unset", "core.hooksPath"], cwd=root, check=True,
+                           capture_output=True)
+            self.assertTrue(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"], "안내대로 지우면 다시 돈다")
+            glob = _mk(Path(d) / "전역 설정", "gitconfig", "[core]\n\thooksPath =\n")
+            with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(glob)}):
+                assert_empty_in(str(glob))
+                subprocess.run(["git", "config", "--file", str(glob), "--unset", "core.hooksPath"], cwd=root,
+                               check=True, capture_output=True)
+                self.assertTrue(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"])
 
     @unittest.skipUnless(shutil.which("git"), "git 이 없다")
     def test_exported_git_dir_does_not_redirect_the_target(self):

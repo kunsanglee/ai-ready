@@ -182,7 +182,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/install_verify_hook.py --targ
   `--dry-run`·설치·재실행 때마다 알리니 사용자에게 전한다), 빈 값이거나(git 이 hook 을 찾지 못한다), 같은 자리에 ai-ready 가
   설치하지 않은 pre-push 가 있거나, 그 자리가 심볼릭 링크면(가리키는 파일이 없어도) 쓰지 않고 exit 1 로 끝난다.
   스크립트가 출력한 안내(그 도구의 설정이나 기존 hook 에 `scripts/verify.sh` 를 부르는 줄을 직접 넣는다. 빈 값이면
-  `git config --unset core.hooksPath` 로 지운다)를 사용자에게 전한다.
+  빈 값이 든 설정 파일(출력에 경로가 있다)에서 빈 값인 core.hooksPath 줄을 지운다 — 어느 파일인지는
+  `git config --show-origin --get-all core.hooksPath` 로 본다)를 사용자에게 전한다.
 - hook 동작: push 하는 커밋 중 하나가 지금 체크아웃(HEAD)일 때만 `scripts/verify.sh` 를 돌리고, 실패하면 push 를
   막는다. HEAD 가 아닌 브랜치의 push 와 원격 브랜치 삭제는 확인하지 않는다. 추적하는 파일에 커밋하지 않은 변경
   (스테이징 포함)이 있으면 push 하는 커밋과 확인 대상이 달라지므로 확인하지 않고 막는다. 추적하지 않는 파일은 확인에

@@ -292,8 +292,9 @@ def doc_facts(target: Path) -> dict:
     design["union_merge"] = bool(re.search(r"^\s*docs/design/\*\.decisions\.md\s+.*merge=union", gitattributes, re.M))
 
     settings = target / ".claude" / "settings.json"
-    hooks_path = _custom_hooks_path(target)
-    hooks_path_empty = _hooks_path_value(target) == ""
+    hooks_path_setting = _hooks_path_setting(target)
+    hooks_path = _custom_hooks_path(target, hooks_path_setting and hooks_path_setting[0])
+    hooks_path_empty = hooks_path_setting is not None and hooks_path_setting[0] == ""
     verification = {
         "doc": next((p for p in ("docs/VERIFICATION.md", "VERIFICATION.md") if (target / p).is_file()), None),
         "legacy_testing_doc": next((p for p in ("docs/TESTING.md", "TESTING.md") if (target / p).is_file()), None),
@@ -301,6 +302,7 @@ def doc_facts(target: Path) -> dict:
         "doc_check_script": (target / "scripts" / "check_docs.py").is_file(),
         "core_hooks_path": hooks_path,
         "core_hooks_path_empty": hooks_path_empty,
+        "core_hooks_path_origin": hooks_path_setting[1] if hooks_path_setting else None,
         "pre_push_hook_runs_verify": False if hooks_path_empty else _pre_push_runs_verify(target, hooks_path),
         "old_stop_hook_runs_verify": any(e == "Stop" and "verify.sh" in c and "--stop-hook" in c
                                          for e, c in hook_commands(settings)),
@@ -322,17 +324,26 @@ def _git_out(target: Path, *args: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def _hooks_path_value(target: Path) -> str | None:
-    """core.hooksPath 값. 설정이 없으면 None, 빈 값이면 빈 문자열(git 이 hook 을 찾지 못한다)."""
-    raw = _git_out(target, "config", "--show-origin", "--get", "core.hooksPath")
-    return raw.partition("\t")[2] if raw else None
+def _hooks_path_setting(target: Path) -> tuple[str, str] | None:
+    """core.hooksPath 의 (값, 출처). 설정이 없으면 None, 빈 값이면 값이 빈 문자열(git 이 hook 을 찾지 못한다). 출처가
+    설정 파일이면 그 경로(상대 경로는 git 이 읽은 자리인 작업 트리 최상위 기준으로 푼다), 다른 형태면 `command line:`
+    같은 git 표기 그대로다."""
+    # -z 없이 받으면 git 이 한글 같은 문자가 든 경로를 따옴표와 8진수로 바꿔 적는다.
+    raw = _git_out(target, "config", "-z", "--show-origin", "--get", "core.hooksPath")
+    if not raw:
+        return None
+    origin, value = raw.split("\0")[:2]
+    if origin.startswith("file:"):
+        path = origin[len("file:"):]
+        top = _git_out(target, "rev-parse", "--show-toplevel")
+        origin = path if os.path.isabs(path) else os.path.normpath(Path(top or target) / path)
+    return value, origin
 
 
-def _custom_hooks_path(target: Path) -> str:
+def _custom_hooks_path(target: Path, value: str | None) -> str:
     """core.hooksPath 값. 설정이 없거나 빈 값이거나 git 기본 hooks 폴더(공통 git 폴더의 hooks)를 가리키면 빈 문자열
     — 기본 폴더면 git 은 설정이 없을 때와 같은 자리의 hook 을 돌린다. `--git-path hooks` 는 설정값을 git 규칙대로
     푼다(상대 경로는 작업 트리 최상위 기준, `~` 는 펼친다)."""
-    value = _hooks_path_value(target)
     if not value:
         return ""
     configured = _git_out(target, "rev-parse", "--git-path", "hooks")
@@ -788,7 +799,9 @@ def render(facts: dict) -> str:
     if v["pre_push_hook_runs_verify"] is None:
         pre_push = f"확인 못 함(core.hooksPath=`{v['core_hooks_path']}` — 그 도구 설정을 직접 본다)"
     elif v["core_hooks_path_empty"]:
-        pre_push = "**아니오**(core.hooksPath 가 빈 값 — git 이 hook 을 찾지 못한다. `git config --unset core.hooksPath` 로 지운다)"
+        pre_push = ("**아니오**(core.hooksPath 가 빈 값 — git 이 hook 을 찾지 못한다. 빈 값이 든 설정 파일"
+                    f"({v['core_hooks_path_origin']})에서 빈 값인 core.hooksPath 줄을 지운다 — 어느 파일인지는 "
+                    "`git config --show-origin --get-all core.hooksPath` 로 본다)")
     else:
         pre_push = "예" if v["pre_push_hook_runs_verify"] else "**아니오**"
     out.append(f"- git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: {pre_push}")

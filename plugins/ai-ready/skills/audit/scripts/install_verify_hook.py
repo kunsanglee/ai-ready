@@ -94,17 +94,35 @@ def relative_hooks_path(target: Path) -> str:
 
 def hooks_path_setting(target: Path) -> tuple[str, str] | None:
     """설정된 core.hooksPath 의 (값, 출처). 없거나 git 기본 hooks 폴더를 가리키면 None — 그때 git 은 설정이 없을 때와
-    같은 자리의 hook 을 돌린다. 빈 값이면 값이 빈 문자열이다(git 이 hook 을 찾지 못한다)."""
-    r = _git(target, "config", "--show-origin", "--get", "core.hooksPath")
-    if r is None or r.returncode != 0 or not r.stdout.strip():
+    같은 자리의 hook 을 돌린다. 빈 값이면 값이 빈 문자열이다(git 이 hook 을 찾지 못한다). 출처는 `git config
+    --show-origin` 표기(`file:<경로>`·`command line:` 등)다."""
+    # -z 없이 받으면 git 이 한글 같은 문자가 든 경로를 따옴표와 8진수로 바꿔 적는다.
+    r = _git(target, "config", "-z", "--show-origin", "--get", "core.hooksPath")
+    if r is None or r.returncode != 0 or not r.stdout:
         return None
     if _points_to_default_hooks(target):
         return None
-    origin, _, value = r.stdout.rstrip("\n").partition("\t")
+    origin, value = r.stdout.split("\0")[:2]
     return value, origin
 
 
-UNSET_HOOKS_PATH = "git config --unset core.hooksPath"
+LIST_HOOKS_PATH = "git config --show-origin --get-all core.hooksPath"
+
+
+def origin_file(target: Path, origin: str) -> str:
+    """`git config --show-origin` 의 출처를 사람이 열 경로로 바꾼다. `file:` 이면 경로만 남기고, 상대 경로는 git 이
+    읽은 자리(작업 트리 최상위, 없으면 target) 기준 절대 경로로 푼다. 다른 형태(command line 등)는 그대로 둔다."""
+    if not origin.startswith("file:"):
+        return origin
+    path = origin[len("file:"):]
+    if os.path.isabs(path):
+        return path
+    return os.path.normpath((toplevel(target) or target) / path)
+
+
+def empty_hooks_path_fix(target: Path, origin: str) -> str:
+    return (f"빈 값이 든 설정 파일({origin_file(target, origin)})에서 빈 값인 core.hooksPath 줄을 지운다 — 어느 파일인지는 "
+            f"`{LIST_HOOKS_PATH}` 로 본다")
 
 
 def is_ours(path: Path) -> bool:
@@ -216,8 +234,8 @@ def _refuse_install(target: Path, hook: Path) -> int:
         return EXIT_FAILED
     setting = hooks_path_setting(target)
     if setting and not setting[0]:
-        print(f"중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다. "
-              f"`{UNSET_HOOKS_PATH}` 로 지운 뒤 다시 돌린다 ({setting[1]})", file=sys.stderr)
+        print("중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다.\n"
+              f"  {empty_hooks_path_fix(target, setting[1])}. 지운 뒤 다시 돌린다.", file=sys.stderr)
         return EXIT_FAILED
     if setting:
         print(f"중단: core.hooksPath 가 설정돼 있다 ({setting[0]} ({setting[1]})). git 은 그 폴더의 hook 을 돌린다.\n"
@@ -248,8 +266,8 @@ def _refuse_install(target: Path, hook: Path) -> int:
 def uninstall(target: Path, hook: Path, dry_run: bool) -> None:
     setting = hooks_path_setting(target)
     if setting and not setting[0]:
-        print(f"core.hooksPath 가 빈 값이라({setting[1]}) git 이 hook 을 찾지 못한다. hook 자리는 건드리지 않는다. "
-              f"`{UNSET_HOOKS_PATH}` 로 지운다")
+        print("core.hooksPath 가 빈 값이라 git 이 hook 을 찾지 못한다. hook 자리는 건드리지 않는다.\n"
+              f"  {empty_hooks_path_fix(target, setting[1])}")
         return
     if setting:
         print(f"core.hooksPath 가 설정돼 있어({setting[0]} ({setting[1]})) hook 자리는 건드리지 않는다.")
