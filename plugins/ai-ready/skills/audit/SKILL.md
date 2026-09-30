@@ -58,8 +58,9 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <
   등을 `git check-ignore` 로 확인한다. 무시되면 만들어도 커밋되지 않고, 커밋된 옆 문서의 가져오기가 깨진다.
 - `docs/design/{domain}.md` ↔ `{domain}.decisions.md` 짝, `docs/design/README.md`,
   `.gitattributes` 의 `docs/design/*.decisions.md merge=union`
-- 검증 문서(`docs/VERIFICATION.md`), `scripts/verify.sh`, `scripts/check_docs.py`, Stop hook 이 verify.sh 를
-  부르는지, 안티패턴 원장(`docs/ANTIPATTERNS.md`)
+- 검증 문서(`docs/VERIFICATION.md`), `scripts/verify.sh`, `scripts/check_docs.py`, 이 clone 의 git pre-push hook 이
+  verify.sh 를 부르는지(hook 은 clone 마다 따로 걸어 저장소에는 없다. `core.hooksPath` 가 git 기본 hooks 폴더가 아닌
+  곳을 가리키면 확인 못 함으로 적는다), 안티패턴 원장(`docs/ANTIPATTERNS.md`)
 
 **2. 강제 수단**
 

@@ -10,7 +10,7 @@ AI 에이전트가 일하기 좋은 저장소를 만들고 유지하는 Claude C
 | 스킬 | 하는 일 |
 |---|---|
 | `ai-ready:audit` | 점수 없는 빈틈 보고서. 문서가 있나, 검사 도구가 있고 CI 가 실제로 돌리나, 문서 속 규칙이 이미 강제되나 |
-| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, Stop hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
+| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, PR 올리기 전 git pre-push hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
 | `ai-ready:lessons` | 작업 중 사람이 바로잡은 실수와 PR 리뷰 코멘트를 강제 초안이나 문서 항목 초안으로 만들고, 하나씩 승인받아 반영한다 |
 
 ---
@@ -69,8 +69,8 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 
 - `.ai-ready/gaps.md` (스크립트)
   1. **문서 존재** — 루트·모듈별 `AGENTS.md`·`CLAUDE.md`(길이 과다 표시)와 둘의 구조, git 이 무시하는 생성 대상
-     경로(`git check-ignore`), `docs/design` 의 결정 기록 쌍과 union merge 설정, 검증 문서, `verify.sh`, Stop hook,
-     안티패턴 원장. 옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)는 전환 제안으로만 적고 바꾸지 않습니다
+     경로(`git check-ignore`), `docs/design` 의 결정 기록 쌍과 union merge 설정, 검증 문서, `verify.sh`, 이 clone 의
+     pre-push hook, 안티패턴 원장. 옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)는 전환 제안으로만 적고 바꾸지 않습니다
   2. **강제 수단** — 감지된 lint·formatter·타입체커·테스트 러너·아키텍처 테스트·pre-commit·CI 설정, 그리고 CI
      설정 안에서 그 검사를 실제로 부르는 줄. CI·Dockerfile 에서 테스트를 빼거나(`-x test`, `-DskipTests`) 실패를
      삼키는(`|| true`, `continue-on-error`) 줄
@@ -95,7 +95,7 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 | `docs/design/{domain}.md` + `{domain}.decisions.md` | 지금 동작은 고쳐 쓰고, 결정은 카드를 맨 위에 더한다. 카드 제목은 `## 제목 · (티켓) · [accepted\|proposed\|rejected\|superseded]`, 읽을 때는 `grep -n '^## '`. `.gitattributes` 의 `merge=union` 으로 병합 충돌을 피한다 |
 | `docs/ANTIPATTERNS.md` | 빈 원장과 항목 형식(DO NOT / 이유 / 대신 / 강제 수단 또는 강제 불가 / 출처) |
 | `docs/VERIFICATION.md` + `scripts/verify.sh` | 매니페스트에서 추론한 typecheck·lint·test 를 차례로 돌린다. 실패하면 마지막 20줄만 보여 준다. 작업 트리가 마지막 통과 때와 같으면 다시 돌리지 않는다 |
-| Stop hook | `verify.sh` 가 통과한 기록이 남아 있을 때만(실패하면 기록을 지운다) `.claude/settings.json` 에 `verify.sh --stop-hook` 을 병합한다. 실패하면 에이전트가 턴을 끝내지 못한다. 같은 작업 트리로 3번 막은 뒤에는 검사를 다시 돌리지 않고 통과시키고, 트리가 바뀌면 다시 센다 |
+| git pre-push hook | `verify.sh` 가 통과한 기록이 남아 있을 때만(실패하면 기록을 지운다) 이 clone 에 건다. clone 마다 따로 걸고 커밋되지 않는다. push 하는 커밋이 지금 체크아웃(HEAD)이면 `verify.sh` 를 돌리고, 실패하면 push 를 막는다. 추적하는 파일에 커밋하지 않은 변경이 있으면 확인 대상이 push 하는 커밋과 달라지므로 막는다. `core.hooksPath` 가 git 기본 hooks 폴더가 아닌 곳을 가리키거나 다른 pre-push 가 있거나 그 자리가 심볼릭 링크면 쓰지 않고, 직접 한 줄을 넣는 방법을 알린다 |
 | `scripts/check_docs.py` | 깨진 상대 링크, 결정 카드 제목 형식, union merge 로 생긴 중복 카드, frontmatter 필수 키. CI 에 한 줄로 넣는다 |
 | 강제 초안 | audit 의 B 항목을 ArchUnit·detekt·eslint(`no-restricted-imports`)·dependency-cruiser·ruff(`banned-api`)·import-linter·clippy 규칙이나 테스트로. 오류 메시지에 "대신 X" 를 넣고, 기존 위반은 기준 파일로 묶는다 |
 
@@ -161,9 +161,10 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 │   │   │       ├── stacks.py             # 모듈 기준점 · 확인 명령 추론
 │   │   │       ├── scaffold.py           # 모듈 AGENTS.md 초안 + 가져오는 CLAUDE.md
 │   │   │       ├── bootstrap.py          # 루트 문서 · 결정 기록 · 원장 · 검증 문서 초안
-│   │   │       ├── install_verify_hook.py
+│   │   │       ├── install_verify_hook.py  # 대상 clone 에 pre-push hook 설치
 │   │   │       ├── managed_doc.py        # 사람이 관리하는 파일을 덮지 않는 규칙
-│   │   │       └── project/              # 대상 저장소로 복사되는 verify.sh · check_docs.py
+│   │   │       └── project/              # 대상 저장소로 복사되는 verify.sh · check_docs.py,
+│   │   │                                 # 대상 clone 의 .git/hooks 에 설치되는 pre-push
 │   │   ├── apply/                        # + references/enforcement-drafts.md
 │   │   └── lessons/
 │   ├── agents/lesson-synthesizer.md

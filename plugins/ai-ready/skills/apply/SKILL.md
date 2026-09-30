@@ -1,6 +1,6 @@
 ---
 name: apply
-description: ai-ready:audit 의 빈틈 보고서(.ai-ready/gaps.md, audit-report.md)를 읽고, 사람이 승인한 것만 적용한다. 없는 문서의 초안(짧은 루트 AGENTS.md 와 그것을 가져오는 CLAUDE.md, 모듈 AGENTS.md, docs/design 결정 기록 쌍, 안티패턴 원장, 검증 문서), 문서 정합 검사 스크립트, scripts/verify.sh 와 Claude Code Stop hook, 그리고 문서에만 있던 규칙을 lint·아키텍처 테스트로 옮기는 강제 초안(ArchUnit, eslint no-restricted-imports, dependency-cruiser, ruff banned-api, import-linter, detekt 등)을 만든다. Use when the user asks to apply ai-ready audit results, "문서 규칙을 lint 로 옮겨", create verify.sh or a Stop hook that runs checks, set up docs/design decision records, or scaffold module AGENTS.md/CLAUDE.md files.
+description: ai-ready:audit 의 빈틈 보고서(.ai-ready/gaps.md, audit-report.md)를 읽고, 사람이 승인한 것만 적용한다. 없는 문서의 초안(짧은 루트 AGENTS.md 와 그것을 가져오는 CLAUDE.md, 모듈 AGENTS.md, docs/design 결정 기록 쌍, 안티패턴 원장, 검증 문서), 문서 정합 검사 스크립트, scripts/verify.sh 와 그것을 PR 올리기 전에 돌리는 git pre-push hook, 그리고 문서에만 있던 규칙을 lint·아키텍처 테스트로 옮기는 강제 초안(ArchUnit, eslint no-restricted-imports, dependency-cruiser, ruff banned-api, import-linter, detekt 등)을 만든다. Use when the user asks to apply ai-ready audit results, "문서 규칙을 lint 로 옮겨", create verify.sh or a git pre-push hook that runs checks, set up docs/design decision records, or scaffold module AGENTS.md/CLAUDE.md files.
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(python3 scripts/check_docs.py*) Bash(bash scripts/verify.sh*)
 ---
 
@@ -53,7 +53,7 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(p
 | `root` | 루트 `AGENTS.md`(원본) + `@AGENTS.md` 한 줄짜리 `CLAUDE.md`. 확인 명령, 문서 지도(이럴 때 → 이 문서), 강제할 수 없는 규칙 자리만 둔다. 서명 줄은 `AGENTS.md` 첫 줄에 있다 |
 | `design` | `docs/design/README.md`(카드 형식·읽는 법), `.gitattributes` 에 `docs/design/*.decisions.md merge=union` 한 줄. `--design-domain <이름>` 을 주면 `<이름>.md`(현재 동작)와 `<이름>.decisions.md`(결정 카드)도 |
 | `antipatterns` | `docs/ANTIPATTERNS.md` — 빈 원장과 항목 형식(DO NOT / 이유 / 대신 / 강제 수단 또는 강제 불가 / 출처) |
-| `verification` | `docs/VERIFICATION.md`(로컬·CI·에이전트 작업 중에 무엇이 도나) + `scripts/verify.sh` |
+| `verification` | `docs/VERIFICATION.md`(로컬·CI 에서 무엇이 도나) + `scripts/verify.sh` |
 | `doc-check` | `scripts/check_docs.py` — 깨진 상대 링크, 결정 카드 제목 형식, union merge 로 생긴 중복 카드, frontmatter 필수 키 |
 
 ```bash
@@ -85,9 +85,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/bootstrap.py --target <T> --o
   로 처리한다.
 - `scripts/verify.sh` 가 고쳐졌으면 stderr 에 지금 `CHECKS` 와 만들 `CHECKS` 가 나온다. 지금 파일을 두려면 `--only`
   에서 `verification` 을 뺀다. 고치지 않은 `verify.sh` 를 다른 `CHECKS` 로 다시 쓰면 출력에 "CHECKS 가 바뀐다" 가
-  붙으니 사용자에게 알린다.
+  붙으니 사용자에게 알린다. 지금 명령을 이어 쓰려면 `scripts/verify.sh` 의 `CHECKS=(` 와 `)` 사이 줄(한 줄이 명령
+  하나)을 줄마다 그대로 `--check` 뒤에 붙여 다시 돌린다.
 - `verification` 은 매니페스트에서 typecheck·lint·test 명령을 추론한다. 추론이 안 되면 exit 4 로 멈춘다. 그때는
-  사용자에게 명령을 물어 `--check "<명령>"` 으로 준다(여러 번 줄 수 있다). 명령을 지어내지 않는다.
+  사용자에게 명령을 물어 `--check "<명령>"` 으로 준다(여러 번 줄 수 있다). `scripts/verify.sh` 가 이미 있으면 그
+  `CHECKS` 를 보여 주고 이어 쓸지 묻는다. 명령을 지어내지 않는다.
 - CI 한 줄 예시: `python3 scripts/check_docs.py` 를 CI 의 문서 검사 단계에 넣는다. 오류가 있으면 exit 1,
   경고만 있으면 exit 0 이다.
 
@@ -144,12 +146,13 @@ B 항목마다 [`references/enforcement-drafts.md`](references/enforcement-draft
 - 설계 결정에 해당하는 것은 `docs/design/<도메인>.decisions.md` 맨 위에 새 카드 초안
   (`## 제목 · (티켓) · [proposed]`)으로 낸다. 옛 카드 본문은 고치지 않는다.
 
-### 5. Stop hook — `install_verify_hook.py`
+### 5. PR 올리기 전 hook — `install_verify_hook.py`
 
-건 전제는 둘이다. `scripts/verify.sh` 가 있고, **이번 세션에서 `bash scripts/verify.sh` 가 한 번 이상 통과했다.**
-통과하지 못했으면 hook 을 걸지 않는다. 대신 실패 출력에서 기존 위반 목록을 뽑아 보고하고, 그 검사의 기준선
-(baseline·freeze) 방식을 제안한다. 이미 실패하는 검사를 hook 으로 걸면 에이전트가 턴을 끝내려고 이번 작업과 무관한
-기존 위반을 고치며 운영 코드를 바꾼다. 두 전제를 채웠고 사용자가 명시적으로 승인하면 건다.
+push 하기 전에 `scripts/verify.sh` 를 돌리는 git pre-push hook 을 대상 clone 에 건다. 거는 전제는 둘이다.
+`scripts/verify.sh` 가 있고, **이번 세션에서 `bash scripts/verify.sh` 가 한 번 이상 통과했다.** 통과하지 못했으면
+hook 을 걸지 않는다. 대신 실패 출력에서 기존 위반 목록을 뽑아 보고하고, 그 검사의 기준선(baseline·freeze) 방식을
+제안한다. 이미 실패하는 검사를 hook 으로 걸면 push 가 막히고, push 하려고 이번 작업과 무관한 기존 위반을 고치며
+운영 코드를 바꾸게 된다. 두 전제를 채웠고 사용자가 명시적으로 승인하면 건다.
 
 ```bash
 bash scripts/verify.sh
@@ -166,17 +169,32 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/install_verify_hook.py --targ
 첫 명령은 대상 저장소를 작업 폴더로 두고 돌린다(통과 확인). 통과한 뒤에 `--dry-run` 결과를 보여 주고, 승인을 받아
 마지막 명령을 돌린다.
 
-- 스크립트도 같은 전제를 본다. verify.sh 의 통과 기록(`git rev-parse --git-path verify-pass` 파일)이 없거나 Stop hook
-  실행의 실패 기록(`verify-fail`)이 있으면 걸지 않고 exit 4 로 끝난다. verify.sh 는 실패하면 통과 기록을 지우므로,
-  한 번 통과한 뒤 커밋으로 깨진 저장소도 여기서 걸린다. `--force` 로 넘기지 않는다 — 위 보고로 돌아간다.
-- `--dry-run` 은 바뀔 settings.json 을 보여 준다. `.claude/settings.json` 의 다른 설정은 그대로 두고 Stop hook 하나만
-  더한다. 이미 걸려 있으면 바꾸지 않는다.
-- 에이전트가 턴을 끝내려 할 때 verify.sh 가 돌고, 실패하면 exit 2 로 턴을 막으며 실패 출력의 마지막 20줄과 "이번
-  변경과 무관한 기존 위반은 고치지 말고 멈춰서 사람에게 보고한다" 는 줄을 넘긴다.
-- 같은 작업 트리로 3번 막았으면(`verify-fail` 에 실패한 트리의 지문을 적어 둔다) 그 뒤로는 확인 명령을 다시 돌리지
-  않고 한 줄 안내만 남기고 통과시킨다. 작업 트리가 바뀌면 다시 센다. `scripts/verify.sh` 를 직접 부르면 늘 돈다.
-- 작업 트리가 마지막 통과 때와 같으면(`verify-pass` 에 지문을 적어 둔다) 다시 돌리지 않는다.
-- 빼려면 `--uninstall`.
+- 스크립트도 같은 전제를 본다. 저장소 최상위(`git rev-parse --show-toplevel`)에 `scripts/verify.sh` 가 없으면 exit 1
+  로 끝난다. hook 이 부르는 자리가 여기라서 `--target` 이 하위 폴더여도 최상위를 본다. verify.sh 의 통과 기록
+  (`git rev-parse --git-path verify-pass` 파일)이 없으면 걸지 않고 exit 4 로 끝난다. verify.sh 는 실패하면 통과
+  기록을 지우므로, 한 번 통과한 뒤 커밋으로 깨진 저장소도 여기서 걸린다. 이때는 위 보고로 돌아간다.
+- `--dry-run` 은 아무것도 쓰지 않고, 설치할 자리와 hook 내용(같은 hook 이 이미 있으면 "변경 없음"), `.claude/settings.json`
+  에서 지울 옛 Stop hook 을 보여 준다.
+- 설치 자리는 `git rev-parse --git-path hooks/pre-push` 다. 연결 워크트리에서 불러도 공통 git 폴더에 들어가 그 clone 의
+  모든 워크트리에 걸린다. hook 은 clone 마다 따로 걸고 커밋되지 않는다. 다른 사람의 clone 에는 걸리지 않는다.
+- `core.hooksPath` 가 git 기본 hooks 폴더가 아닌 곳을 가리키거나(husky·lefthook 같은 도구가 관리하는 폴더일 수 있다.
+  기본 폴더를 가리키는 값은 설정이 없는 것과 같이 다룬다. 그 값이 상대 경로면 연결 워크트리에서는 hook 이 돌지 않아
+  설치를 마칠 때 알리니 사용자에게 전한다), 같은 자리에 ai-ready 가
+  설치하지 않은 pre-push 가 있거나, 그 자리가 심볼릭 링크면(가리키는 파일이 없어도) 쓰지 않고 exit 1 로 끝난다.
+  스크립트가 출력한 안내(그 도구의 설정이나 기존 hook 에 `scripts/verify.sh` 를 부르는 줄을 직접 넣는다)를 사용자에게
+  전한다.
+- hook 동작: push 하는 커밋 중 하나가 지금 체크아웃(HEAD)일 때만 `scripts/verify.sh` 를 돌리고, 실패하면 push 를
+  막는다. HEAD 가 아닌 브랜치의 push 와 원격 브랜치 삭제는 확인하지 않는다. 추적하는 파일에 커밋하지 않은 변경
+  (스테이징 포함)이 있으면 push 하는 커밋과 확인 대상이 달라지므로 확인하지 않고 막는다. 추적하지 않는 파일은 확인에
+  들어간다는 안내만 한다. 지금 체크아웃에 `scripts/verify.sh` 가 없으면 확인하지 않는다. 주석 달린 태그는 가리키는
+  커밋으로 HEAD 와 비교한다. verify.sh 는 `bash` 로 부르므로 실행 권한이 없어도 돈다.
+- 확인 없이 보내려면 `git push --no-verify` 를 쓴다. 이 우회는 사용자가 정한다.
+- 옛 Stop hook: 2.0 이 `.claude/settings.json` 에 건 verify.sh Stop hook 항목은 설치할 때 지운다. `--target` 과
+  저장소 최상위의 settings.json 을 둘 다 본다. 위의 이유로 설치를 거절할 때(exit 1·4)도 이 항목은 먼저 지우고 같은
+  종료 코드로 끝난다. `--dry-run` 이면 지울 항목을 보여 주기만 한다. 다른 설정은 그대로 둔다. 지운 파일이 git 이 추적하는 파일이면 스크립트가 "커밋해야 한다" 고 출력하니 사용자에게
+  알린다. settings.json 이 JSON 으로 읽히지 않으면 손대지 않고 경고만 한 뒤 설치는 계속한다.
+- 빼려면 `--uninstall`. ai-ready 가 설치한 pre-push 와 옛 Stop hook 항목만 지운다. `core.hooksPath` 가 기본 hooks
+  폴더가 아닌 곳을 가리키면 hook 자리는 건드리지 않고(안내 한 줄) 옛 Stop hook 항목만 지운다.
 
 ## 사람이 관리하는 문서 고치기
 

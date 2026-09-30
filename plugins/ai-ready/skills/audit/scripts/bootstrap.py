@@ -210,15 +210,17 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
     enf = audit.enforcement_facts(target)
     ci_by_cmd = {row["command"]: row for row in enf["commands"]}
     lines = [SIGNATURE_MD, "# 검증", "", "무엇을 어떻게 돌려 확인하는지 한 곳에 적는다.", "",
-             "## 로컬에서", "", "한 번에 돌린다. 마지막 통과 이후 바뀐 것이 없으면 바로 끝난다.", "",
+             "## 로컬에서", "", "PR 을 올리기 전에 돌린다. 마지막 통과 이후 바뀐 것이 없으면 바로 끝난다.", "",
              "```", "scripts/verify.sh", "```", "", "`scripts/verify.sh` 가 차례로 돌리는 명령:", ""]
     lines += [f"- {ROLE_LABEL.get(role, '확인')}: `{cmd}`" for role, cmd in checks]
     lines += ["", "명령을 바꾸려면 `scripts/verify.sh` 의 `CHECKS` 를 고치고 이 목록도 같이 고친다. 고친 파일은 첫머리 서명 줄을",
               "남겨 둬도 ai-ready apply 가 다시 덮어쓰지 않고 멈춘다(exit 3). 다시 만들려면 파일을 지우고 돌린다.", "",
               "마지막 통과를 기억하는 지문에는 커밋·커밋 안 한 변경·추적 안 하는 파일·`CHECKS` 만 들어간다. gitignore 된 파일(`.env` 등),",
               "환경변수, 도구 버전만 바꿨다면 지문을 지우고 다시 돌린다.", "",
-              "```", 'rm "$(git rev-parse --git-path verify-pass)"', "```", "",
-              "## CI 에서", ""]
+              "```", 'rm "$(git rev-parse --git-path verify-pass)"', "```", ""]
+    if enf["precommit"]:
+        lines += ["pre-commit: " + ", ".join(f"`{p}`" for p in enf["precommit"]), ""]
+    lines += ["## CI 에서", ""]
     if enf["ci_files"]:
         lines.append("CI 설정: " + ", ".join(f"`{p}`" for p in enf["ci_files"]))
         lines.append("")
@@ -236,17 +238,7 @@ def render_verification(target: Path, checks: list[tuple[str, str]]) -> str:
     if enf["exclusions"]:
         lines += ["", "테스트를 빼거나 실패를 무시하는 줄:"]
         lines += [f"- `{x['where']}` — {x['label']}. TODO: 왜 빼는지, 대신 어디서 도는지 적는다" for x in enf["exclusions"]]
-    lines += ["", "## 에이전트 작업 중", "",
-              "Claude Code 를 쓰면 `.claude/settings.json` 의 Stop hook 이 `scripts/verify.sh --stop-hook` 을 돌린다.",
-              "실패하면 턴을 끝내지 못하고 실패 출력의 마지막 20줄을 에이전트가 받는다. 같은 작업 트리로 3번 막았으면",
-              "그 뒤로는 확인 명령을 다시 돌리지 않고 통과시키고, 작업 트리가 바뀌면 다시 센다. `scripts/verify.sh` 를",
-              "직접 부르면 늘 확인 명령을 돌린다.", "",
-              "hook 은 `scripts/verify.sh` 가 한 번 통과한 뒤에 건다. 이번 작업과 무관한 기존 위반으로 막히면 에이전트는",
-              "그 위반을 고치지 않고 멈춰서 사람에게 알린다.", "",
-              "실패 출력 마지막 20줄이 가공 없이 모델에 전달되므로, 테스트가 환경변수·설정 값을 출력하지 않게 한다.", ""]
-    if enf["precommit"]:
-        lines += ["pre-commit: " + ", ".join(f"`{p}`" for p in enf["precommit"]), ""]
-    lines += ["## 테스트 작성 규칙", "", "- TODO: 테스트를 어디에 두고 어떻게 이름 짓는지, 무엇을 가짜로 바꾸는지 적는다."]
+    lines += ["", "## 테스트 작성 규칙", "", "- TODO: 테스트를 어디에 두고 어떻게 이름 짓는지, 무엇을 가짜로 바꾸는지 적는다."]
     for legacy in ("docs/TESTING.md", "TESTING.md"):
         if (target / legacy).is_file():
             lines.append(f"- TODO: `{legacy}` 의 내용을 이 절로 옮기고 그 파일은 지운다.")

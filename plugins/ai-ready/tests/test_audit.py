@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = PLUGIN_ROOT / "skills" / "audit" / "scripts"
@@ -21,6 +22,25 @@ sys.path.insert(0, str(SCRIPTS))
 
 import audit  # noqa: E402
 import stacks  # noqa: E402
+
+_isolation: list = []
+
+
+def setUpModule():
+    # 사용자 전역·시스템 git 설정(core.hooksPath·core.excludesFile 등)이 시험에 끼지 않게 한다. audit 은 이 프로세스의
+    # 환경으로 git 을 부르므로 os.environ 을 바꾼다.
+    tmp = tempfile.TemporaryDirectory()
+    empty = Path(tmp.name) / "gitconfig"
+    empty.touch()
+    env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(empty), "GIT_CONFIG_NOSYSTEM": "1"})
+    env.start()
+    _isolation[:] = [env, tmp]
+
+
+def tearDownModule():
+    env, tmp = _isolation
+    env.stop()
+    tmp.cleanup()
 
 
 def _mk(root: Path, rel: str, text: str = "x\n") -> Path:
@@ -174,7 +194,94 @@ class TestDocFacts(unittest.TestCase):
             self.assertEqual(design["orphan_decisions"], ["ghost"])
             self.assertTrue(design["union_merge"])
 
-    def test_stop_hook_running_verify_is_detected(self):
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_pre_push_hook_running_verify_is_detected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            line = "git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: "
+            self.assertFalse(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"])
+            self.assertIn(line + "**아니오**", audit.render(audit.collect(root)))
+            hook = root / ".git" / "hooks" / "pre-push"
+            shutil.copy(SCRIPTS / "project" / "pre-push", hook)
+            hook.chmod(0o644)
+            self.assertFalse(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"],
+                             "실행 권한이 없으면 git 이 돌리지 않는다")
+            hook.chmod(0o755)
+            v = audit.doc_facts(root)["verification"]
+            self.assertTrue(v["verify_script"])
+            self.assertTrue(v["pre_push_hook_runs_verify"])
+            self.assertIn(line + "예", audit.render(audit.collect(root)))
+            hook.write_text("#!/bin/sh\nnpm test\n")
+            self.assertFalse(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"])
+
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_pre_push_hook_is_not_judged_when_core_hooks_path_is_set(self):
+        # husky 는 core.hooksPath 폴더의 얇은 래퍼가 다른 파일을 부른다. 래퍼 내용으로 예·아니오를 정하지 않는다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            _mk(root, ".husky/_/pre-push", '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n').chmod(0o755)
+            _mk(root, ".husky/pre-push", "scripts/verify.sh </dev/null || exit 1\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            subprocess.run(["git", "config", "core.hooksPath", ".husky/_"], cwd=root, check=True, capture_output=True)
+            v = audit.doc_facts(root)["verification"]
+            self.assertIsNone(v["pre_push_hook_runs_verify"])
+            self.assertEqual(v["core_hooks_path"], ".husky/_")
+            self.assertIn("git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: "
+                          "확인 못 함(core.hooksPath=`.husky/_` — 그 도구 설정을 직접 본다)",
+                          audit.render(audit.collect(root)))
+            subprocess.run(["git", "config", "--unset", "core.hooksPath"], cwd=root, check=True, capture_output=True)
+            self.assertFalse(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"])
+
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_core_hooks_path_naming_the_default_hooks_dir_is_judged_like_unset(self):
+        # 값이 git 기본 hooks 폴더를 가리키면 git 은 설정이 없을 때와 같은 hook 을 돌린다.
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            root = base / "repo"
+            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run(git + ["init", "-q"], cwd=root, check=True, capture_output=True)
+            subprocess.run(git + ["add", "-A"], cwd=root, check=True, capture_output=True)
+            subprocess.run(git + ["commit", "-qm", "i"], cwd=root, check=True, capture_output=True)
+            wt = base / "wt"
+            subprocess.run(git + ["worktree", "add", "-q", str(wt), "-b", "wtb"], cwd=root, check=True,
+                           capture_output=True)
+            shutil.copy(SCRIPTS / "project" / "pre-push", root / ".git" / "hooks" / "pre-push")
+            (root / ".git" / "hooks" / "pre-push").chmod(0o755)
+            line = "git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: 예"
+            with mock.patch.dict(os.environ, {"HOME": str(base)}):
+                for value, target in ((str(root / ".git" / "hooks"), root), (".git/hooks", root),
+                                      ("~/repo/.git/hooks", root), (str(root / ".git" / "hooks"), wt)):
+                    with self.subTest(value=value, target=target.name):
+                        subprocess.run(["git", "config", "core.hooksPath", value], cwd=root, check=True,
+                                       capture_output=True)
+                        v = audit.doc_facts(target)["verification"]
+                        self.assertEqual(v["core_hooks_path"], "")
+                        self.assertTrue(v["pre_push_hook_runs_verify"])
+                        self.assertIn(line, audit.render(audit.collect(target)))
+                # 연결 워크트리에서는 상대 값이 그 워크트리 기준으로 풀려 공통 hooks 가 아니다.
+                subprocess.run(["git", "config", "core.hooksPath", ".git/hooks"], cwd=root, check=True,
+                               capture_output=True)
+                self.assertIsNone(audit.doc_facts(wt)["verification"]["pre_push_hook_runs_verify"])
+
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_exported_git_dir_does_not_redirect_the_target(self):
+        # 부른 쪽이 다른 저장소를 GIT_DIR·GIT_WORK_TREE 로 export 해 두어도 target 저장소의 hook 을 본다.
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d) / "a", Path(d) / "b"
+            for root in (a, b):
+                _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+                subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            shutil.copy(SCRIPTS / "project" / "pre-push", b / ".git" / "hooks" / "pre-push")
+            (b / ".git" / "hooks" / "pre-push").chmod(0o755)
+            self.assertTrue(audit.doc_facts(b)["verification"]["pre_push_hook_runs_verify"], "전제: b 에는 hook 이 있다")
+            with mock.patch.dict(os.environ, {"GIT_DIR": str(b / ".git"), "GIT_WORK_TREE": str(b)}):
+                self.assertFalse(audit.doc_facts(a)["verification"]["pre_push_hook_runs_verify"])
+
+    def test_old_stop_hook_running_verify_is_reported_with_the_way_out(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
@@ -182,8 +289,13 @@ class TestDocFacts(unittest.TestCase):
                 {"type": "command", "command": 'bash "$CLAUDE_PROJECT_DIR/scripts/verify.sh" --stop-hook'}]}]}}
             _mk(root, ".claude/settings.json", json.dumps(settings))
             v = audit.doc_facts(root)["verification"]
-            self.assertTrue(v["verify_script"])
-            self.assertTrue(v["stop_hook_runs_verify"])
+            self.assertTrue(v["old_stop_hook_runs_verify"])
+            self.assertFalse(v["pre_push_hook_runs_verify"], "git 저장소가 아니면 pre-push hook 도 없다")
+            lines = [x for x in audit.render(audit.collect(root)).splitlines() if "옛 Stop hook" in x]
+            self.assertEqual(len(lines), 1)
+            self.assertIn("install_verify_hook.py", lines[0])
+            _mk(root, ".claude/settings.json", "{}")
+            self.assertNotIn("옛 Stop hook", audit.render(audit.collect(root)))
 
 
 class TestEnforcementFacts(unittest.TestCase):
