@@ -293,13 +293,15 @@ def doc_facts(target: Path) -> dict:
 
     settings = target / ".claude" / "settings.json"
     hooks_path = _custom_hooks_path(target)
+    hooks_path_empty = _hooks_path_value(target) == ""
     verification = {
         "doc": next((p for p in ("docs/VERIFICATION.md", "VERIFICATION.md") if (target / p).is_file()), None),
         "legacy_testing_doc": next((p for p in ("docs/TESTING.md", "TESTING.md") if (target / p).is_file()), None),
         "verify_script": (target / "scripts" / "verify.sh").is_file(),
         "doc_check_script": (target / "scripts" / "check_docs.py").is_file(),
         "core_hooks_path": hooks_path,
-        "pre_push_hook_runs_verify": _pre_push_runs_verify(target, hooks_path),
+        "core_hooks_path_empty": hooks_path_empty,
+        "pre_push_hook_runs_verify": False if hooks_path_empty else _pre_push_runs_verify(target, hooks_path),
         "old_stop_hook_runs_verify": any(e == "Stop" and "verify.sh" in c and "--stop-hook" in c
                                          for e, c in hook_commands(settings)),
         "antipatterns": next((p for p in ("docs/ANTIPATTERNS.md", "ANTIPATTERNS.md") if (target / p).is_file()), None),
@@ -320,11 +322,17 @@ def _git_out(target: Path, *args: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _hooks_path_value(target: Path) -> str | None:
+    """core.hooksPath 값. 설정이 없으면 None, 빈 값이면 빈 문자열(git 이 hook 을 찾지 못한다)."""
+    raw = _git_out(target, "config", "--show-origin", "--get", "core.hooksPath")
+    return raw.partition("\t")[2] if raw else None
+
+
 def _custom_hooks_path(target: Path) -> str:
-    """core.hooksPath 값. 설정이 없거나 git 기본 hooks 폴더(공통 git 폴더의 hooks)를 가리키면 빈 문자열 — 그때 git 은
-    설정이 없을 때와 같은 자리의 hook 을 돌린다. `--git-path hooks` 는 설정값을 git 규칙대로 푼다(상대 경로는 작업 트리
-    최상위 기준, `~` 는 펼친다)."""
-    value = _git_out(target, "config", "--get", "core.hooksPath")
+    """core.hooksPath 값. 설정이 없거나 빈 값이거나 git 기본 hooks 폴더(공통 git 폴더의 hooks)를 가리키면 빈 문자열
+    — 기본 폴더면 git 은 설정이 없을 때와 같은 자리의 hook 을 돌린다. `--git-path hooks` 는 설정값을 git 규칙대로
+    푼다(상대 경로는 작업 트리 최상위 기준, `~` 는 펼친다)."""
+    value = _hooks_path_value(target)
     if not value:
         return ""
     configured = _git_out(target, "rev-parse", "--git-path", "hooks")
@@ -779,6 +787,8 @@ def render(facts: dict) -> str:
     out.append(f"- `scripts/check_docs.py` (문서 정합 검사): {_yes(v['doc_check_script'])}")
     if v["pre_push_hook_runs_verify"] is None:
         pre_push = f"확인 못 함(core.hooksPath=`{v['core_hooks_path']}` — 그 도구 설정을 직접 본다)"
+    elif v["core_hooks_path_empty"]:
+        pre_push = "**아니오**(core.hooksPath 가 빈 값 — git 이 hook 을 찾지 못한다. `git config --unset core.hooksPath` 로 지운다)"
     else:
         pre_push = "예" if v["pre_push_hook_runs_verify"] else "**아니오**"
     out.append(f"- git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: {pre_push}")

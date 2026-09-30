@@ -92,16 +92,19 @@ def relative_hooks_path(target: Path) -> str:
     return "" if os.path.isabs(value) else value
 
 
-def hooks_path_setting(target: Path) -> str:
-    """설정된 core.hooksPath 와 그 출처(`.husky (file:.git/config)` 꼴). 없거나 git 기본 hooks 폴더를 가리키면 빈 문자열
-    — 그때 git 은 설정이 없을 때와 같은 자리의 hook 을 돌린다."""
+def hooks_path_setting(target: Path) -> tuple[str, str] | None:
+    """설정된 core.hooksPath 의 (값, 출처). 없거나 git 기본 hooks 폴더를 가리키면 None — 그때 git 은 설정이 없을 때와
+    같은 자리의 hook 을 돌린다. 빈 값이면 값이 빈 문자열이다(git 이 hook 을 찾지 못한다)."""
     r = _git(target, "config", "--show-origin", "--get", "core.hooksPath")
     if r is None or r.returncode != 0 or not r.stdout.strip():
-        return ""
+        return None
     if _points_to_default_hooks(target):
-        return ""
-    origin, _, value = r.stdout.strip().partition("\t")
-    return f"{value} ({origin})"
+        return None
+    origin, _, value = r.stdout.rstrip("\n").partition("\t")
+    return value, origin
+
+
+UNSET_HOOKS_PATH = "git config --unset core.hooksPath"
 
 
 def is_ours(path: Path) -> bool:
@@ -212,8 +215,12 @@ def _refuse_install(target: Path, hook: Path) -> int:
               file=sys.stderr)
         return EXIT_FAILED
     setting = hooks_path_setting(target)
+    if setting and not setting[0]:
+        print(f"중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다. "
+              f"`{UNSET_HOOKS_PATH}` 로 지운 뒤 다시 돌린다 ({setting[1]})", file=sys.stderr)
+        return EXIT_FAILED
     if setting:
-        print(f"중단: core.hooksPath 가 설정돼 있다 ({setting}). git 은 그 폴더의 hook 을 돌린다.\n"
+        print(f"중단: core.hooksPath 가 설정돼 있다 ({setting[0]} ({setting[1]})). git 은 그 폴더의 hook 을 돌린다.\n"
               "  husky·lefthook 같은 도구가 관리하는 폴더일 수 있어 쓰지 않는다. 그 도구의 pre-push 설정에\n"
               "  아래 한 줄을 직접 넣는다(hook 은 저장소 루트에서 돈다):\n"
               f"    {ADD_LINE}", file=sys.stderr)
@@ -240,8 +247,12 @@ def _refuse_install(target: Path, hook: Path) -> int:
 
 def uninstall(target: Path, hook: Path, dry_run: bool) -> None:
     setting = hooks_path_setting(target)
+    if setting and not setting[0]:
+        print(f"core.hooksPath 가 빈 값이라({setting[1]}) git 이 hook 을 찾지 못한다. hook 자리는 건드리지 않는다. "
+              f"`{UNSET_HOOKS_PATH}` 로 지운다")
+        return
     if setting:
-        print(f"core.hooksPath 가 설정돼 있어({setting}) hook 자리는 건드리지 않는다.")
+        print(f"core.hooksPath 가 설정돼 있어({setting[0]} ({setting[1]})) hook 자리는 건드리지 않는다.")
         return
     if hook.is_symlink():
         print(f"그대로 둔다: {hook} 는 심볼릭 링크다")
@@ -260,25 +271,28 @@ def install(target: Path, hook: Path, dry_run: bool) -> None:
     content = TEMPLATE.read_text(encoding="utf-8")
     same = (hook.is_file() and hook.read_text(encoding="utf-8", errors="replace") == content
             and os.access(hook, os.X_OK))
+    # 상대 값이면 새로 쓰든 안 쓰든 연결 워크트리에서는 hook 이 돌지 않으므로 매번 알린다.
+    relative = relative_hooks_path(target)
+    note = (f"core.hooksPath 가 상대 경로(`{relative}`)라 이 작업 트리에서만 돈다. 연결 워크트리에서도 돌게 하려면 "
+            "core.hooksPath 를 지우거나 절대 경로로 바꾼다" if relative else "")
     if dry_run:
         print(f"pre-push hook 자리: {hook}")
         if same:
-            print("변경 없음: 같은 hook 이 있다")
+            print("변경 없음: 같은 hook 이 있다" + (f" — {note}" if note else ""))
         else:
             print(("새 내용으로 바꾼다" if hook.exists() else "새로 만든다") + " (권한 755):")
             sys.stdout.write(content)
+            if note:
+                print(f"설치하면 {note}")
         return
     if same:
-        print(f"변경 없음: 같은 hook 이 있다 ({hook})")
+        print(f"변경 없음: 같은 hook 이 있다 ({hook})" + (f" — {note}" if note else ""))
         return
     existed = hook.exists()
     hook.parent.mkdir(parents=True, exist_ok=True)
     hook.write_text(content, encoding="utf-8")
     os.chmod(hook, 0o755)
-    relative = relative_hooks_path(target)
-    where = (f"커밋되지 않는다. core.hooksPath 가 상대 경로(`{relative}`)라 이 작업 트리에서만 돈다. 연결 워크트리에서도 "
-             "돌게 하려면 core.hooksPath 를 지우거나 절대 경로로 바꾼다" if relative
-             else "이 clone 의 모든 워크트리에 걸리고 커밋되지 않는다")
+    where = f"커밋되지 않는다. {note}" if note else "이 clone 의 모든 워크트리에 걸리고 커밋되지 않는다"
     print(f"{'새 내용으로 바꿨다' if existed else '걸었다'}: {hook} — {where}")
 
 
@@ -286,7 +300,9 @@ def run(args: argparse.Namespace) -> int:
     target = Path(args.target).resolve()
     hook = git_path(target, "hooks/pre-push")
     if hook is None:
-        print(f"중단: {target} 는 git 저장소가 아니다. pre-push hook 은 git clone 에 건다.", file=sys.stderr)
+        ignored = ("(GIT_DIR·GIT_WORK_TREE 환경변수는 무시하고 --target 폴더로 찾는다)"
+                   if any(k in os.environ for k in ("GIT_DIR", "GIT_WORK_TREE")) else "")
+        print(f"중단: {target} 는 git 저장소가 아니다{ignored}. pre-push hook 은 git clone 에 건다.", file=sys.stderr)
         return EXIT_FAILED
     # 옛 Stop hook 은 pre-push 를 걸 수 없을 때도 지운다.
     clean_settings(target, args.dry_run)

@@ -268,6 +268,24 @@ class TestDocFacts(unittest.TestCase):
                 self.assertIsNone(audit.doc_facts(wt)["verification"]["pre_push_hook_runs_verify"])
 
     @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_empty_core_hooks_path_is_reported_as_no_with_the_reason(self):
+        # 빈 값이면 git 이 hook 을 찾지 못한다. 기본 자리에 우리 hook 이 있어도 돌지 않는다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "scripts/verify.sh", "#!/bin/sh\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            shutil.copy(SCRIPTS / "project" / "pre-push", root / ".git" / "hooks" / "pre-push")
+            (root / ".git" / "hooks" / "pre-push").chmod(0o755)
+            self.assertTrue(audit.doc_facts(root)["verification"]["pre_push_hook_runs_verify"], "전제: 설정이 없으면 돈다")
+            subprocess.run(["git", "config", "core.hooksPath", ""], cwd=root, check=True, capture_output=True)
+            v = audit.doc_facts(root)["verification"]
+            self.assertTrue(v["core_hooks_path_empty"])
+            self.assertIs(v["pre_push_hook_runs_verify"], False)
+            self.assertIn("git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: **아니오**(core.hooksPath 가 빈 값 "
+                          "— git 이 hook 을 찾지 못한다. `git config --unset core.hooksPath` 로 지운다)",
+                          audit.render(audit.collect(root)))
+
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
     def test_exported_git_dir_does_not_redirect_the_target(self):
         # 부른 쪽이 다른 저장소를 GIT_DIR·GIT_WORK_TREE 로 export 해 두어도 target 저장소의 hook 을 본다.
         with tempfile.TemporaryDirectory() as d:

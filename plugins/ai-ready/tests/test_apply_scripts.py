@@ -901,6 +901,13 @@ class TestInstallVerifyHook(unittest.TestCase):
             r = self.repo.install(target=plain, env=env)
             self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
             self.assertIn("git 저장소가 아니다", r.stderr)
+            self.assertNotIn("환경변수", r.stderr)
+            # GIT_DIR·GIT_WORK_TREE 로 저장소를 가리켜 두어도 무시한다는 것을 알린다.
+            env = {**env, "GIT_DIR": str(self.repo.root / ".git"), "GIT_WORK_TREE": str(plain)}
+            r = self.repo.install(target=plain, env=env)
+            self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
+            self.assertIn("git 저장소가 아니다(GIT_DIR·GIT_WORK_TREE 환경변수는 무시하고 --target 폴더로 찾는다)",
+                          r.stderr)
         self._pass()
         self.repo.git("rm", "-q", "scripts/verify.sh")
         r = self.repo.install()
@@ -929,22 +936,35 @@ class TestInstallVerifyHook(unittest.TestCase):
         common = str(self.repo.root / ".git" / "hooks")
         cases = ((common, self.repo.root), (".git/hooks", self.repo.root), ("~/repo/.git/hooks", self.repo.root),
                  (common, wt))
+        note = ("core.hooksPath 가 상대 경로(`.git/hooks`)라 이 작업 트리에서만 돈다. 연결 워크트리에서도 돌게 하려면 "
+                "core.hooksPath 를 지우거나 절대 경로로 바꾼다")
+
+        def warned(out: str) -> bool:
+            return "라 이 작업 트리에서만 돈다" in out
+
         for i, (value, target) in enumerate(cases):
             with self.subTest(value=value, target=target.name):
+                relative = value == ".git/hooks"
                 self.repo.git("config", "core.hooksPath", value)
                 r = self.repo.install("--dry-run", target=target)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn("새로 만든다", r.stdout)
+                self.assertEqual(f"설치하면 {note}\n" in r.stdout, relative)
+                self.assertEqual(warned(r.stdout), relative)
                 self.assertFalse(self.repo.hook.exists())
                 r = self.repo.install(target=target)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertTrue(self.repo.hook.is_file(), "공통 git 폴더의 hooks 에 들어간다")
-                if value == ".git/hooks":
-                    self.assertIn("core.hooksPath 가 상대 경로(`.git/hooks`)라 이 작업 트리에서만 돈다. 연결 워크트리에서도 "
-                                  "돌게 하려면 core.hooksPath 를 지우거나 절대 경로로 바꾼다", r.stdout)
-                    self.assertNotIn("모든 워크트리", r.stdout)
-                else:
-                    self.assertIn("이 clone 의 모든 워크트리에 걸리고 커밋되지 않는다", r.stdout)
+                self.assertEqual(f"— 커밋되지 않는다. {note}\n" in r.stdout, relative)
+                self.assertEqual(warned(r.stdout), relative)
+                self.assertEqual("이 clone 의 모든 워크트리에 걸리고 커밋되지 않는다" in r.stdout, not relative)
+                # 이미 같은 hook 이 있어 쓰지 않을 때도 알린다.
+                for args in ((), ("--dry-run",)):
+                    r = self.repo.install(*args, target=target)
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertIn("변경 없음: 같은 hook 이 있다", r.stdout)
+                    self.assertEqual(f" — {note}\n" in r.stdout, relative)
+                    self.assertEqual(warned(r.stdout), relative)
                 r = self.repo.push(f"HEAD:refs/heads/p{i}", cwd=target)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn("ai-ready pre-push:", r.stderr, "git 이 설치한 hook 을 돌린다")
@@ -958,6 +978,22 @@ class TestInstallVerifyHook(unittest.TestCase):
         self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
         self.assertIn("core.hooksPath", r.stderr)
         self.assertFalse(self.repo.hook.exists())
+
+    def test_empty_hooks_path_is_refused_with_how_to_unset_it(self):
+        # 빈 값이면 git 이 hook 을 찾지 못한다. 기본 폴더에 걸어도 돌지 않으므로 값을 지우라고 알린다.
+        self._pass()
+        self.repo.git("config", "core.hooksPath", "")
+        r = self.repo.install()
+        self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED)
+        self.assertIn("중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다. "
+                      "`git config --unset core.hooksPath` 로 지운 뒤 다시 돌린다 (file:.git/config)", r.stderr)
+        self.assertFalse(self.repo.hook.exists())
+        r = self.repo.install("--uninstall")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("core.hooksPath 가 빈 값이라(file:.git/config) git 이 hook 을 찾지 못한다", r.stdout)
+        self.assertIn("`git config --unset core.hooksPath` 로 지운다", r.stdout)
+        self.repo.git("config", "--unset", "core.hooksPath")
+        self.assertEqual(self.repo.install().returncode, 0)
 
     def test_refuses_to_touch_a_pre_push_it_did_not_install(self):
         self._pass()
