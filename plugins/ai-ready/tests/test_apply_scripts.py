@@ -893,6 +893,76 @@ class TestInstallVerifyHook(unittest.TestCase):
         self.assertEqual(r.returncode, install_verify_hook.EXIT_NOT_PASSED, "옛 통과 기록으로 걸지 않는다")
         self.assertFalse(self.repo.hook.exists())
 
+    def test_pass_record_of_an_older_tree_refuses_install_until_verify_passes_again(self):
+        # verify.sh 를 다시 돌리지 않고 작업 트리만 바꾸면 통과 기록은 남아 있지만 지문이 다르다.
+        self._pass()
+        self.assertEqual(self.repo.install("--dry-run").returncode, 0, "통과한 그대로면 걸 수 있다")
+        changes = (("tracked", lambda: (self.repo.root / "a.txt").write_text("b\n")),
+                   ("untracked", lambda: _mk(self.repo.root, "new.txt", "n\n")),
+                   ("commit", lambda: self.repo.commit("c.txt")))
+        for name, change in changes:
+            with self.subTest(name):
+                change()
+                self.assertTrue((self.repo.root / ".git" / "verify-pass").is_file(), "전제: 통과 기록은 남아 있다")
+                for args in (("--dry-run",), ()):
+                    r = self.repo.install(*args)
+                    self.assertEqual(r.returncode, install_verify_hook.EXIT_NOT_PASSED, (args, r.stderr))
+                    self.assertIn("통과 기록의 지문이 지금 작업 트리와 다르다", r.stderr)
+                    self.assertIn("scripts/verify.sh 를 다시 돌려 통과시킨 뒤 설치한다", r.stderr)
+                self.assertFalse(self.repo.hook.exists())
+                self._pass()
+                r = self.repo.install()
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(self.repo.hook.is_file())
+                self.assertEqual(self.repo.install("--uninstall").returncode, 0)
+
+    def test_pass_record_check_without_the_cut_line_warns_and_goes_on(self):
+        # 사람이 verify.sh 를 고쳐 `pass_file=` 줄이 없으면 지문을 잴 자리를 모른다. 기록이 있는 것만 본다.
+        verify = self.repo.root / "scripts" / "verify.sh"
+        text = verify.read_text(encoding="utf-8")
+        self.assertIn('\npass_file="$(state_file verify-pass)"\n', text, "전제: 템플릿에 자르는 줄이 있다")
+        verify.write_text(text.replace("pass_file", "record_file"), encoding="utf-8")
+        self.repo.git("commit", "-qam", "edited verify")
+        self._pass()
+        r = self.repo.install()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("`pass_file=` 줄이 없어", r.stderr)
+        self.assertTrue(self.repo.hook.is_file())
+
+    def test_pass_record_is_refused_when_the_key_cannot_be_computed(self):
+        # 통과한 뒤 CHECKS 를 비우면 verify.sh 는 기록을 지우기 전에 멈춘다. 지문을 잴 수 없으니 걸지 않는다.
+        self._pass()
+        verify = self.repo.root / "scripts" / "verify.sh"
+        text = verify.read_text(encoding="utf-8")
+        start, end = text.index("CHECKS=(\n") + len("CHECKS=(\n"), text.index("\n)\n")
+        verify.write_text(text[:start] + text[end + 1:], encoding="utf-8")
+        self.assertEqual(self.repo.verify().returncode, 1)
+        self.assertTrue((self.repo.root / ".git" / "verify-pass").is_file(), "전제: 통과 기록은 남아 있다")
+        r = self.repo.install()
+        self.assertEqual(r.returncode, install_verify_hook.EXIT_NOT_PASSED, r.stderr)
+        self.assertIn("지금 작업 트리의 것인지 확인하지 못했다", r.stderr)
+        self.assertFalse(self.repo.hook.exists())
+
+    def test_other_refusal_does_not_run_verify_script_for_the_key(self):
+        # core.hooksPath 처럼 어차피 걸지 못하는 이유가 있으면 지문을 재려고 verify.sh 앞부분을 돌리지 않는다.
+        self._pass()
+        with tempfile.TemporaryDirectory() as d:
+            ran = Path(d) / "ran"
+            verify = self.repo.root / "scripts" / "verify.sh"
+            lines = verify.read_text(encoding="utf-8").split("\n", 1)
+            verify.write_text(f"{lines[0]}\ntouch '{ran}'\n{lines[1]}", encoding="utf-8")
+            self.repo.git("commit", "-qam", "probe")
+            self.assertEqual(self.repo.verify().returncode, 0)
+            ran.unlink()
+            self.repo.git("config", "core.hooksPath", ".husky")
+            r = self.repo.install()
+            self.assertEqual(r.returncode, install_verify_hook.EXIT_FAILED, r.stderr)
+            self.assertFalse(ran.exists())
+            self.repo.git("config", "--unset", "core.hooksPath")
+            r = self.repo.install()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(ran.exists(), "전제: 거절 이유가 없으면 지문을 재려고 앞부분을 돌린다")
+
     def test_refuses_outside_git_or_without_verify_script(self):
         with tempfile.TemporaryDirectory() as d:
             plain = Path(d)

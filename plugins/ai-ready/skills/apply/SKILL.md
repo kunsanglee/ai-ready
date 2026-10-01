@@ -171,8 +171,10 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/install_verify_hook.py --targ
 
 - 스크립트도 같은 전제를 본다. 저장소 최상위(`git rev-parse --show-toplevel`)에 `scripts/verify.sh` 가 없으면 exit 1
   로 끝난다. hook 이 부르는 자리가 여기라서 `--target` 이 하위 폴더여도 최상위를 본다. verify.sh 의 통과 기록
-  (`git rev-parse --git-path verify-pass` 파일)이 없으면 걸지 않고 exit 4 로 끝난다. verify.sh 는 실패하면 통과
-  기록을 지우므로, 한 번 통과한 뒤 커밋으로 깨진 저장소도 여기서 걸린다. 이때는 위 보고로 돌아간다.
+  (`git rev-parse --git-path verify-pass` 파일)이 없거나, 기록에 적힌 작업 트리 지문이 지금 작업 트리의 지문과
+  다르면 걸지 않고 exit 4 로 끝난다. 통과한 뒤 파일을 바꾸거나 커밋했으면 `bash scripts/verify.sh` 를 다시 돌려
+  통과시킨 뒤 설치한다. 그 실행이 실패하면 위 보고로 돌아간다. 지문은 verify.sh 의 `pass_file=` 줄 앞부분을 bash 로
+  돌려 얻는다. verify.sh 를 고쳐 그 줄이 없으면 지문은 확인하지 못하고 경고만 하니, 그 경고를 사용자에게 전한다.
 - `--dry-run` 은 아무것도 쓰지 않고, 설치할 자리와 hook 내용(같은 hook 이 이미 있으면 "변경 없음"), `.claude/settings.json`
   에서 지울 옛 Stop hook 을 보여 준다.
 - 설치 자리는 `git rev-parse --git-path hooks/pre-push` 다. 연결 워크트리에서 불러도 공통 git 폴더에 들어가 그 clone 의
