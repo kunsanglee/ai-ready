@@ -29,6 +29,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -291,17 +292,79 @@ def doc_facts(target: Path) -> dict:
     design["union_merge"] = bool(re.search(r"^\s*docs/design/\*\.decisions\.md\s+.*merge=union", gitattributes, re.M))
 
     settings = target / ".claude" / "settings.json"
+    hooks_path_setting = _hooks_path_setting(target)
+    hooks_path = _custom_hooks_path(target, hooks_path_setting and hooks_path_setting[0])
+    hooks_path_empty = hooks_path_setting is not None and hooks_path_setting[0] == ""
     verification = {
         "doc": next((p for p in ("docs/VERIFICATION.md", "VERIFICATION.md") if (target / p).is_file()), None),
         "legacy_testing_doc": next((p for p in ("docs/TESTING.md", "TESTING.md") if (target / p).is_file()), None),
         "verify_script": (target / "scripts" / "verify.sh").is_file(),
         "doc_check_script": (target / "scripts" / "check_docs.py").is_file(),
-        "stop_hook_runs_verify": any("verify.sh" in c for e, c in hook_commands(settings) if e == "Stop"),
+        "core_hooks_path": hooks_path,
+        "core_hooks_path_empty": hooks_path_empty,
+        "core_hooks_path_origin": hooks_path_setting[1] if hooks_path_setting else None,
+        "pre_push_hook_runs_verify": False if hooks_path_empty else _pre_push_runs_verify(target, hooks_path),
+        "old_stop_hook_runs_verify": any(e == "Stop" and "verify.sh" in c and "--stop-hook" in c
+                                         for e, c in hook_commands(settings)),
         "antipatterns": next((p for p in ("docs/ANTIPATTERNS.md", "ANTIPATTERNS.md") if (target / p).is_file()), None),
     }
     return {"root": root, "module_mode": ml.mode, "modules": modules, "design": design,
             "verification": verification,
             "ignored": _ignored_generated(target, [str(m) for m in ml.modules])}
+
+
+def _git_out(target: Path, *args: str) -> str:
+    # 부른 쪽이 저장소를 가리키는 변수를 export 해 두면 git 은 target 대신 그 저장소를 본다. 자식 환경에서 뺀다.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    try:
+        r = subprocess.run(["git", *args], cwd=target, env=env, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _hooks_path_setting(target: Path) -> tuple[str, str] | None:
+    """core.hooksPath 의 (값, 출처). 설정이 없으면 None, 빈 값이면 값이 빈 문자열(git 이 hook 을 찾지 못한다). 출처가
+    설정 파일이면 그 경로(상대 경로는 git 이 읽은 자리인 작업 트리 최상위 기준으로 푼다), 다른 형태면 `command line:`
+    같은 git 표기 그대로다."""
+    # -z 없이 받으면 git 이 한글 같은 문자가 든 경로를 따옴표와 8진수로 바꿔 적는다.
+    raw = _git_out(target, "config", "-z", "--show-origin", "--get", "core.hooksPath")
+    if not raw:
+        return None
+    origin, value = raw.split("\0")[:2]
+    if origin.startswith("file:"):
+        path = origin[len("file:"):]
+        top = _git_out(target, "rev-parse", "--show-toplevel")
+        origin = path if os.path.isabs(path) else os.path.normpath(Path(top or target) / path)
+    return value, origin
+
+
+def _custom_hooks_path(target: Path, value: str | None) -> str:
+    """core.hooksPath 값. 설정이 없거나 빈 값이거나 git 기본 hooks 폴더(공통 git 폴더의 hooks)를 가리키면 빈 문자열
+    — 기본 폴더면 git 은 설정이 없을 때와 같은 자리의 hook 을 돌린다. `--git-path hooks` 는 설정값을 git 규칙대로
+    푼다(상대 경로는 작업 트리 최상위 기준, `~` 는 펼친다)."""
+    if not value:
+        return ""
+    configured = _git_out(target, "rev-parse", "--git-path", "hooks")
+    common = _git_out(target, "rev-parse", "--git-common-dir")
+    if configured and common and (os.path.realpath(target / configured)
+                                  == os.path.realpath(target / common / "hooks")):
+        return ""
+    return value
+
+
+def _pre_push_runs_verify(target: Path, hooks_path: str) -> bool | None:
+    """이 clone 의 git pre-push hook(`git rev-parse --git-path hooks/pre-push`)이 있고, 실행할 수 있고,
+    `scripts/verify.sh` 를 부르는지. hook 은 clone 마다 따로 걸고 저장소에는 없다. core.hooksPath 가 기본 hooks 폴더가
+    아닌 곳을 가리키면 그 폴더를 관리하는 도구(husky 등)가 다른 파일을 거쳐 부를 수 있어 파일 내용으로 판정하지 않고 None."""
+    if hooks_path:
+        return None
+    rel = _git_out(target, "rev-parse", "--git-path", "hooks/pre-push")
+    if not rel:
+        return False
+    hook = target / rel
+    return hook.is_file() and os.access(hook, os.X_OK) and "scripts/verify.sh" in _read(hook)
 
 
 # --- 2. 강제 수단 -----------------------------------------------------------
@@ -733,7 +796,19 @@ def render(facts: dict) -> str:
         out.append(f"- `{v['legacy_testing_doc']}`: 있음 (검증 문서로 흡수 대상)")
     out.append(f"- `scripts/verify.sh`: {_yes(v['verify_script'])}")
     out.append(f"- `scripts/check_docs.py` (문서 정합 검사): {_yes(v['doc_check_script'])}")
-    out.append(f"- `.claude/settings.json` Stop hook 이 verify.sh 실행: {'예' if v['stop_hook_runs_verify'] else '**아니오**'}")
+    if v["pre_push_hook_runs_verify"] is None:
+        pre_push = f"확인 못 함(core.hooksPath=`{v['core_hooks_path']}` — 그 도구 설정을 직접 본다)"
+    elif v["core_hooks_path_empty"]:
+        pre_push = ("**아니오**(core.hooksPath 가 빈 값 — git 이 hook 을 찾지 못한다. 빈 값이 든 설정 파일"
+                    f"({v['core_hooks_path_origin']})에서 빈 값인 core.hooksPath 줄을 지운다 — 어느 파일인지는 "
+                    "`git config --show-origin --get-all core.hooksPath` 로 본다)")
+    else:
+        pre_push = "예" if v["pre_push_hook_runs_verify"] else "**아니오**"
+    out.append(f"- git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: {pre_push}")
+    if v["old_stop_hook_runs_verify"]:
+        out.append("- `.claude/settings.json` 에 옛 Stop hook(`verify.sh --stop-hook`)이 남아 있다. 2.1.0 부터 git pre-push "
+                   "hook 으로 옮겼다. `install_verify_hook.py` 를 다시 돌리면 pre-push hook 설치가 거절돼도 이 항목은 "
+                   "지운다. 나머지 옮기는 순서는 CHANGELOG 2.1.0")
     out.append(f"- 안티패턴 원장: {('`' + v['antipatterns'] + '`') if v['antipatterns'] else '**없음**'}")
 
     out += ["", "## 2. 강제 수단", "", f"- {e['stack']}"]

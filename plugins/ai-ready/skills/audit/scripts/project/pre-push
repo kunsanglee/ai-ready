@@ -1,0 +1,72 @@
+#!/bin/sh
+# ai-ready:apply 자동 생성 — install_verify_hook.py 가 이 clone 에 설치한 git pre-push hook. 다시 설치하면 덮어쓴다. 고친 채 두려면 이 줄을 지운다.
+#
+# push 하는 커밋이 지금 체크아웃(HEAD)이면 scripts/verify.sh 를 돌리고, 실패하면 push 를 막는다.
+# 확인 없이 보내려면 git push --no-verify.
+
+say() {
+  echo "ai-ready pre-push: $*" >&2
+}
+
+# 연결 워크트리에서는 git 이 GIT_DIR 을 넣어 hook 을 부른다. 지워서 저장소를 작업 폴더에서 다시 찾게 한다.
+unset GIT_DIR GIT_WORK_TREE
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+head_sha=$(git rev-parse --verify -q HEAD) || head_sha=""
+pushes_commit=""
+pushes_head=""
+# stdin 한 줄: <local ref> <local sha> <remote ref> <remote sha>
+# shellcheck disable=SC2034  # local_ref·remote_ref·remote_sha 는 줄을 나누려고만 받는다
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    *[!0]*) ;;
+    *) continue ;;  # 삭제 push 는 local sha 가 0 으로만 되어 있다
+  esac
+  pushes_commit=1
+  [ -n "$head_sha" ] || continue
+  # 주석 달린 태그는 태그 객체의 sha 가 온다. HEAD 와 다를 때만 가리키는 커밋으로 벗겨 다시 비교한다.
+  if [ "$local_sha" = "$head_sha" ] || [ "$(git rev-parse -q --verify "$local_sha^{commit}")" = "$head_sha" ]; then
+    pushes_head=1
+    break  # 남은 줄은 비교하지 않는다
+  fi
+done
+# 남은 입력은 한 번에 비운다. hook 이 목록을 다 읽지 않으면 push 가 깨지는 git 판(2.7 미만)이 있다.
+cat >/dev/null
+
+# 원격이 이미 최신이면 빈 목록이 온다. 삭제만 하는 push 도 확인할 커밋이 없다.
+if [ -z "$pushes_commit" ]; then
+  exit 0
+fi
+
+verify="$root/scripts/verify.sh"
+if [ ! -f "$verify" ]; then
+  say "scripts/verify.sh 가 없어 확인하지 않는다"
+  exit 0
+fi
+
+if [ -z "$pushes_head" ]; then
+  say "push 하는 커밋이 지금 체크아웃(HEAD)과 달라 확인하지 않는다"
+  exit 0
+fi
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  say "추적하는 파일에 커밋하지 않은 변경이 있다(스테이징 포함). 그 변경까지 검사하면 push 하는 커밋과 확인 대상이 달라진다."
+  say "커밋하거나 치운 뒤 다시 push 한다. 확인 없이 보내려면 git push --no-verify"
+  exit 1
+fi
+
+untracked=$(git ls-files --others --exclude-standard | wc -l | tr -d ' ')
+if [ "$untracked" -gt 0 ]; then
+  say "추적하지 않는 파일 ${untracked}개도 확인에 들어간다"
+fi
+
+say "scripts/verify.sh 를 돌린다"
+# 실행 권한이 없는 verify.sh 도 돌도록 bash 로 부른다.
+bash "$verify" </dev/null
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  say "확인이 실패해 push 를 막았다. 확인 없이 보내려면 git push --no-verify"
+  exit "$rc"
+fi
+exit 0
