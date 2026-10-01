@@ -62,7 +62,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <
   verify.sh 를 부르는지(hook 은 clone 마다 따로 걸어 저장소에는 없다. `core.hooksPath` 가 git 기본 hooks 폴더가 아닌
   곳을 가리키면 확인 못 함으로 적는다. 빈 값이면 git 이 hook 을 찾지 못하므로 아니오와 그 이유를 적고, 안내 "빈 값이
   든 설정 파일(<경로>)에서 빈 값인 core.hooksPath 줄을 지운다 — 어느 파일인지는
-  `git config --show-origin --get-all core.hooksPath` 로 본다" 를 붙인다), 안티패턴 원장(`docs/ANTIPATTERNS.md`)
+  `git config --show-origin --get-all core.hooksPath` 로 본다" 를 붙인다), 2.0 의 옛 Stop hook 이 남은
+  `.claude/settings.json`(`--target` 과 저장소 최상위 둘 다 본다), 안티패턴 원장(`docs/ANTIPATTERNS.md`)
 
 **2. 강제 수단**
 

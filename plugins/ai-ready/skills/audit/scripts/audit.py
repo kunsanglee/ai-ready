@@ -38,6 +38,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+import install_verify_hook  # noqa: E402
 import managed_doc  # noqa: E402
 import stacks  # noqa: E402
 
@@ -291,7 +292,7 @@ def doc_facts(target: Path) -> dict:
     gitattributes = _read(target / ".gitattributes")
     design["union_merge"] = bool(re.search(r"^\s*docs/design/\*\.decisions\.md\s+.*merge=union", gitattributes, re.M))
 
-    settings = target / ".claude" / "settings.json"
+    old_stop_hook = _old_stop_hook_settings(target)
     hooks_path_setting = _hooks_path_setting(target)
     hooks_path = _custom_hooks_path(target, hooks_path_setting and hooks_path_setting[0])
     hooks_path_empty = hooks_path_setting is not None and hooks_path_setting[0] == ""
@@ -304,13 +305,28 @@ def doc_facts(target: Path) -> dict:
         "core_hooks_path_empty": hooks_path_empty,
         "core_hooks_path_origin": hooks_path_setting[1] if hooks_path_setting else None,
         "pre_push_hook_runs_verify": False if hooks_path_empty else _pre_push_runs_verify(target, hooks_path),
-        "old_stop_hook_runs_verify": any(e == "Stop" and "verify.sh" in c and "--stop-hook" in c
-                                         for e, c in hook_commands(settings)),
+        "old_stop_hook_runs_verify": bool(old_stop_hook),
+        "old_stop_hook_settings": old_stop_hook,
         "antipatterns": next((p for p in ("docs/ANTIPATTERNS.md", "ANTIPATTERNS.md") if (target / p).is_file()), None),
     }
     return {"root": root, "module_mode": ml.mode, "modules": modules, "design": design,
             "verification": verification,
             "ignored": _ignored_generated(target, [str(m) for m in ml.modules])}
+
+
+def _old_stop_hook_settings(target: Path) -> list[str]:
+    """옛 Stop hook(명령에 `verify.sh` 와 `--stop-hook` 이 함께 든 항목)이 남은 settings.json 의 target 기준 경로.
+    install_verify_hook.py 가 지우는 범위(target 과 저장소 최상위, 같은 파일이면 한 번)와 판정을 그대로 쓴다.
+    JSON 으로 읽히지 않는 파일은 건너뛴다."""
+    out = []
+    for path in install_verify_hook.settings_files(target):
+        try:
+            data = json.loads(_read(path) or "{}")
+        except ValueError:
+            continue
+        if isinstance(data, dict) and install_verify_hook.drop_old_stop_hook(data):
+            out.append(os.path.relpath(path.resolve(), target.resolve()))
+    return out
 
 
 def _git_out(target: Path, *args: str) -> str:
@@ -805,8 +821,9 @@ def render(facts: dict) -> str:
     else:
         pre_push = "예" if v["pre_push_hook_runs_verify"] else "**아니오**"
     out.append(f"- git pre-push hook(이 clone, 저장소에는 없음)이 verify.sh 실행: {pre_push}")
-    if v["old_stop_hook_runs_verify"]:
-        out.append("- `.claude/settings.json` 에 옛 Stop hook(`verify.sh --stop-hook`)이 남아 있다. 2.1.0 부터 git pre-push "
+    if v["old_stop_hook_settings"]:
+        files = ", ".join(f"`{p}`" for p in v["old_stop_hook_settings"])
+        out.append(f"- {files} 에 옛 Stop hook(`verify.sh --stop-hook`)이 남아 있다. 2.1.0 부터 git pre-push "
                    "hook 으로 옮겼다. `install_verify_hook.py` 를 다시 돌리면 pre-push hook 설치가 거절돼도 이 항목은 "
                    "지운다. 나머지 옮기는 순서는 CHANGELOG 2.1.0")
     out.append(f"- 안티패턴 원장: {('`' + v['antipatterns'] + '`') if v['antipatterns'] else '**없음**'}")

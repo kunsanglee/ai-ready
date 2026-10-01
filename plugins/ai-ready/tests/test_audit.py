@@ -332,6 +332,29 @@ class TestDocFacts(unittest.TestCase):
             _mk(root, ".claude/settings.json", "{}")
             self.assertNotIn("옛 Stop hook", audit.render(audit.collect(root)))
 
+    @unittest.skipUnless(shutil.which("git"), "git 이 없다")
+    def test_old_stop_hook_at_the_repository_top_is_reported_for_a_subdir_target(self):
+        # 설치기와 같은 범위를 본다. target 이 하위 폴더여도 저장소 최상위 settings.json 을 보고, 같은 파일은 한 번만.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "repo"
+            pkg = root / "pkg"
+            _mk(pkg, "x.txt", "x\n")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            settings = {"hooks": {"Stop": [{"hooks": [
+                {"type": "command", "command": 'bash "$CLAUDE_PROJECT_DIR/scripts/verify.sh" --stop-hook'}]}]}}
+            _mk(root, ".claude/settings.json", json.dumps(settings))
+            v = audit.doc_facts(pkg)["verification"]
+            self.assertTrue(v["old_stop_hook_runs_verify"])
+            self.assertEqual(v["old_stop_hook_settings"], [os.path.join("..", ".claude", "settings.json")])
+            lines = [x for x in audit.render(audit.collect(pkg)).splitlines() if "옛 Stop hook" in x]
+            self.assertEqual(len(lines), 1)
+            self.assertIn("`../.claude/settings.json` 에 옛 Stop hook", lines[0])
+            self.assertEqual(audit.doc_facts(root)["verification"]["old_stop_hook_settings"],
+                             [os.path.join(".claude", "settings.json")], "target 이 최상위면 같은 파일을 한 번만 본다")
+            _mk(pkg, ".claude/settings.json", json.dumps(settings))
+            self.assertEqual(audit.doc_facts(pkg)["verification"]["old_stop_hook_settings"],
+                             [os.path.join(".claude", "settings.json"), os.path.join("..", ".claude", "settings.json")])
+
 
 class TestEnforcementFacts(unittest.TestCase):
     def test_tool_run_in_ci_is_yes_with_line(self):

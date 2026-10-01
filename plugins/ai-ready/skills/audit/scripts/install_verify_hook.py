@@ -13,8 +13,11 @@
 - 같은 자리에 심볼릭 링크(가리키는 파일이 없어도)나 ai-ready 표시가 없는 pre-push 가 있으면 쓰지 않고 exit 1.
   표시가 있으면 내용이 같을 때 그대로 두고, 다르면 새 내용으로 바꾼다(여러 번 돌려도 결과가 같다).
 - git 저장소가 아니거나 저장소 최상위(`git rev-parse --show-toplevel`)에 `scripts/verify.sh` 가 없으면 exit 1.
-  hook 이 부르는 자리와 같다. verify.sh 의 통과 기록(`git rev-parse --git-path verify-pass` 파일)이 없으면 exit 4.
-  verify.sh 는 실패하면 통과 기록을 지우므로, 통과한 뒤 커밋으로 깨진 저장소도 여기서 걸린다. 이미 실패하는 검사를
+  hook 이 부르는 자리와 같다. verify.sh 의 통과 기록(`git rev-parse --git-path verify-pass` 파일)이 없거나, 기록에
+  적힌 작업 트리 지문이 지금 작업 트리의 지문과 다르면 exit 4. 통과한 뒤 파일을 바꾸거나 커밋했으면 verify.sh 를
+  다시 돌려 통과시킨 뒤 설치한다. 지문은 따로 계산하지 않고 verify.sh 의 `pass_file=` 줄 앞(확인 명령 목록과
+  지문 함수 정의)을 bash 로 돌려 그 `tree_key` 로 얻는다. 지문은 옛 Stop hook 을 지우기 전의 작업 트리로 잰다.
+  verify.sh 를 고쳐 그 줄이 없으면 지문은 확인하지 못하고 경고만 한 뒤 기록이 있는 것만 본다. 이미 실패하는 검사를
   걸면 push 가 막혀, 이번 작업과 무관한 기존 위반을 고치려고 운영 코드를 바꾸게 된다.
 - `--uninstall` 은 ai-ready 표시가 있는 pre-push 와 옛 Stop hook 만 지운다. `core.hooksPath` 가 설정돼 있으면 hook
   자리는 건드리지 않는다.
@@ -28,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -39,17 +43,23 @@ VERIFY_REL = Path("scripts/verify.sh")
 SETTINGS_REL = Path(".claude/settings.json")
 ADD_LINE = "bash scripts/verify.sh </dev/null || exit 1"
 REPO_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+# verify.sh 에서 통과 기록을 읽고 쓰기 시작하는 줄. 그 앞까지가 확인 명령 목록과 지문 계산이다.
+KEY_CUT = re.compile(rb"^pass_file=", re.M)
+KEY_TIMEOUT = 300
 
 EXIT_OK = 0
 EXIT_FAILED = 1        # git 저장소가 아니다 · verify.sh 가 없다 · core.hooksPath 가 있다 · 다른 pre-push·링크가 있다
-EXIT_NOT_PASSED = 4    # verify.sh 의 통과 기록이 없다
+EXIT_NOT_PASSED = 4    # verify.sh 의 통과 기록이 없거나 지금 작업 트리의 것이 아니다
+
+
+def _child_env() -> dict[str, str]:
+    # 부른 쪽이 저장소를 가리키는 변수를 export 해 두면 git 은 --target 대신 그 저장소를 본다. 자식 환경에서 뺀다.
+    return {k: v for k, v in os.environ.items() if k not in REPO_ENV}
 
 
 def _git(target: Path, *args: str) -> subprocess.CompletedProcess | None:
-    # 부른 쪽이 저장소를 가리키는 변수를 export 해 두면 git 은 --target 대신 그 저장소를 본다. 자식 환경에서 뺀다.
-    env = {k: v for k, v in os.environ.items() if k not in REPO_ENV}
     try:
-        return subprocess.run(["git", *args], cwd=target, env=env, capture_output=True, text=True, timeout=30)
+        return subprocess.run(["git", *args], cwd=target, env=_child_env(), capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -221,44 +231,102 @@ def clean_settings(target: Path, dry_run: bool) -> None:
             print(f"  {path} 은 git 이 추적하는 파일이라 이 변경을 커밋해야 한다.")
 
 
-def _refuse_install(target: Path, hook: Path) -> int:
-    """설치를 막는 이유가 있으면 알리고 종료 코드를, 없으면 EXIT_OK 를 돌려준다."""
+NOT_PASSED_HELP = ("  이 상태로 hook 을 걸면 push 가 막혀, 이번 작업과 무관한 기존 위반을 고치려고 운영 코드를 바꾸게 된다.\n"
+                   "  먼저 scripts/verify.sh 를 돌려 통과시킨다. 기존 위반 때문에 통과하지 못하면 위반 목록을 사람에게\n"
+                   "  보고하고 기준선(baseline) 방식으로 묶을지 정한다.")
+
+
+def tree_key(verify: Path) -> tuple[str, str]:
+    """verify.sh 가 통과 기록에 적는 작업 트리 지문을 지금 작업 트리로 다시 계산한다. (지문, 실패 이유) 중 하나만
+    채운다. verify.sh 에 `pass_file=` 줄이 없어 계산할 자리를 모르면 둘 다 빈 문자열이다.
+
+    계산을 여기서 다시 구현하면 verify.sh 와 어긋날 수 있어, verify.sh 의 그 줄 앞부분을 그대로 bash 로 돌리고
+    거기서 정의된 `tree_key` 를 부른다. `$0` 을 verify.sh 경로로 주어 verify.sh 와 같은 저장소 루트로 옮긴다."""
+    try:
+        text = verify.read_bytes()
+    except OSError as e:
+        return "", f"{verify} 를 읽지 못했다 ({e})"
+    cut = KEY_CUT.search(text)
+    if cut is None:
+        return "", ""
+    script = text[:cut.start()] + b"tree_key\n"
+    try:
+        r = subprocess.run(["bash", "-c", script, str(verify)], cwd=verify.parent, env=_child_env(),
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=KEY_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as e:
+        return "", f"bash 로 verify.sh 의 지문을 계산하지 못했다 ({e})"
+    key = r.stdout.decode("utf-8", errors="replace").strip()
+    if r.returncode != 0 or not key:
+        err = r.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        return "", (f"verify.sh 의 지문 계산이 exit {r.returncode} 로 끝났다"
+                    + (f" ({err[-1]})" if err else "") + ". 커밋이 없거나 CHECKS 가 비었거나, `pass_file=` 줄 앞에 `tree_key` 정의가 없을 수 있다")
+    return key, ""
+
+
+def pass_record_refusal(target: Path) -> str | None:
+    """verify.sh 의 통과 기록이 지금 작업 트리의 것이 아니면 설치를 막는 안내를, 맞으면 None 을 돌려준다. 옛 Stop
+    hook 을 지우면 작업 트리가 바뀌므로 그 전에 부른다. 작업 트리나 verify.sh 가 없으면 _refuse_install 이 따로 알리므로
+    None 이다."""
+    top = toplevel(target)
+    if top is None or not (top / VERIFY_REL).is_file():
+        return None
+    marker = git_path(target, "verify-pass")
+    if marker is None or not marker.is_file():
+        return ("중단: scripts/verify.sh 의 통과 기록이 없다 — 아직 통과하지 않았거나 마지막 실행이 실패했다.\n"
+                + NOT_PASSED_HELP)
+    key, problem = tree_key(top / VERIFY_REL)
+    if problem:
+        return f"중단: 통과 기록이 지금 작업 트리의 것인지 확인하지 못했다 — {problem}.\n" + NOT_PASSED_HELP
+    if not key:
+        print(f"경고: {top / VERIFY_REL} 에 `pass_file=` 줄이 없어 통과 기록이 지금 작업 트리의 것인지 확인하지 못했다. "
+              "기록이 있는 것만 보고 계속한다.", file=sys.stderr)
+        return None
+    try:
+        recorded = marker.read_bytes().decode("utf-8", errors="replace").rstrip("\n")
+    except OSError as e:
+        return f"중단: 통과 기록 {marker} 를 읽지 못했다 ({e}).\n" + NOT_PASSED_HELP
+    if recorded != key:
+        return ("중단: scripts/verify.sh 가 통과한 뒤 작업 트리가 바뀌었다 — 통과 기록의 지문이 지금 작업 트리와 다르다.\n"
+                "  scripts/verify.sh 를 다시 돌려 통과시킨 뒤 설치한다.\n" + NOT_PASSED_HELP)
+    return None
+
+
+def _refuse_install(target: Path, hook: Path, record: str | None, report: bool = True) -> int:
+    """설치를 막는 이유가 있으면 알리고 종료 코드를, 없으면 EXIT_OK 를 돌려준다. record 는 pass_record_refusal 의 결과다.
+    report 가 거짓이면 알리지 않고 종료 코드만 돌려준다."""
+    def say(message: str) -> None:
+        if report:
+            print(message, file=sys.stderr)
     top = toplevel(target)
     if top is None:
-        print(f"중단: {target} 에 작업 트리가 없다. pre-push hook 은 작업 트리의 scripts/verify.sh 를 부른다.",
-              file=sys.stderr)
+        say(f"중단: {target} 에 작업 트리가 없다. pre-push hook 은 작업 트리의 scripts/verify.sh 를 부른다.")
         return EXIT_FAILED
     if not (top / VERIFY_REL).is_file():
-        print(f"중단: {top / VERIFY_REL} 가 없다. hook 은 저장소 최상위의 이 파일을 부른다. verify.sh 를 먼저 만든다.",
-              file=sys.stderr)
+        say(f"중단: {top / VERIFY_REL} 가 없다. hook 은 저장소 최상위의 이 파일을 부른다. verify.sh 를 먼저 만든다.")
         return EXIT_FAILED
     setting = hooks_path_setting(target)
     if setting and not setting[0]:
-        print("중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다.\n"
-              f"  {empty_hooks_path_fix(target, setting[1])}. 지운 뒤 다시 돌린다.", file=sys.stderr)
+        say("중단: core.hooksPath 가 빈 값이다 — git 이 hook 을 찾지 못해 pre-push 가 돌지 않는다.\n"
+              f"  {empty_hooks_path_fix(target, setting[1])}. 지운 뒤 다시 돌린다.")
         return EXIT_FAILED
     if setting:
-        print(f"중단: core.hooksPath 가 설정돼 있다 ({setting[0]} ({setting[1]})). git 은 그 폴더의 hook 을 돌린다.\n"
+        say(f"중단: core.hooksPath 가 설정돼 있다 ({setting[0]} ({setting[1]})). git 은 그 폴더의 hook 을 돌린다.\n"
               "  husky·lefthook 같은 도구가 관리하는 폴더일 수 있어 쓰지 않는다. 그 도구의 pre-push 설정에\n"
               "  아래 한 줄을 직접 넣는다(hook 은 저장소 루트에서 돈다):\n"
-              f"    {ADD_LINE}", file=sys.stderr)
+              f"    {ADD_LINE}")
         return EXIT_FAILED
     if hook.is_symlink():
-        print(f"중단: {hook} 가 심볼릭 링크다(→ {os.readlink(hook)}). 쓰면 링크가 가리키는 파일을 덮거나 새로 만들게\n"
+        say(f"중단: {hook} 가 심볼릭 링크다(→ {os.readlink(hook)}). 쓰면 링크가 가리키는 파일을 덮거나 새로 만들게\n"
               "  되어 쓰지 않는다. 그 파일에 아래 한 줄을 직접 더하거나, 링크를 치운 뒤 다시 돌린다:\n"
-              f"    {ADD_LINE}", file=sys.stderr)
+              f"    {ADD_LINE}")
         return EXIT_FAILED
     if hook.exists() and not is_ours(hook):
-        print(f"중단: {hook} 에 ai-ready 가 설치하지 않은 pre-push hook 이 있다. 덮어쓰지 않는다.\n"
+        say(f"중단: {hook} 에 ai-ready 가 설치하지 않은 pre-push hook 이 있다. 덮어쓰지 않는다.\n"
               "  그 hook 에 아래 한 줄을 직접 더한다(hook 은 저장소 루트에서 돈다):\n"
-              f"    {ADD_LINE}", file=sys.stderr)
+              f"    {ADD_LINE}")
         return EXIT_FAILED
-    marker = git_path(target, "verify-pass")
-    if marker is None or not marker.is_file():
-        print("중단: scripts/verify.sh 의 통과 기록이 없다 — 아직 통과하지 않았거나 마지막 실행이 실패했다.\n"
-              "  이 상태로 hook 을 걸면 push 가 막혀, 이번 작업과 무관한 기존 위반을 고치려고 운영 코드를 바꾸게 된다.\n"
-              "  먼저 scripts/verify.sh 를 돌려 통과시킨다. 기존 위반 때문에 통과하지 못하면 위반 목록을 사람에게\n"
-              "  보고하고 기준선(baseline) 방식으로 묶을지 정한다.", file=sys.stderr)
+    if record is not None:
+        say(record)
         return EXIT_NOT_PASSED
     return EXIT_OK
 
@@ -322,12 +390,15 @@ def run(args: argparse.Namespace) -> int:
                    if any(k in os.environ for k in ("GIT_DIR", "GIT_WORK_TREE")) else "")
         print(f"중단: {target} 는 git 저장소가 아니다{ignored}. pre-push hook 은 git clone 에 건다.", file=sys.stderr)
         return EXIT_FAILED
+    # 통과 기록은 옛 Stop hook 을 지워 작업 트리가 바뀌기 전에 맞춰 본다. 다른 이유로 어차피 거절하면 verify.sh 를 돌리지 않는다.
+    blocked = args.uninstall or _refuse_install(target, hook, None, report=False) != EXIT_OK
+    record = None if blocked else pass_record_refusal(target)
     # 옛 Stop hook 은 pre-push 를 걸 수 없을 때도 지운다.
     clean_settings(target, args.dry_run)
     if args.uninstall:
         uninstall(target, hook, args.dry_run)
         return EXIT_OK
-    rc = _refuse_install(target, hook)
+    rc = _refuse_install(target, hook, record)
     if rc != EXIT_OK:
         return rc
     install(target, hook, args.dry_run)
