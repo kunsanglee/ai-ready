@@ -589,6 +589,444 @@ class TestReportAndCli(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
+_GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(_GIT + list(args), cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _committed_repo(root: Path) -> str:
+    """파일 하나를 커밋한 저장소. HEAD 의 전체 해시를 돌려준다."""
+    _mk(root, "pyproject.toml", "[tool.ruff]\n")
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "i")
+    return _git(root, "rev-parse", "HEAD")
+
+
+def _run(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(SCRIPTS / "audit.py"), *args], capture_output=True, text=True)
+
+
+def _write_gaps(root: Path, *extra: str) -> subprocess.CompletedProcess:
+    r = _run("--target", str(root), "--out", str(root / ".ai-ready" / "gaps.md"), *extra)
+    if r.returncode != 0:
+        raise AssertionError(r.stderr)
+    return r
+
+
+def _make_reports(root: Path, report_base: str | None = "") -> None:
+    """audit.py 로 gaps.md 를 쓰고, audit-report.md 머리에 그 기준 줄을 옮긴다(audit 스킬이 하는 대로).
+    report_base 가 None 이면 기준 줄 없이(옛 판), 문자열이면 그 줄을 대신 적는다."""
+    _write_gaps(root)
+    base = next(l for l in (root / ".ai-ready" / "gaps.md").read_text(encoding="utf-8").splitlines()
+                if l.startswith("- 기준: "))
+    head = ["# ai-ready 점검 결과 — x", ""]
+    if report_base is not None:
+        head += [report_base or base, ""]
+    _mk(root, ".ai-ready/audit-report.md", "\n".join(head + ["## 빈틈 요약", "- 없음", ""]))
+
+
+def _break_index(root: Path) -> None:
+    """git status 가 실패하게 index 를 깨뜨린다. HEAD 는 그대로 읽힌다."""
+    (root / ".git" / "index").write_bytes(b"not an index")
+
+
+@unittest.skipUnless(shutil.which("git"), "git 이 없다")
+class TestBaseLine(unittest.TestCase):
+    def test_clean_commit_is_the_base(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            head = _committed_repo(root)
+            facts = audit.collect(root)
+            self.assertEqual(facts["base"], {"commit": head[:12], "uncommitted_changes": False})
+            lines = audit.render(facts).splitlines()
+            self.assertEqual(lines[2], f"- 기준: 커밋 {head[:12]}", "제목 바로 아래에 적는다")
+            r = _run("--target", str(root), "--json")
+            self.assertEqual(json.loads(r.stdout)["base"]["commit"], head[:12])
+
+    def test_uncommitted_changes_include_new_files_but_not_ignored_ones(self):
+        # apply 는 새 파일만 만드는 일이 많다. 그것을 세지 않으면 적용 뒤에도 옛 보고서가 최신으로 보인다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, ".gitignore", "build/\n")
+            head = _committed_repo(root)
+            _mk(root, "build/out.txt", "무시되는 산출물\n")
+            self.assertFalse(audit.collect(root)["base"]["uncommitted_changes"], "무시 규칙에 걸린 파일은 세지 않는다")
+            _mk(root, "AGENTS.md", "새 파일\n")
+            self.assertIn(f"- 기준: 커밋 {head[:12]} (커밋하지 않은 변경 있음)", audit.render(audit.collect(root)))
+            (root / "AGENTS.md").unlink()
+            _mk(root, "pyproject.toml", "[tool.ruff]\nline-length = 100\n")
+            self.assertTrue(audit.collect(root)["base"]["uncommitted_changes"], "추적 파일의 변경도 센다")
+
+    def test_report_dir_is_not_a_change(self):
+        # 보고서를 다시 쓰는 일 자체가 변경으로 잡히면 안 된다. 커밋해 둔 .ai-ready/ 도, 새로 생긴 것도.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, ".ai-ready/gaps.md", "옛 보고서\n")
+            _committed_repo(root)
+            _mk(root, ".ai-ready/gaps.md", "새 보고서\n")
+            _mk(root, ".ai-ready/audit-report.prev.md", "옮겨 둔 보고서\n")
+            self.assertFalse(audit.collect(root)["base"]["uncommitted_changes"])
+
+    def test_subdir_target_excludes_only_its_own_report_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "sub/pyproject.toml", "[tool.ruff]\n")
+            _committed_repo(root)
+            sub = root / "sub"
+            _mk(sub, ".ai-ready/gaps.md", "하위 대상의 보고서\n")
+            self.assertFalse(audit.collect(sub)["base"]["uncommitted_changes"])
+            _mk(root, ".ai-ready/gaps.md", "최상위 대상의 보고서\n")
+            self.assertTrue(audit.collect(sub)["base"]["uncommitted_changes"], "다른 대상의 .ai-ready/ 는 빼지 않는다")
+
+    def test_failed_status_is_not_read_as_clean(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            head = _committed_repo(root)
+            _break_index(root)
+            facts = audit.collect(root)
+            self.assertEqual(facts["base"], {"commit": head[:12], "uncommitted_changes": None})
+            self.assertIn(f"- 기준: 커밋 {head[:12]} (커밋하지 않은 변경 확인 못 함)", audit.render(facts))
+
+    def test_index_is_not_rewritten(self):
+        # 파일 시각만 바뀐 추적 파일이 있으면 보통 git status 는 index 를 새로 쓴다. 보고서와 확인은 쓰지 않는다.
+        # 확인이 git status 까지 가도록 두 보고서를 먼저 만든다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            _make_reports(root)
+            later = (root / "pyproject.toml").stat().st_mtime + 100
+            os.utime(root / "pyproject.toml", (later, later))
+            index = root / ".git" / "index"
+            before = (index.read_bytes(), index.stat().st_mtime_ns)
+            audit.collect(root)
+            self.assertEqual(audit.check_fresh(root)[0], audit.EXIT_OK, "시각만 바뀐 파일은 변경이 아니다")
+            self.assertEqual((index.read_bytes(), index.stat().st_mtime_ns), before)
+
+    def test_no_commit_says_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "pyproject.toml", "[tool.ruff]\n")
+            self.assertIn("- 기준: 확인 못 함(git 커밋 없음)", audit.render(audit.collect(root)))
+            _git(root, "init", "-q")
+            self.assertEqual(audit.collect(root)["base"], {"commit": None, "uncommitted_changes": None})
+
+
+@unittest.skipUnless(shutil.which("git"), "git 이 없다")
+class TestCheckFresh(unittest.TestCase):
+    _gaps = staticmethod(_write_gaps)
+    _reports = staticmethod(_make_reports)
+
+    def _check(self, root: Path) -> subprocess.CompletedProcess:
+        return _run("--target", str(root), "--check-fresh")
+
+    def test_fresh_reports_on_the_current_clean_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            head = _committed_repo(root)
+            self._reports(root)
+            before = sorted(p.name for p in (root / ".ai-ready").iterdir())
+            r = self._check(root)
+            self.assertEqual((r.returncode, r.stdout), (0, f"최신: 커밋 {head[:12]}\n"), r.stderr)
+            self.assertEqual(r.stderr, "")
+            self.assertEqual(sorted(p.name for p in (root / ".ai-ready").iterdir()), before, "아무 파일도 쓰지 않는다")
+
+    def test_missing_report_is_its_own_code_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            r = self._check(root)
+            self.assertEqual(r.returncode, audit.EXIT_REPORT_MISSING)
+            self.assertEqual(r.stdout, "없음: .ai-ready/gaps.md, .ai-ready/audit-report.md\n")
+            self.assertIn("종료 코드 7", r.stderr)
+            self.assertFalse((root / ".ai-ready").exists(), "확인만 하고 폴더를 만들지 않는다")
+            self._reports(root)
+            (root / ".ai-ready" / "audit-report.md").unlink()
+            r = self._check(root)
+            self.assertEqual((r.returncode, r.stdout), (7, "없음: .ai-ready/audit-report.md\n"))
+
+    def _assert_stale(self, root: Path, reason: str) -> None:
+        r = self._check(root)
+        self.assertEqual(r.returncode, audit.EXIT_REPORT_STALE, r.stdout + r.stderr)
+        self.assertTrue(r.stdout.startswith("오래됨: "), r.stdout)
+        self.assertIn(reason, r.stdout)
+        self.assertEqual(len(r.stdout.splitlines()), 1, "한 줄로 알린다")
+        self.assertIn("종료 코드 8", r.stderr)
+
+    def test_new_commit_after_the_report_is_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            old = _committed_repo(root)
+            self._reports(root)
+            _mk(root, "pyproject.toml", "[tool.ruff]\nline-length = 100\n")
+            _git(root, "commit", "-qam", "next")
+            self._assert_stale(root, f"보고서 기준 커밋({old[:12]})과 지금 커밋(")
+
+    def test_commit_of_only_the_reports_keeps_the_base(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            old = _committed_repo(root)
+            self._reports(root)
+            _git(root, "add", ".ai-ready")
+            _git(root, "commit", "-qm", "보고서")
+            head = _git(root, "rev-parse", "HEAD")
+            r = self._check(root)
+            self.assertEqual((r.returncode, r.stdout),
+                             (0, f"최신: 커밋 {head[:12]} (기준 {old[:12]} 뒤로 .ai-ready/ 밖 변경 없음)\n"), r.stderr)
+            _mk(root, "AGENTS.md", "새 문서\n")
+            _git(root, "add", "AGENTS.md")
+            _git(root, "commit", "-qm", "문서")
+            self._assert_stale(root, f"보고서 기준 커밋({old[:12]})과 지금 커밋(")
+
+    def test_base_that_is_not_an_ancestor_is_stale(self):
+        # 같은 내용이라도 기준 커밋이 지금 이력에 없으면(amend·rebase) 같은 기준으로 보지 않는다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            old = _committed_repo(root)
+            self._reports(root)
+            _git(root, "commit", "-q", "--amend", "-m", "고친 메시지")
+            self._assert_stale(root, f"보고서 기준 커밋({old[:12]})과 지금 커밋(")
+
+    def test_report_without_base_line_is_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root, report_base=None)
+            self._assert_stale(root, "audit-report.md 에 기준 줄이 없다")
+            gaps = root / ".ai-ready" / "gaps.md"
+            gaps.write_text("\n".join(l for l in gaps.read_text(encoding="utf-8").splitlines()
+                                      if not l.startswith("- 기준: ")), encoding="utf-8")
+            self._assert_stale(root, "gaps.md 에 기준 줄이 없다")
+
+    def test_uncommitted_change_is_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root)
+            _mk(root, "pyproject.toml", "[tool.ruff]\nline-length = 100\n")
+            self._assert_stale(root, audit.STALE_UNCOMMITTED)
+            # 그 상태로 다시 만든 보고서도 최신이 아니다. 변경이 남아 있으면 지금 변경을 먼저 알린다.
+            self._reports(root)
+            self._assert_stale(root, audit.STALE_UNCOMMITTED)
+            # 변경을 되돌려도 그 보고서는 변경이 든 트리를 본 것이다.
+            _git(root, "checkout", "--", "pyproject.toml")
+            self._assert_stale(root, "보고서를 만들 때 커밋하지 않은 변경이 있었다")
+
+    def test_new_files_after_apply_make_the_report_stale(self):
+        # audit → apply 가 새 파일만 만든다 → 마무리처럼 gaps.md 만 다시 쓴다 → 다음 apply 는 옛 분류를 쓰면 안 된다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root)
+            _mk(root, "AGENTS.md", "apply 가 만든 초안\n")
+            _mk(root, "scripts/verify.sh", "#!/usr/bin/env bash\n")
+            self._assert_stale(root, audit.STALE_UNCOMMITTED)
+            self._gaps(root)
+            self._assert_stale(root, "오래됨: ")
+            r = self._check(root)
+            self.assertNotEqual(r.returncode, 0)
+
+    def test_changes_in_the_tree_are_reported_before_report_reasons(self):
+        # apply 는 이 사유를 보고 다시 만들기 전에 묻는다. 보고서 쪽 사유에 가려지면 묻지 않고 audit 을 돌린다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            old = _committed_repo(root)
+            dirty = lambda: _mk(root, "AGENTS.md", "커밋하지 않은 새 파일\n")  # noqa: E731
+            clean = lambda: (root / "AGENTS.md").unlink()  # noqa: E731
+            dirty()
+            r = self._check(root)
+            self.assertEqual((r.returncode, r.stdout), (
+                7, "없음: .ai-ready/gaps.md, .ai-ready/audit-report.md (커밋하지 않은 변경도 있다)\n"))
+            clean()
+            self._reports(root)
+            _mk(root, "pyproject.toml", "[tool.ruff]\nline-length = 100\n")
+            _git(root, "commit", "-qam", "next")
+            cases = {
+                "옛 커밋의 보고서": (lambda: None, f"보고서 기준 커밋({old[:12]})과 지금 커밋("),
+                "두 기준이 다르다": (lambda: self._reports(root, report_base="- 기준: 커밋 0123456789ab"),
+                                "두 보고서의 기준이 다르다"),
+                "기준 줄 없는 옛 판": (lambda: self._reports(root, report_base=None), "audit-report.md 에 기준 줄이 없다"),
+            }
+            for name, (prepare, clean_reason) in cases.items():
+                with self.subTest(name):
+                    prepare()
+                    self._assert_stale(root, clean_reason)
+                    dirty()
+                    self._assert_stale(root, audit.STALE_UNCOMMITTED)
+                    clean()
+
+    def test_apply_that_only_touched_untracked_places_leaves_no_fresh_report(self):
+        # hook 설치처럼 .git/ 이나 무시된 파일만 바꾼 apply 는 트리 변경으로 잡히지 않는다. 마무리가 --after-apply 로
+        # gaps.md 를 다시 쓰면 적용 표시가 남고, 다음 apply 는 오래됨으로 보고 새로 만든다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root)
+            _mk(root, ".git/hooks/pre-push", "#!/bin/sh\nbash scripts/verify.sh\n")
+            self.assertEqual(self._check(root).returncode, 0, "hook 만 바뀌면 보고서는 그대로 최신으로 보인다")
+            r = self._gaps(root, "--after-apply")
+            self.assertNotIn("옮겼다", r.stdout, "마무리는 보고서를 옮기지 않는다")
+            self.assertTrue((root / ".ai-ready" / "audit-report.md").is_file())
+            self.assertFalse((root / ".ai-ready" / "audit-report.prev.md").exists())
+            r = self._check(root)
+            self.assertEqual((r.returncode, r.stdout), (audit.EXIT_REPORT_STALE, audit.STALE_APPLIED + "\n"))
+            self.assertIn("종료 코드 8", r.stderr)
+
+    def test_applied_mark_line_sits_under_the_base_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            _mk(root, "AGENTS.md", "커밋하지 않은 새 파일\n")
+            self._gaps(root, "--after-apply")
+            lines = (root / ".ai-ready" / "gaps.md").read_text(encoding="utf-8").splitlines()
+            self.assertTrue(lines[2].startswith("- 기준: 커밋 ") and lines[2].endswith(audit.BASE_DIRTY), lines[2])
+            self.assertEqual(lines[3], audit.APPLIED_LINE, "기존 꼬리표와 따로 읽히게 한 줄을 따로 둔다")
+            self._gaps(root)
+            self.assertNotIn(audit.APPLIED_LINE, (root / ".ai-ready" / "gaps.md").read_text(encoding="utf-8"),
+                             "표시 없는 재실행은 표시를 적지 않는다")
+
+    def test_changes_in_the_tree_come_before_the_applied_mark(self):
+        # 변경이 있으면 apply 가 먼저 묻는 사유가 나와야 한다. 깨끗하면 표시 사유가 기준 줄 쪽 사유보다 먼저다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root, report_base=None)
+            self._gaps(root, "--after-apply")
+            self._assert_stale(root, audit.STALE_APPLIED)
+            _mk(root, "AGENTS.md", "커밋하지 않은 새 파일\n")
+            self._assert_stale(root, audit.STALE_UNCOMMITTED)
+
+    def test_rebuilding_after_apply_keeps_the_report_from_before_the_rebuild(self):
+        # 기준 줄 없는 옛 판 보고서(사람 메모 포함) → 1단계 재생성 → 적용 → 마무리. .prev 에는 재생성 직전의 보고서가 남는다.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            reports = root / ".ai-ready"
+            old = "# ai-ready 점검 결과 — x\n\n## 빈틈 요약\n- 사람 메모: 결제 모듈 규칙은 손으로 고쳤다\n"
+            _mk(reports, "gaps.md", "# ai-ready 빈틈 보고서 — `x`\n")
+            _mk(reports, "audit-report.md", old)
+            self._assert_stale(root, "gaps.md 에 기준 줄이 없다")
+            r = self._gaps(root, "--archive-report")
+            self.assertIn("옮겼다", r.stdout)
+            base = next(l for l in (reports / "gaps.md").read_text(encoding="utf-8").splitlines()
+                        if l.startswith(audit.BASE_PREFIX))
+            new = f"# ai-ready 점검 결과 — x\n\n{base}\n\n## 빈틈 요약\n- 없음\n"
+            _mk(reports, "audit-report.md", new)
+            self.assertEqual(self._check(root).returncode, 0)
+            _mk(root, ".git/hooks/pre-push", "#!/bin/sh\n")
+            self._gaps(root, "--after-apply")
+            self.assertEqual((reports / "audit-report.prev.md").read_text(encoding="utf-8"), old)
+            self.assertEqual((reports / "audit-report.md").read_text(encoding="utf-8"), new)
+            self._assert_stale(root, audit.STALE_APPLIED)
+            # 다음 apply 의 1단계 재생성은 표시 없이 쓰므로 최신이 된다. .prev 는 그 직전 보고서로 바뀐다.
+            self._gaps(root, "--archive-report")
+            _mk(reports, "audit-report.md", new)
+            r = self._check(root)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual((reports / "audit-report.prev.md").read_text(encoding="utf-8"), new)
+
+    def test_failed_status_is_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root)
+            _break_index(root)
+            self._assert_stale(root, "오래됨: 커밋하지 않은 변경을 확인할 수 없다")
+
+    def test_report_made_when_status_failed_is_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            _break_index(root)
+            self._reports(root)
+            (root / ".git" / "index").unlink()
+            _git(root, "reset", "-q")  # index 를 HEAD 로 다시 만든다
+            self._assert_stale(root, "보고서를 만들 때 커밋하지 않은 변경을 확인하지 못했다")
+
+    def test_reports_with_different_bases_are_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root, report_base="- 기준: 커밋 0123456789ab")
+            self._assert_stale(root, "두 보고서의 기준이 다르다")
+
+    def test_reports_outside_git_are_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _mk(root, "pyproject.toml", "[tool.ruff]\n")
+            self._reports(root)
+            self._assert_stale(root, "기준 커밋을 확인할 수 없다")
+
+    def test_reports_on_a_commit_that_is_no_longer_in_git_are_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            self._reports(root)
+            shutil.rmtree(root / ".git")
+            self._assert_stale(root, "오래됨: 지금 git 커밋을 확인할 수 없다")
+
+    def test_check_fresh_refuses_out_and_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            for extra in (["--out", str(Path(d) / "x.md")], ["--json"], ["--archive-report"], ["--after-apply"]):
+                with self.subTest(extra=extra):
+                    r = _run("--target", d, "--check-fresh", *extra)
+                    self.assertEqual(r.returncode, 2)
+                    self.assertEqual(r.stdout, "")
+            self.assertFalse((Path(d) / "x.md").exists())
+            self.assertEqual(_run("--target", d, "--archive-report").returncode, 2, "--out 없이 쓰지 않는다")
+            self.assertEqual(_run("--target", d, "--after-apply").returncode, 2, "--out 없이 쓰지 않는다")
+
+    def test_report_options_need_the_gaps_path_of_the_target(self):
+        for flag in ("--archive-report", "--after-apply"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                _mk(root, ".ai-ready/audit-report.md", "옛 분류\n")
+                for out in (root / "gaps.md", root / ".ai-ready" / "other.md", root / "sub" / ".ai-ready" / "gaps.md"):
+                    with self.subTest(out=out):
+                        r = _run("--target", str(root), "--out", str(out), flag)
+                        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                        self.assertFalse(out.exists())
+                self.assertTrue((root / ".ai-ready" / "audit-report.md").is_file(), "거절하면 옮기지 않는다")
+                rel = subprocess.run([sys.executable, str(SCRIPTS / "audit.py"), "--target", ".", "--out",
+                                      "./x/../.ai-ready/gaps.md", flag], cwd=root, capture_output=True, text=True)
+                self.assertEqual(rel.returncode, 0, "풀어서 같은 경로면 받는다:\n" + rel.stderr)
+                gaps = (root / ".ai-ready" / "gaps.md").read_text(encoding="utf-8")
+                if flag == "--archive-report":
+                    self.assertTrue((root / ".ai-ready" / "audit-report.prev.md").is_file())
+                else:
+                    self.assertIn(audit.APPLIED_LINE, gaps)
+                    self.assertFalse((root / ".ai-ready" / "audit-report.prev.md").exists())
+
+    def test_after_apply_refuses_archive_and_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            gaps = str(Path(d) / ".ai-ready" / "gaps.md")
+            for extra in (["--archive-report"], ["--json"]):
+                with self.subTest(extra=extra):
+                    r = _run("--target", d, "--out", gaps, "--after-apply", *extra)
+                    self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertFalse(Path(gaps).exists())
+
+    def test_archive_report_keeps_the_previous_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _committed_repo(root)
+            r = self._gaps(root, "--archive-report")
+            self.assertNotIn("옮겼다", r.stdout, "옮길 보고서가 없으면 알리지 않는다")
+            reports = root / ".ai-ready"
+            _mk(reports, "audit-report.prev.md", "더 옛 보고서\n")
+            _mk(reports, "audit-report.md", "옛 분류\n")
+            r = self._gaps(root, "--archive-report")
+            self.assertIn("옛 audit-report.md 를 .ai-ready/audit-report.prev.md 로 옮겼다", r.stdout)
+            self.assertFalse((reports / "audit-report.md").exists())
+            self.assertEqual((reports / "audit-report.prev.md").read_text(encoding="utf-8"), "옛 분류\n",
+                             "있던 .prev 는 덮는다")
+            _mk(reports, "audit-report.md", "새 분류\n")
+            self._gaps(root)
+            self.assertTrue((reports / "audit-report.md").exists(), "--archive-report 없이는 옮기지 않는다")
+
+
 class TestDetectCommands(unittest.TestCase):
     def test_gradle_prefers_wrapper_and_finds_lint(self):
         with tempfile.TemporaryDirectory() as d:

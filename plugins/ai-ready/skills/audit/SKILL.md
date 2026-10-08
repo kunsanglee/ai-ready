@@ -21,12 +21,13 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*)
 
 ## 만드는 것
 
-대상 저장소의 `.ai-ready/` 아래 두 파일만 쓴다. 소스·문서·설정은 건드리지 않는다.
+대상 저장소의 `.ai-ready/` 아래 파일만 쓴다. 소스·문서·설정은 건드리지 않는다.
 
 | 파일 | 누가 쓰나 | 내용 |
 |---|---|---|
-| `.ai-ready/gaps.md` | `scripts/audit.py` | 사실 세 절: 문서 존재 · 강제 수단 · 규칙 문장 목록 |
+| `.ai-ready/gaps.md` | `scripts/audit.py` | 머리의 기준 줄(어느 커밋을 봤나)과 사실 세 절: 문서 존재 · 강제 수단 · 규칙 문장 목록. apply 마무리에서 다시 쓰면 기준 줄 아래에 적용 표시 줄이 붙는다 |
 | `.ai-ready/audit-report.md` | 모델(이 스킬) | 규칙 문장 A/B/C/D 분류 표와 권고. `ai-ready:apply` 가 이 파일을 읽는다 |
+| `.ai-ready/audit-report.prev.md` | `scripts/audit.py --archive-report` | apply 가 준비 1단계에서 보고서를 다시 만들기 직전의 `audit-report.md`. 있던 것은 덮는다 |
 
 ## 실행
 
@@ -43,6 +44,51 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <
 - 규칙 문장은 기본 400줄에서 자른다. 잘렸다고 보고서 끝에 적히면 `--max-rules` 로 늘린다. 잘릴 때는 루트·모듈의
   `CLAUDE.md`/`AGENTS.md` → `docs/` → 나머지 → `.claude/` 같은 도구 폴더 순으로 남는다.
 - `--json` 을 주면 같은 사실을 JSON 으로 낸다. 표가 너무 길어 읽기 어려울 때 쓴다.
+
+### 보고서의 기준과 신선도 확인
+
+`gaps.md` 제목 바로 아래에 기준 줄이 있다. `- 기준: 커밋 <해시 앞 12자>` 이고, 커밋하지 않은 변경이 있으면 끝에
+`(커밋하지 않은 변경 있음)` 이 붙는다. 변경에는 추적 파일의 수정·스테이징과 추적하지 않는 새 파일이 들고, 무시 규칙
+(`.gitignore` 등)에 걸린 파일과 대상의 `.ai-ready/` 안은 들지 않는다. `git status` 가 실패하면
+`(커밋하지 않은 변경 확인 못 함)` 이 붙는다. git 저장소가 아니거나 커밋이 없으면 `- 기준: 확인 못 함(git 커밋 없음)`
+이다. `--json` 에서는 `base`(`commit`, `uncommitted_changes`)다. 하위 폴더를 대상으로 해도 저장소 전체의 변경·커밋을
+본다(빼는 것은 그 대상의 `.ai-ready/` 뿐이다).
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --check-fresh
+```
+
+- `audit.py --check-fresh` 는 `.ai-ready/` 의 두 보고서가 지금 커밋과 맞는지 한 줄로 알린다. 아무 파일도 쓰지
+  않는다. `ai-ready:apply` 가 시작할 때 이것을 부른다.
+- `최신: …` 은 exit 0 이다. 두 보고서의 기준 줄이 같고, `gaps.md` 에 적용 표시가 없고, 그 커밋이 지금 HEAD 이고, 보고서를 만들 때와 지금 모두
+  커밋하지 않은 변경이 없을 때다. 기준 커밋 뒤로 `.ai-ready/` 만 바꾼 커밋(보고서를 커밋한 것)이 더해졌으면 같은
+  기준으로 본다. 기준 커밋이 HEAD 의 조상이고 둘 사이에 `.ai-ready/` 밖 차이가 없을 때다.
+- `없음: <없는 파일>` 은 exit 7 이다. 보고서 파일이 하나라도 없다. 지금 커밋하지 않은 변경도 있으면 같은 줄 끝에
+  ` (커밋하지 않은 변경도 있다)` 가 붙는다.
+- `오래됨: <이유>` 는 exit 8 이다. 이유는 다음 중 하나다: 이 보고서로 이미 apply 했다(`gaps.md` 의 적용 표시 줄),
+  기준 줄이 없다(2.2.0 앞의 옛 판 보고서), 두 보고서의 기준이
+  다르다, 보고서의 기준 커밋을 확인할 수 없다(git 커밋 없이 만든 보고서), 지금 git 커밋을 확인할 수 없다, 기준
+  커밋과 지금 커밋이 다르다, 커밋하지 않은 변경을 확인할 수 없다, 커밋하지 않은 변경이 있다(추적하지 않는 새 파일
+  포함), 보고서를 만들 때 커밋하지 않은 변경이 있었다, 보고서를 만들 때 커밋하지 않은 변경을 확인하지 못했다.
+  지금 트리의 변경(확인 실패 포함)을 가장 먼저 알리고, 그다음이 적용 표시이고, 보고서 쪽 사유(기준 줄 없음·두 기준
+  다름·커밋 다름)는 그 뒤다.
+
+`ai-ready:apply` 가 준비 1단계에서 보고서를 다시 만들 때 `--archive-report` 를 붙인다. `audit.py` 는 `gaps.md` 를 쓰기 전에 옛 `audit-report.md` 를 `audit-report.prev.md` 로 옮기고(있던 것은
+덮는다) 한 줄로 알린다. `--out` 이 `<T>/.ai-ready/gaps.md` 로 풀릴 때만 받고, 아니면 아무것도 하지 않고 exit 2 로 끝난다.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md --archive-report
+```
+
+`ai-ready:apply` 가 적용한 뒤 마무리에서 `gaps.md` 를 다시 쓸 때는 `--after-apply` 를 붙인다. `audit.py` 는 기준 줄
+아래에 `- 적용: 이 보고서로 이미 apply 했다` 한 줄을 더 적고, `audit-report.md` 는 옮기지 않는다. 다음
+`--check-fresh` 는 이 줄을 보고 `오래됨: 이 보고서로 이미 apply 했다` 를 낸다. hook 설치처럼 `.git/` 이나 무시되는
+파일만 바꾼 적용은 작업 트리 변경으로 잡히지 않으므로 이 줄로 거른다. `--archive-report` 와 같은 경로 제한이 있고,
+`--archive-report`·`--json` 과 함께 쓰면 exit 2 로 끝난다. 이 옵션 없이 다시 쓰면 표시 줄은 적지 않는다.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md --after-apply
+```
 
 ## 스크립트가 보는 것
 
@@ -119,8 +165,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <
 
 ### `audit-report.md` 형식
 
+첫머리의 기준 줄은 `gaps.md` 의 기준 줄(`- 기준: …`)을 한 글자도 바꾸지 않고 그대로 옮긴다. `--check-fresh` 가 두
+파일의 이 줄을 비교해 보고서가 지금 커밋과 맞는지 판정한다. 줄이 없거나 다르면 apply 가 audit 을 다시 돌린다.
+
 ```markdown
 # ai-ready 점검 결과 — <대상>
+
+- 기준: <gaps.md 의 기준 줄에서 `- 기준: ` 뒤를 그대로>
 
 ## 빈틈 요약
 - (gaps.md 1·2절에서 중요한 것부터: 없는 문서, git 이 무시하는 생성 대상 경로, CI 가 돌리지 않는 검사,
@@ -144,7 +195,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <
 ```
 
 보고서를 쓴 뒤 사용자에게는 빈틈 요약과 분류별 개수, B·D 상위 항목만 짧게 알리고, 다음 단계로
-`ai-ready:apply` 를 안내한다.
+`ai-ready:apply` 를 안내한다. `ai-ready:apply` 가 이 절차를 따른 것이면 안내하지 않고 apply 준비 1단계의 다시 확인으로 돌아간다.
 
 비대화 실행(`claude -p` 처럼 사람이 중간에 답할 수 없는 실행)에서는 사람에게 `!` 로 명령을 대신 돌려 달라고
 요청하지 않는다. 돌리지 못한 명령은 이유와 함께 보고서의 "보류" 절에 적고 넘어간다.

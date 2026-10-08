@@ -15,12 +15,22 @@
    강제되는지, 싸게 강제할 수 있는지, 강제할 수 없는지, 코드와 어긋났는지는 **스크립트가 가르지 않는다.**
    그 분류는 audit 스킬 본문에서 모델이 한다.
 
-stdlib 만 쓴다. 대상 저장소에는 아무것도 쓰지 않는다(`--out` 으로 준 파일 하나만 쓴다).
+보고서 머리에는 기준 줄(`- 기준: 커밋 <해시>`)을 적는다. `--check-fresh` 는 `.ai-ready/` 의 두 보고서가 지금
+커밋과 맞는지 그 줄로 판정하고, 아무 파일도 쓰지 않는다.
+
+stdlib 만 쓴다. 대상 저장소에는 아무것도 쓰지 않는다(`--out` 으로 준 파일 하나만 쓴다). 예외는 `--archive-report`
+하나다 — `--out` 이 `<target>/.ai-ready/gaps.md` 일 때만 받고, 그 옆의 `audit-report.md` 를 `audit-report.prev.md` 로
+옮긴다. `--after-apply` 도 같은 경로일 때만 받고, gaps.md 기준 줄 아래에 적용 표시 한 줄을 더 적는다.
 
 실행:
   python3 audit.py --target /path/to/repo                   # markdown 을 stdout 으로
   python3 audit.py --target /path/to/repo --out gaps.md     # 파일로
   python3 audit.py --target /path/to/repo --json            # 같은 사실을 JSON 으로
+  python3 audit.py --target /path/to/repo --check-fresh     # 보고서가 최신인가 (exit 0 최신 · 7 없음 · 8 오래됨)
+  python3 audit.py --target /path/to/repo --out /path/to/repo/.ai-ready/gaps.md --archive-report
+                                                            # 옛 audit-report.md 를 .prev 로 (--out 이 이 경로일 때만)
+  python3 audit.py --target /path/to/repo --out /path/to/repo/.ai-ready/gaps.md --after-apply
+                                                            # apply 마무리: 이 보고서로 이미 적용했다는 표시를 남긴다
 """
 from __future__ import annotations
 
@@ -41,6 +51,31 @@ if str(_SCRIPT_DIR) not in sys.path:
 import install_verify_hook  # noqa: E402
 import managed_doc  # noqa: E402
 import stacks  # noqa: E402
+
+EXIT_OK = 0
+EXIT_USAGE = 2
+EXIT_REPORT_MISSING = 7   # --check-fresh: .ai-ready/ 의 보고서가 하나라도 없다
+EXIT_REPORT_STALE = 8     # --check-fresh: 보고서의 기준이 지금 커밋·작업 트리와 맞지 않는다
+
+REPORT_DIR = ".ai-ready"
+GAPS_FILE = "gaps.md"
+AUDIT_REPORT_FILE = "audit-report.md"
+PREV_REPORT_FILE = "audit-report.prev.md"
+# 보고서의 기준 커밋은 앞 12자만 적는다. git 의 기본 축약 길이는 저장소가 커지면 늘어나므로, 지금 커밋과는
+# 축약끼리가 아니라 전체 해시의 앞부분으로 맞춘다.
+BASE_HASH_LEN = 12
+BASE_PREFIX = "- 기준: "
+BASE_DIRTY = "(커밋하지 않은 변경 있음)"
+BASE_DIRTY_UNKNOWN = "(커밋하지 않은 변경 확인 못 함)"
+BASE_UNKNOWN = "확인 못 함(git 커밋 없음)"
+_BASE_COMMIT = re.compile(r"^커밋 ([0-9a-f]{7,40})(?: (" + re.escape(BASE_DIRTY) + "|" + re.escape(BASE_DIRTY_UNKNOWN)
+                          + r"))?$")
+STALE_UNCOMMITTED = "오래됨: 커밋하지 않은 변경이 있다(추적하지 않는 새 파일 포함)"
+MISSING_WITH_CHANGES = " (커밋하지 않은 변경도 있다)"
+# apply 마무리가 gaps.md 기준 줄 아래에 남기는 줄. hook 처럼 .git/ 이나 무시되는 파일만 바꾼 적용은 트리 변경으로
+# 잡히지 않으므로, 이 줄로 적용 전 분류를 다시 쓰지 않게 한다.
+APPLIED_LINE = "- 적용: 이 보고서로 이미 apply 했다"
+STALE_APPLIED = "오래됨: 이 보고서로 이미 apply 했다"
 
 # 루트 CLAUDE.md 는 매 세션 통째로 읽힌다. 이 크기를 넘으면 "길이 과다" 로 적는다.
 # 기준은 판정이 아니라 보고용 문턱이다 — 넘었다는 사실과 실제 크기를 함께 적는다.
@@ -329,15 +364,128 @@ def _old_stop_hook_settings(target: Path) -> list[str]:
     return out
 
 
-def _git_out(target: Path, *args: str) -> str:
+def _git(target: Path, *args: str) -> tuple[int, str] | None:
+    """(종료 코드, stdout). git 을 부르지 못했거나 시간을 넘기면 None."""
     # 부른 쪽이 저장소를 가리키는 변수를 export 해 두면 git 은 target 대신 그 저장소를 본다. 자식 환경에서 뺀다.
     env = {k: v for k, v in os.environ.items()
            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
     try:
         r = subprocess.run(["git", *args], cwd=target, env=env, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
-        return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
+        return None
+    return r.returncode, r.stdout.strip()
+
+
+def _git_out(target: Path, *args: str) -> str:
+    r = _git(target, *args)
+    return r[1] if r and r[0] == 0 else ""
+
+
+def _head_commit(target: Path) -> str:
+    """지금 HEAD 의 전체 해시. git 저장소가 아니거나 커밋이 없으면 빈 문자열."""
+    return _git_out(target, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+
+
+# 저장소 전체를 보되 이 대상의 `.ai-ready/` 는 뺀다 — 보고서를 쓰는 일 자체가 변경으로 잡히면 안 된다.
+_OUTSIDE_REPORTS = ("--", ":/", f":!{REPORT_DIR}")
+
+
+def _uncommitted(target: Path) -> bool | None:
+    """커밋하지 않은 변경(스테이징·추적하지 않는 새 파일 포함, 무시 규칙에 걸린 파일 제외)이 있나. git status 가
+    실패하면 None — 확인하지 못한 것을 "변경 없음" 으로 읽지 않는다. `--no-optional-locks` 로 index 를 다시 쓰지 않는다.
+    새 파일을 세는 까닭: apply 는 새 파일만 만드는 일이 많은데, 그것을 빼면 적용 뒤에도 옛 보고서가 최신으로 보인다."""
+    r = _git(target, "--no-optional-locks", "status", "--porcelain", "--untracked-files=normal", *_OUTSIDE_REPORTS)
+    if r is None or r[0] != 0:
+        return None
+    return bool(r[1])
+
+
+def _same_outside_reports(target: Path, base: str, head: str) -> bool:
+    """기준 커밋이 HEAD 의 조상이고 둘 사이에 `.ai-ready/` 밖 차이가 없나. 보고서만 커밋한 경우를 같은 기준으로 본다.
+    기준을 풀지 못하거나 git 이 실패하면 거짓."""
+    full = _git_out(target, "rev-parse", "--verify", "-q", f"{base}^{{commit}}")
+    if not full:
+        return False
+    ancestor = _git(target, "merge-base", "--is-ancestor", full, head)
+    if ancestor is None or ancestor[0] != 0:
+        return False
+    diff = _git(target, "diff", "--quiet", full, head, *_OUTSIDE_REPORTS)
+    return diff is not None and diff[0] == 0
+
+
+def base_facts(target: Path) -> dict:
+    """보고서의 기준: 커밋(앞 12자)과 커밋하지 않은 변경 여부. 커밋이 없으면 둘 다 None, 변경을 확인하지 못하면
+    uncommitted_changes 만 None."""
+    head = _head_commit(target)
+    if not head:
+        return {"commit": None, "uncommitted_changes": None}
+    return {"commit": head[:BASE_HASH_LEN], "uncommitted_changes": _uncommitted(target)}
+
+
+def base_line(base: dict) -> str:
+    if not base["commit"]:
+        return BASE_PREFIX + BASE_UNKNOWN
+    mark = {True: f" {BASE_DIRTY}", False: "", None: f" {BASE_DIRTY_UNKNOWN}"}[base["uncommitted_changes"]]
+    return BASE_PREFIX + f"커밋 {base['commit']}" + mark
+
+
+def _read_base(path: Path) -> str | None:
+    """보고서에서 처음 나오는 기준 줄의 값(`- 기준: ` 뒤). 없으면 None — 2.2.0 앞의 보고서다."""
+    for line in _read(path).splitlines():
+        if line.startswith(BASE_PREFIX):
+            return line[len(BASE_PREFIX):].strip()
+    return None
+
+
+def check_fresh(target: Path) -> tuple[int, str]:
+    """(종료 코드, 한 줄). 두 보고서가 같은 기준을 적었고, 그 기준이 지금 HEAD(또는 `.ai-ready/` 밖이 같은 조상)이고,
+    보고서를 만들 때와 지금 모두 커밋하지 않은 변경이 없을 때만 최신이다.
+
+    지금 트리의 변경은 보고서 쪽 사유보다 먼저 본다 — apply 는 그 사유(`STALE_UNCOMMITTED`, 또는 `없음` 줄 끝의
+    `MISSING_WITH_CHANGES`)를 보고 보고서를 다시 만들기 전에 계속할지 묻는다. 커밋이 없으면 변경을 보지 않는다.
+    그다음이 적용 표시(`APPLIED_LINE`)다."""
+    head = _head_commit(target)
+    now = _uncommitted(target) if head else None
+    paths = {name: target / REPORT_DIR / name for name in (GAPS_FILE, AUDIT_REPORT_FILE)}
+    missing = [f"{REPORT_DIR}/{name}" for name, p in paths.items() if not p.is_file()]
+    if missing:
+        return EXIT_REPORT_MISSING, f"없음: {', '.join(missing)}" + (MISSING_WITH_CHANGES if now else "")
+    if head and now is None:
+        return EXIT_REPORT_STALE, "오래됨: 커밋하지 않은 변경을 확인할 수 없다"
+    if now:
+        return EXIT_REPORT_STALE, STALE_UNCOMMITTED
+    if APPLIED_LINE in (line.strip() for line in _read(paths[GAPS_FILE]).splitlines()):
+        return EXIT_REPORT_STALE, STALE_APPLIED
+    gaps, report = _read_base(paths[GAPS_FILE]), _read_base(paths[AUDIT_REPORT_FILE])
+    for name, value in ((GAPS_FILE, gaps), (AUDIT_REPORT_FILE, report)):
+        if value is None:
+            return EXIT_REPORT_STALE, f"오래됨: {name} 에 기준 줄이 없다(2.2.0 앞의 옛 판 보고서)"
+    if gaps != report:
+        return EXIT_REPORT_STALE, f"오래됨: 두 보고서의 기준이 다르다({GAPS_FILE} `{gaps}` · {AUDIT_REPORT_FILE} `{report}`)"
+    m = _BASE_COMMIT.match(gaps)
+    if not m:
+        return EXIT_REPORT_STALE, f"오래됨: 보고서의 기준 커밋을 확인할 수 없다(`{gaps}`)"
+    base, mark = m.group(1), m.group(2)
+    if not head:
+        return EXIT_REPORT_STALE, "오래됨: 지금 git 커밋을 확인할 수 없다"
+    if not head.startswith(base) and not _same_outside_reports(target, base, head):
+        return EXIT_REPORT_STALE, f"오래됨: 보고서 기준 커밋({base})과 지금 커밋({head[:BASE_HASH_LEN]})이 다르다"
+    if mark == BASE_DIRTY:
+        return EXIT_REPORT_STALE, "오래됨: 보고서를 만들 때 커밋하지 않은 변경이 있었다"
+    if mark == BASE_DIRTY_UNKNOWN:
+        return EXIT_REPORT_STALE, "오래됨: 보고서를 만들 때 커밋하지 않은 변경을 확인하지 못했다"
+    if not head.startswith(base):
+        return EXIT_OK, f"최신: 커밋 {head[:BASE_HASH_LEN]} (기준 {base} 뒤로 {REPORT_DIR}/ 밖 변경 없음)"
+    return EXIT_OK, f"최신: 커밋 {head[:BASE_HASH_LEN]}"
+
+
+def archive_report(target: Path) -> str | None:
+    """옛 audit-report.md 를 audit-report.prev.md 로 옮긴다(있던 .prev 는 덮는다). 옮겼으면 알릴 한 줄, 없으면 None."""
+    report = target / REPORT_DIR / AUDIT_REPORT_FILE
+    if not report.is_file():
+        return None
+    os.replace(report, target / REPORT_DIR / PREV_REPORT_FILE)
+    return f"옛 {AUDIT_REPORT_FILE} 를 {REPORT_DIR}/{PREV_REPORT_FILE} 로 옮겼다"
 
 
 def _hooks_path_setting(target: Path) -> tuple[str, str] | None:
@@ -703,6 +851,7 @@ def collect(target: Path, rule_limit: int = MAX_RULE_LINES) -> dict:
     rules, total = rule_lines(target, rule_limit)
     return {
         "target": str(target),
+        "base": base_facts(target),
         "docs": doc_facts(target),
         "enforcement": enforcement_facts(target),
         "rules": rules,
@@ -718,10 +867,11 @@ def _yes(b: bool) -> str:
     return "있음" if b else "**없음**"
 
 
-def render(facts: dict) -> str:
+def render(facts: dict, applied: bool = False) -> str:
     d, e = facts["docs"], facts["enforcement"]
     # 절대 경로는 이 장비의 사용자 이름·폴더 구조를 드러낸다. 저장소 이름만 적는다.
-    out = [f"# ai-ready 빈틈 보고서 — `{Path(facts['target']).name}`", "",
+    out = [f"# ai-ready 빈틈 보고서 — `{Path(facts['target']).name}`", "", base_line(facts["base"]),
+           *([APPLIED_LINE] if applied else []), "",
            "점수는 없다. 아래는 스크립트가 확인한 사실이고, 규칙 문장의 분류(A/B/C/D)는 audit 스킬이 이어서 한다.", ""]
 
     out += ["## 1. 문서 존재", ""]
@@ -887,21 +1037,49 @@ def main() -> int:
     ap.add_argument("--out", help="보고서를 쓸 파일 (생략 시 stdout)")
     ap.add_argument("--json", action="store_true", help="markdown 대신 사실 JSON 을 낸다")
     ap.add_argument("--max-rules", type=int, default=MAX_RULE_LINES, help="규칙 문장 최대 개수")
+    ap.add_argument("--check-fresh", action="store_true",
+                    help=f"보고서를 만들지 않고, {REPORT_DIR}/ 의 두 보고서가 지금 커밋과 맞는지 한 줄로 알린다 "
+                         f"(exit {EXIT_OK} 최신 · {EXIT_REPORT_MISSING} 없음 · {EXIT_REPORT_STALE} 오래됨)")
+    ap.add_argument("--after-apply", action="store_true",
+                    help=f"--out 이 <target>/{REPORT_DIR}/{GAPS_FILE} 일 때만 받는다. 기준 줄 아래에 "
+                         f"`{APPLIED_LINE}` 를 적어, 다음 --check-fresh 가 오래됨으로 보게 한다. apply 마무리에서 쓴다")
+    ap.add_argument("--archive-report", action="store_true",
+                    help=f"--out 이 <target>/{REPORT_DIR}/{GAPS_FILE} 일 때만 받는다. 쓰기 전에 "
+                         f"{REPORT_DIR}/{AUDIT_REPORT_FILE} 를 {PREV_REPORT_FILE} 로 옮긴다(있던 것은 덮는다). "
+                         "apply 가 보고서를 다시 만들 때 쓴다")
     args = ap.parse_args()
+    if args.check_fresh and (args.out or args.json or args.archive_report or args.after_apply):
+        ap.error("--check-fresh 는 --out·--json·--archive-report·--after-apply 와 함께 쓰지 않는다 (아무 파일도 쓰지 않는다)")
+    if args.after_apply and (args.archive_report or args.json):
+        ap.error("--after-apply 는 --archive-report·--json 과 함께 쓰지 않는다 (마무리는 보고서를 옮기지 않고, 표시는 markdown 줄이다)")
     target = Path(args.target).resolve()
+    gaps_path = target / REPORT_DIR / GAPS_FILE
+    for flag, on in (("--archive-report", args.archive_report), ("--after-apply", args.after_apply)):
+        if on and (not args.out or Path(args.out).resolve() != gaps_path.resolve()):
+            ap.error(f"{flag} 는 --out 이 <target>/{REPORT_DIR}/{GAPS_FILE} 일 때만 쓴다 "
+                     f"(옆의 {AUDIT_REPORT_FILE} 와 짝인 보고서다)")
     if not target.is_dir():
-        print(f"오류: 대상이 디렉토리가 아니다: {target}\n종료 코드 2", file=sys.stderr)
-        return 2
+        print(f"오류: 대상이 디렉토리가 아니다: {target}\n종료 코드 {EXIT_USAGE}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.check_fresh:
+        rc, line = check_fresh(target)
+        print(line)
+        if rc != EXIT_OK:
+            print(f"{line}\n종료 코드 {rc}", file=sys.stderr)
+        return rc
     facts = collect(target, args.max_rules)
-    text = json.dumps(facts, ensure_ascii=False, indent=2) + "\n" if args.json else render(facts)
+    text = json.dumps(facts, ensure_ascii=False, indent=2) + "\n" if args.json else render(facts, args.after_apply)
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
+        moved = archive_report(target) if args.archive_report else None
+        if moved:
+            print(moved)
         out.write_text(text, encoding="utf-8")
         print(f"보고서: {out}")
     else:
         sys.stdout.write(text)
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

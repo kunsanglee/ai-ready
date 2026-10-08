@@ -113,7 +113,7 @@ class _Checks:
     def test_apply_skill_documents_every_refusal_code(self):
         # 스크립트가 멈추며 내는 코드(0·1·2 가 아닌 것)는 apply 스킬이 모두 설명한다.
         text = (self.plugin / "skills" / "apply" / "SKILL.md").read_text(encoding="utf-8")
-        for name in ("bootstrap.py", "scaffold.py", "install_verify_hook.py"):
+        for name in ("audit.py", "bootstrap.py", "scaffold.py", "install_verify_hook.py"):
             if name not in self.scripts:
                 continue
             said = {int(n) for heading, para in _paragraphs(text)
