@@ -1,13 +1,14 @@
 ---
 name: apply
-description: ai-ready:audit 의 빈틈 보고서(.ai-ready/gaps.md, audit-report.md)를 읽고, 사람이 승인한 것만 적용한다. 없는 문서의 초안(짧은 루트 AGENTS.md 와 그것을 가져오는 CLAUDE.md, 모듈 AGENTS.md, docs/design 결정 기록 쌍, 안티패턴 원장, 검증 문서), 문서 정합 검사 스크립트, scripts/verify.sh 와 그것을 PR 올리기 전에 돌리는 git pre-push hook, 그리고 문서에만 있던 규칙을 lint·아키텍처 테스트로 옮기는 강제 초안(ArchUnit, eslint no-restricted-imports, dependency-cruiser, ruff banned-api, import-linter, detekt 등)을 만든다. Use when the user asks to apply ai-ready audit results, "문서 규칙을 lint 로 옮겨", create verify.sh or a git pre-push hook that runs checks, set up docs/design decision records, or scaffold module AGENTS.md/CLAUDE.md files.
+description: ai-ready:audit 의 빈틈 보고서(.ai-ready/gaps.md, audit-report.md)를 읽고, 사람이 승인한 것만 적용한다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌려 보고서를 새로 만든 뒤 이어 가므로, apply 하나로 점검부터 적용까지 한다. 없는 문서의 초안(짧은 루트 AGENTS.md 와 그것을 가져오는 CLAUDE.md, 모듈 AGENTS.md, docs/design 결정 기록 쌍, 안티패턴 원장, 검증 문서), 문서 정합 검사 스크립트, scripts/verify.sh 와 그것을 PR 올리기 전에 돌리는 git pre-push hook, 그리고 문서에만 있던 규칙을 lint·아키텍처 테스트로 옮기는 강제 초안(ArchUnit, eslint no-restricted-imports, dependency-cruiser, ruff banned-api, import-linter, detekt 등)을 만든다. Use when the user asks to apply ai-ready audit results, to make a repository AI-ready from audit through apply in one go ("점검부터 적용까지", "ai-ready 적용해 줘"), "문서 규칙을 lint 로 옮겨", create verify.sh or a git pre-push hook that runs checks, set up docs/design decision records, or scaffold module AGENTS.md/CLAUDE.md files.
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(python3 scripts/check_docs.py*) Bash(bash scripts/verify.sh*)
 ---
 
 # ai-ready apply — 승인한 것만 적용
 
 `ai-ready:audit` 결과를 읽어, 없는 문서와 검증 장치를 만들고 문서에만 있던 규칙을 도구로 옮긴다. 파일 하나,
-규칙 하나마다 사람이 승인한 뒤에 쓴다.
+규칙 하나마다 사람이 승인한 뒤에 쓴다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌리므로 이 스킬만
+불러도 된다.
 
 기준은 audit 과 같다. 강제할 수 있는 규칙은 도구로 옮기고, 문서에는 강제할 수 없는 것(왜·의도·지도)만 남긴다.
 
@@ -34,8 +35,40 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(p
 - 하위 에이전트에 코드 읽기를 맡길 때는 프롬프트에 "Read/Grep/Glob 을 쓰고 셸 명령을 묶어 쓰지 않는다" 를 넣는다.
 - 턴이 끝난 뒤에 남은 확인(돌리지 못한 스크립트 등)은 다음 턴에 몰래 이어 하지 않고 보류로 적는다.
 
-1. `<T>/.ai-ready/gaps.md` 와 `audit-report.md` 가 없으면 `ai-ready:audit` 을 먼저 안내하고 멈춘다.
-2. 커밋하지 않은 변경이 있으면 알리고, 계속할지 묻는다.
+1. 보고서가 지금 커밋과 맞는지 확인한다.
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --check-fresh
+   ```
+
+   - `audit.py` 가 `최신: …`(exit 0)을 내면 그 보고서로 2단계에 간다.
+   - `없음: …`(exit 7)이나 `오래됨: …`(exit 8)이면 출력의 이유를 사용자에게 한 줄로 알리고 보고서를 새로 만든다.
+     audit 은 `.ai-ready/` 밖을 바꾸지 않으므로 묻지 않고 돌린다. 비대화 실행에서도 같은 순서다.
+   - 예외: 출력이 `오래됨: 커밋하지 않은 변경이 있다` 이거나 `없음: …` 줄 끝에 `(커밋하지 않은 변경도 있다)` 가 붙었고
+     대화형 실행이면, 새로 만들기 전에 2단계의 질문(변경이 있는 트리에서 계속할지)을 먼저 한다. 사용자가 먼저
+     커밋하겠다고 하면 audit 을 돌리지 않고 멈춘다. 계속하겠다고 하면 새로 만들고, 2단계에서 다시 묻지 않는다.
+     비대화 실행이면 묻지 않고 새로 만든 뒤 2단계 규칙을 따른다.
+   - 새로 만들 때는 같은 턴 안에서 `${CLAUDE_PLUGIN_ROOT}/skills/audit/SKILL.md` 를 읽고 그 절차를 따른다. 다만
+     `gaps.md` 를 쓰는 명령에 `--archive-report` 를 붙인다. 옛 `audit-report.md` 가 `audit-report.prev.md` 로 옮겨지고
+     (있던 것은 덮는다) 스크립트가 그 사실을 한 줄로 출력하니, 그 줄을 사용자에게 알린다. 그 뒤 `audit-report.md` 를
+     새로 쓴다.
+
+     ```bash
+     python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md --archive-report
+     ```
+
+   - audit 스크립트 실행, 규칙 분류, `audit-report.md` 작성은 메인 에이전트가 한다. 분류의 근거를 찾는 코드 읽기만
+     위의 조건("Read/Grep/Glob 을 쓰고 셸 명령을 묶어 쓰지 않는다", 백그라운드로 띄우지 않는다)으로 하위 에이전트에
+     맡길 수 있다.
+   - 새로 만든 뒤 `--check-fresh` 를 한 번 다시 부른다. `최신` 이면 2단계에 간다. 이유가 `기준 줄이 없다` 나
+     `두 보고서의 기준이 다르다` 면 `audit-report.md` 에 기준 줄을 옮겨 적다 틀린 것이다. 이번에 새로 쓴
+     `audit-report.md` 의 기준 줄을 `gaps.md` 의 기준 줄과 같게 고치고 한 번 더 확인한다. 그 밖의 `오래됨`(커밋하지
+     않은 변경, git 커밋 없음 등)은 지금 트리의 상태 때문이라 다시 만들어도 같으므로 그대로 2단계에 간다.
+   - 두 보고서를 새로 만들지 못하면(스크립트 실패, 권한 거부, 다시 확인해도 `없음`) 계획 표로 가지 않는다. 기준 줄을
+     고친 뒤 한 번 더 확인했는데도 같은 이유(`기준 줄이 없다`·`두 보고서의 기준이 다르다`)가 나와도 같다. 이유를 적고
+     멈춘다.
+2. 커밋하지 않은 변경이 있으면 알리고, 계속할지 묻는다. 1단계에서 이미 물었으면 다시 묻지 않는다. 비대화 실행이면
+   묻지 않고 계속하되, 마무리 보고 첫 줄에 "커밋하지 않은 변경이 있는 트리에서 적용했다" 를 적는다.
 3. `audit-report.md` 에서 할 일을 뽑아 **계획 표**로 보여 준다: 항목 · 만들거나 고칠 파일 · 방법(스크립트 / 모델 초안)
    · 근거(보고서의 어느 줄). 사용자가 고른 것만 진행한다. 보고서에 없던 변경은 추측으로 표에 넣지 않는다.
 4. `gaps.md` 의 "git 이 무시하는 생성 대상 경로" 절에 원본 파일(`AGENTS.md`·`docs/…`·`scripts/…`)이 있으면, 무시
@@ -210,6 +243,18 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/install_verify_hook.py --targ
 적용이 끝나면 audit 스크립트를 다시 돌려 `gaps.md` 가 어떻게 바뀌었는지(생긴 문서, CI 가 새로 돌리는 검사, 줄어든
 규칙 줄)를 보고한다. 바뀌지 않은 것이 있으면 그대로 적는다.
 
+적용한 항목이 하나라도 있으면 재실행에 `--after-apply` 를 붙인다. `gaps.md` 기준 줄 아래에 "이 보고서로 이미 apply
+했다" 는 표시 줄이 남고, 다음 apply 는 준비 1단계에서 `오래됨: 이 보고서로 이미 apply 했다` 를 보고 보고서를 새로
+만든다. hook 설치처럼 `.git/` 이나 무시되는 파일만 바꾼 적용은 작업 트리 변경으로 잡히지 않아, 표시가 없으면 적용 전
+분류가 다음 apply 에서 `최신` 으로 보인다. 마무리는 `audit-report.md` 를 옮기지 않는다. `audit-report.prev.md` 에는
+준비 1단계에서 다시 만들기 직전의 보고서가 다음 재생성 때까지 남는다.
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md --after-apply
+```
+
+적용한 것이 없으면 붙이지 않고 그대로 쓴다.
+
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <T>/.ai-ready/gaps.md
 ```
@@ -220,13 +265,17 @@ python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/audit.py --target <T> --out <
 python3 scripts/check_docs.py
 ```
 
-이 재실행은 메인 에이전트가 적용과 같은 턴에서 한다. 턴이 끝나 돌리지 못했으면 보류로 적는다.
+이 재실행은 메인 에이전트가 적용과 같은 턴에서 한다. 턴이 끝나 돌리지 못했으면 보류로 적는다. 권한 거부 등으로 이
+재실행을 보류하면 적용 표시도 남지 않아, `.git/` 이나 무시되는 파일만 바꾼 적용 뒤에는 다음 apply 가 적용 전 보고서를
+`최신` 으로 볼 수 있다.
 
 보류한 항목(권한 거부·도구 없음·사람 확인이 필요한 것)은 이유와 함께 따로 적는다.
 
 ## 하지 않는 것
 
 - 보고서 없이, 또는 보고서에 없던 변경을 추측으로 적용하지 않는다.
+- 기준 줄만 고쳐 넣어 옛 보고서를 최신으로 만들지 않는다. 기준 줄을 고치는 것은 이번에 새로 쓴 `audit-report.md` 에
+  옮겨 적기를 잘못했을 때뿐이다.
 - 여러 파일·여러 규칙을 한 번의 승인으로 묶지 않는다.
 - 사용자 승인 없이 커밋·push·CI 수정·hook 설치를 하지 않는다.
 - 사용자 승인 없이 무시 규칙(`.gitignore` 등)을 고치지 않는다.

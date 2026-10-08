@@ -10,7 +10,7 @@ AI 에이전트가 일하기 좋은 저장소를 만들고 유지하는 Claude C
 | 스킬 | 하는 일 |
 |---|---|
 | `ai-ready:audit` | 점수 없는 빈틈 보고서. 문서가 있나, 검사 도구가 있고 CI 가 실제로 돌리나, 문서 속 규칙이 이미 강제되나 |
-| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, PR 올리기 전 git pre-push hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
+| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌리므로 이것만 불러도 된다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, PR 올리기 전 git pre-push hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
 | `ai-ready:lessons` | 작업 중 사람이 바로잡은 실수와 PR 리뷰 코멘트를 강제 초안이나 문서 항목 초안으로 만들고, 하나씩 승인받아 반영한다 |
 
 ---
@@ -60,14 +60,16 @@ PR 코멘트를 읽을 때만 GitHub CLI(`gh`)를 쓰고, 없으면 코멘트를
 ## 쓰는 순서
 
 ```
-ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →  ai-ready:lessons
+ai-ready:apply (보고서가 없거나 오래됐으면 audit 부터)  →  (작업)  →  ai-ready:lessons
 ```
+
+점검만 하고 소스는 건드리고 싶지 않으면 `ai-ready:audit` 을 따로 부릅니다.
 
 ### `ai-ready:audit` — 빈틈 보고서
 
-스크립트가 사실을 모으고, 모델이 규칙을 나눕니다. 대상 저장소의 `.ai-ready/` 아래 두 파일만 씁니다.
+스크립트가 사실을 모으고, 모델이 규칙을 나눕니다. 대상 저장소의 `.ai-ready/` 아래 파일만 씁니다.
 
-- `.ai-ready/gaps.md` (스크립트)
+- `.ai-ready/gaps.md` (스크립트) — 머리에 어느 커밋을 봤는지 적는 기준 줄이 있고, 사실 세 절이 이어집니다
   1. **문서 존재** — 루트·모듈별 `AGENTS.md`·`CLAUDE.md`(길이 과다 표시)와 둘의 구조, git 이 무시하는 생성 대상
      경로(`git check-ignore`), `docs/design` 의 결정 기록 쌍과 union merge 설정, 검증 문서, `verify.sh`, 이 clone 의
      pre-push hook, 안티패턴 원장. 옛 구조(`CLAUDE.md` 원본 + `AGENTS.md` 심볼릭 링크)는 전환 제안으로만 적고 바꾸지 않습니다
@@ -76,6 +78,7 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
      삼키는(`|| true`, `continue-on-error`) 줄
   3. **규칙 문장** — 문서에서 "금지·반드시·must·never" 같은 줄을 `파일:줄` 로
 - `.ai-ready/audit-report.md` (모델) — 규칙 줄마다 넷 중 하나로 나누고 코드·설정에서 근거를 찾아 적습니다.
+- `.ai-ready/audit-report.prev.md` (스크립트) — apply 가 준비 단계에서 보고서를 다시 만들기 직전의 `audit-report.md`
 
 | 분류 | 뜻 | 권고 |
 |---|---|---|
@@ -87,6 +90,19 @@ ai-ready:audit  →  (보고서 읽기)  →  ai-ready:apply  →  (작업)  →
 점수는 매기지 않습니다. 문서 개수로 준비 상태를 말하면, 강제되지 않는 문서를 더 쓰는 쪽으로 기울기 때문입니다.
 
 ### `ai-ready:apply` — 승인한 것만
+
+apply 만 불러도 됩니다. 시작할 때 `audit.py --check-fresh` 로 `.ai-ready/` 의 두 보고서가 지금 커밋과 맞는지 봅니다.
+보고서가 없거나, 다른 커밋에서 만들었거나, 커밋하지 않은 변경(추적하지 않는 새 파일 포함, `.gitignore` 로 무시되는
+파일 제외)이 있으면 audit 을 먼저 돌려 보고서를 새로 만든 뒤 이어 갑니다. 보고서만 커밋한 경우는 같은 기준으로 봅니다.
+보고서 머리의 기준 줄(`- 기준: 커밋 <해시>`)로 판정하므로, 이 줄이 없는 2.2.0 앞의 보고서도 다시 만듭니다. 다시 만들 때
+옛 `audit-report.md` 는 `.ai-ready/audit-report.prev.md` 로 옮겨 둡니다(그 전의 것은 덮습니다). 적용한 항목이 있으면
+마무리에서 `gaps.md` 에 "이 보고서로 이미 apply 했다" 는 표시 줄을 남깁니다. 다음 apply 는 이 줄을 보고 적용 전 분류를
+쓰지 않고 보고서를 새로 만듭니다. 마무리는 `audit-report.md` 를 옮기지 않으므로, `.prev` 에는 다시 만들기 직전의
+보고서가 다음에 다시 만들 때까지 남습니다.
+
+대화형 실행에서 지금 커밋하지 않은 변경이 있으면(보고서가 없을 때도. 커밋이 하나도 없는 저장소에서는 변경을 확인하지 않습니다) 보고서를 다시 만들기 전에 그 상태로 계속할지 먼저
+묻고, 먼저 커밋하겠다고 하면 멈춥니다. 비대화 실행은 묻지 않고 계속하며, 마무리 보고 첫 줄에 커밋하지 않은 변경이
+있는 트리에서 적용했다고 적습니다.
 
 | 만드는 것 | 내용 |
 |---|---|
