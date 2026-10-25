@@ -10,7 +10,7 @@ AI 에이전트가 일하기 좋은 저장소를 만들고 유지하는 Claude C
 | 스킬 | 하는 일 |
 |---|---|
 | `ai-ready:audit` | 점수 없는 빈틈 보고서. 문서가 있나, 검사 도구가 있고 CI 가 실제로 돌리나, 문서 속 규칙이 이미 강제되나 |
-| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌리므로 이것만 불러도 된다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, PR 올리기 전 git pre-push hook, 문서 정합 검사, lint·아키텍처 테스트 초안 |
+| `ai-ready:apply` | 보고서에서 사람이 고른 것만 만든다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌리므로 이것만 불러도 된다. 짧은 루트 `AGENTS.md`(원본)와 그것을 `@AGENTS.md` 한 줄로 가져오는 `CLAUDE.md`, 모듈 `AGENTS.md`·`CLAUDE.md`, 결정 기록, 안티패턴 원장, 검증 문서와 `verify.sh`, PR 올리기 전 git pre-push hook, 문서 정합 검사, lint·아키텍처 테스트 초안. 기존 저장소를 기능 폴더 구조로 옮기고 경계 테스트를 만드는 단계별 절차도 참고 문서로 담고 있다 |
 | `ai-ready:lessons` | 작업 중 사람이 바로잡은 실수와 PR 리뷰 코멘트를 강제 초안이나 문서 항목 초안으로 만들고, 하나씩 승인받아 반영한다 |
 
 ---
@@ -181,7 +181,8 @@ apply 만 불러도 됩니다. 시작할 때 `audit.py --check-fresh` 로 `.ai-r
 │   │   │       ├── managed_doc.py        # 사람이 관리하는 파일을 덮지 않는 규칙
 │   │   │       └── project/              # 대상 저장소로 복사되는 verify.sh · check_docs.py,
 │   │   │                                 # 대상 clone 의 .git/hooks 에 설치되는 pre-push
-│   │   ├── apply/                        # + references/enforcement-drafts.md
+│   │   ├── apply/                        # + references/enforcement-drafts.md · migration-stages.md ·
+│   │   │                                 #   boundary-test-lessons.md
 │   │   └── lessons/
 │   ├── agents/lesson-synthesizer.md
 │   └── tests/                            # stdlib unittest

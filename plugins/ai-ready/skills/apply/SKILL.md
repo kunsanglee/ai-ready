@@ -1,6 +1,6 @@
 ---
 name: apply
-description: ai-ready:audit 의 빈틈 보고서(.ai-ready/gaps.md, audit-report.md)를 읽고, 사람이 승인한 것만 적용한다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌려 보고서를 새로 만든 뒤 이어 가므로, apply 하나로 점검부터 적용까지 한다. 없는 문서의 초안(짧은 루트 AGENTS.md 와 그것을 가져오는 CLAUDE.md, 모듈 AGENTS.md, docs/design 결정 기록 쌍, 안티패턴 원장, 검증 문서), 문서 정합 검사 스크립트, scripts/verify.sh 와 그것을 PR 올리기 전에 돌리는 git pre-push hook, 그리고 문서에만 있던 규칙을 lint·아키텍처 테스트로 옮기는 강제 초안(ArchUnit, eslint no-restricted-imports, dependency-cruiser, ruff banned-api, import-linter, detekt 등)을 만든다. Use when the user asks to apply ai-ready audit results, to make a repository AI-ready from audit through apply in one go ("점검부터 적용까지", "ai-ready 적용해 줘"), "문서 규칙을 lint 로 옮겨", create verify.sh or a git pre-push hook that runs checks, set up docs/design decision records, or scaffold module AGENTS.md/CLAUDE.md files.
+description: ai-ready:audit 의 빈틈 보고서(.ai-ready/gaps.md, audit-report.md)를 읽고, 사람이 승인한 것만 적용한다. 보고서가 없거나 지금 커밋과 맞지 않으면 audit 을 먼저 돌려 보고서를 새로 만든 뒤 이어 가므로, apply 하나로 점검부터 적용까지 한다. 없는 문서의 초안(짧은 루트 AGENTS.md 와 그것을 가져오는 CLAUDE.md, 모듈 AGENTS.md, docs/design 결정 기록 쌍, 안티패턴 원장, 검증 문서), 문서 정합 검사 스크립트, scripts/verify.sh 와 그것을 PR 올리기 전에 돌리는 git pre-push hook, 그리고 문서에만 있던 규칙을 lint·아키텍처 테스트로 옮기는 강제 초안(ArchUnit, eslint no-restricted-imports, dependency-cruiser, ruff banned-api, import-linter, detekt 등)을 만든다. Use when the user asks to apply ai-ready audit results, to make a repository AI-ready from audit through apply in one go ("점검부터 적용까지", "ai-ready 적용해 줘"), "문서 규칙을 lint 로 옮겨", create verify.sh or a git pre-push hook that runs checks, set up docs/design decision records, scaffold module AGENTS.md/CLAUDE.md files, or retrofit an existing repo into feature folders with boundary tests ("AFA 적용", "에이전트 친화 구조", "agent friendly architecture", "경계 테스트 만들자", "기능 폴더로 옮기자", "이 저장소 AFA 기준으로 평가해줘").
 allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(python3 scripts/check_docs.py*) Bash(bash scripts/verify.sh*)
 ---
 
@@ -270,6 +270,16 @@ python3 scripts/check_docs.py
 `최신` 으로 볼 수 있다.
 
 보류한 항목(권한 거부·도구 없음·사람 확인이 필요한 것)은 이유와 함께 따로 적는다.
+
+## 구조 이동과 경계 테스트
+
+기존 저장소를 기능 폴더 구조로 옮기거나, 모듈 경계를 import 테스트·ArchUnit 으로 지키게 만들거나, 검사의 예외를
+다룰 때는 아래 두 문서를 읽는다. 사용자가 직접 요청했을 때의 흐름이며, audit 보고서에서 뽑은 항목이 아니다.
+
+- [`references/migration-stages.md`](references/migration-stages.md): 평가·계획·적용 절차, 단계 0~5와 단계별 완료
+  확인, 경계 테스트 쓰는 법, 스택별 경계 검사, 검사의 예외를 다루는 규칙 5.
+- [`references/boundary-test-lessons.md`](references/boundary-test-lessons.md): 경계 테스트를 쓰다 실제로 틀렸던
+  우회와 그 수정. 테스트를 쓰기 전에 읽는다.
 
 ## 하지 않는 것
 
