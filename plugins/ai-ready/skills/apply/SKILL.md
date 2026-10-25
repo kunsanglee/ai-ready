@@ -12,6 +12,9 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/*) Bash(p
 
 기준은 audit 과 같다. 강제할 수 있는 규칙은 도구로 옮기고, 문서에는 강제할 수 없는 것(왜·의도·지도)만 남긴다.
 
+구조 이동이나 경계 테스트를 직접 요청받았으면 아래 준비 1~4단계와 계획 표를 건너뛰고
+[`references/migration-stages.md`](references/migration-stages.md) 로 간다(맨 아래 "구조 이동과 경계 테스트").
+
 ## 준비
 
 스크립트는 audit 스킬 폴더(`${CLAUDE_PLUGIN_ROOT}/skills/audit/scripts/`)에 있다. 아래 명령의 경로는 이미 절대
@@ -162,8 +165,11 @@ B 항목마다 [`references/enforcement-drafts.md`](references/enforcement-draft
 
 1. 표현할 수 없게 만들기 → lint·금지 API → 정석 헬퍼 → 런타임 검사 → 테스트 순으로 따져 가장 강한 수단을 고른다.
 2. 대상 스택의 도구로 규칙·테스트 초안을 쓴다. 오류 메시지에 "대신 X 를 써라" 를 넣는다.
-3. 사용자 승인을 받고 적용한다. 적용한 뒤 그 검사를 돌려 기존 위반이 있는지 본다. 있으면 기준 파일(baseline·freeze)
-   방식을 제안한다. 검사를 돌릴 수 없었으면(권한 거부·도구 없음) 5단계의 CI 설정 변경을 적용하지 않고, 그 항목을
+3. 사용자 승인을 받고 적용한다. 적용한 뒤 그 검사를 돌려 기존 위반이 있는지 본다. 있으면
+   [`references/enforcement-drafts.md`](references/enforcement-drafts.md) 의 "이미 어긴 곳이 있을 때" 방식을
+   제안한다. 기존 위반은 규칙 예외가 아니라 줄어들기만 하는 예산이며, 저장소 안의 리뷰되는 파일에 두고 늘면 검사가
+   실패하게 하고 CODEOWNERS 를 건다. 검사를 돌릴 수 없었으면(권한 거부·도구 없음) 5단계의 CI 설정 변경을
+   적용하지 않고, 그 항목을
    돌리지 못한 이유와 함께 보류로 보고한다.
 4. 원래 문서 줄은 본문을 지우고 "→ <규칙 이름·테스트 경로>" 한 줄로 바꾸는 diff 를 따로 보여 준다.
 5. CI 가 그 검사를 돌리지 않으면(gaps.md 2절) CI 에 넣는 한 줄을 제안한다. CI 설정 수정도 승인 뒤에 한다.
@@ -183,8 +189,9 @@ B 항목마다 [`references/enforcement-drafts.md`](references/enforcement-draft
 
 push 하기 전에 `scripts/verify.sh` 를 돌리는 git pre-push hook 을 대상 clone 에 건다. 거는 전제는 둘이다.
 `scripts/verify.sh` 가 있고, **이번 세션에서 `bash scripts/verify.sh` 가 한 번 이상 통과했다.** 통과하지 못했으면
-hook 을 걸지 않는다. 대신 실패 출력에서 기존 위반 목록을 뽑아 보고하고, 그 검사의 기준선(baseline·freeze) 방식을
-제안한다. 이미 실패하는 검사를 hook 으로 걸면 push 가 막히고, push 하려고 이번 작업과 무관한 기존 위반을 고치며
+hook 을 걸지 않는다. 대신 실패 출력에서 기존 위반 목록을 뽑아 보고하고, 그 검사의 기존 위반 예산 방식
+(enforcement-drafts.md 의 "이미 어긴 곳이 있을 때")을 제안한다. 이미 실패하는 검사를 hook 으로 걸면 push 가
+막히고, push 하려고 이번 작업과 무관한 기존 위반을 고치며
 운영 코드를 바꾸게 된다. 두 전제를 채웠고 사용자가 명시적으로 승인하면 건다.
 
 ```bash
@@ -283,10 +290,12 @@ python3 scripts/check_docs.py
 
 ## 하지 않는 것
 
-- 보고서 없이, 또는 보고서에 없던 변경을 추측으로 적용하지 않는다.
+- 보고서 없이, 또는 보고서에 없던 변경을 추측으로 적용하지 않는다(구조 이동 흐름은 보고서 대신
+  migration-stages.md 의 단계별 승인을 따르고, 승인 전에 그 단계의 파일 목록을 보여 준다).
 - 기준 줄만 고쳐 넣어 옛 보고서를 최신으로 만들지 않는다. 기준 줄을 고치는 것은 이번에 새로 쓴 `audit-report.md` 에
   옮겨 적기를 잘못했을 때뿐이다.
-- 여러 파일·여러 규칙을 한 번의 승인으로 묶지 않는다.
+- 여러 파일·여러 규칙을 한 번의 승인으로 묶지 않는다(구조 이동 흐름은
+  migration-stages.md 의 단계 하나를 승인 단위로 삼고, 승인 전에 그 단계의 파일 목록을 보여 준다).
 - 사용자 승인 없이 커밋·push·CI 수정·hook 설치를 하지 않는다.
 - 사용자 승인 없이 무시 규칙(`.gitignore` 등)을 고치지 않는다.
 - 스킬 흐름 안에서 하위 에이전트를 백그라운드로 띄우거나, 스크립트 실행을 하위 에이전트에 넘기지 않는다.
