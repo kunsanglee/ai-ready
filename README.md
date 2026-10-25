@@ -113,7 +113,7 @@ apply 만 불러도 됩니다. 시작할 때 `audit.py --check-fresh` 로 `.ai-r
 | `docs/VERIFICATION.md` + `scripts/verify.sh` | 매니페스트에서 추론한 typecheck·lint·test 를 차례로 돌린다. 실패하면 마지막 20줄만 보여 준다. 작업 트리가 마지막 통과 때와 같으면 다시 돌리지 않는다 |
 | git pre-push hook | `verify.sh` 가 통과한 기록이 남아 있을 때만(실패하면 기록을 지운다) 이 clone 에 건다. clone 마다 따로 걸고 커밋되지 않는다. push 하는 커밋이 지금 체크아웃(HEAD)이면 `verify.sh` 를 돌리고, 실패하면 push 를 막는다. 추적하는 파일에 커밋하지 않은 변경이 있으면 확인 대상이 push 하는 커밋과 달라지므로 막는다. `core.hooksPath` 가 git 기본 hooks 폴더가 아닌 곳을 가리키거나 다른 pre-push 가 있거나 그 자리가 심볼릭 링크면 쓰지 않고, 직접 한 줄을 넣는 방법을 알린다 |
 | `scripts/check_docs.py` | 깨진 상대 링크, 결정 카드 제목 형식, union merge 로 생긴 중복 카드, frontmatter 필수 키. CI 에 한 줄로 넣는다 |
-| 강제 초안 | audit 의 B 항목을 ArchUnit·detekt·eslint(`no-restricted-imports`)·dependency-cruiser·ruff(`banned-api`)·import-linter·clippy 규칙이나 테스트로. 오류 메시지에 "대신 X" 를 넣고, 기존 위반은 기준 파일로 묶는다 |
+| 강제 초안 | audit 의 B 항목을 ArchUnit·detekt·eslint(`no-restricted-imports`)·dependency-cruiser·ruff(`banned-api`)·import-linter·clippy 규칙이나 테스트로. 오류 메시지에 "대신 X" 를 넣고, 기존 위반은 늘면 실패하는 예산 파일(CODEOWNERS 아래)로 묶는다 |
 
 서명이 없는(사람이 관리하는) 파일과, 서명을 남긴 채 고친 초안은 덮어쓰지 않습니다. 초안의 서명 줄에는 본문 해시가
 들어 있어 고쳤는지 알 수 있습니다. 그런 파일이 있으면 스크립트가 아무것도 쓰지 않고 멈추고, 그 파일은 필요한 부분만
