@@ -58,7 +58,7 @@ tools: Read, Grep, Glob, Bash
 - 도구·위치: <예: eslint no-restricted-imports in eslint.config.js / ArchUnit 테스트 src/test/.../LayerRulesTest.kt>
 - 초안: <설정 조각 또는 테스트 코드>
 - 오류 메시지: "<무엇이 금지인지> 대신 <무엇을 써라>"
-- 기존 위반: <grep 으로 찾은 위치 | 없음 | 확인 필요> → 있으면 기준 파일(baseline·freeze) 방식
+- 기존 위반: <grep 으로 찾은 위치 | 없음 | 확인 필요> → 있으면 줄어들기만 하는 예산 파일(apply 의 enforcement-drafts.md "이미 어긴 곳이 있을 때")
 - CI: <이 검사를 CI 가 돌리나 — 안 돌리면 넣을 한 줄>
 - 추천: 추가 | 수정(기존 <위치> 보강) | 버림
 ```
